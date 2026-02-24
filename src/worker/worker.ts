@@ -12,7 +12,7 @@ import { LocalTemplateService } from "./services/local-template";
 import { ConflictService } from "./services/conflict";
 import { AnnotationService } from "./services/annotation";
 import { KeyService } from "./services/key";
-import { QueryService } from "./services/query";
+import { DbHelperService } from "./services/db-helper";
 import { TaskManager } from "./tasks/manager";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -29,7 +29,7 @@ import type { AttachmentData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { SaveAnnotationsResult } from "./services/annotation";
 import type { LibraryRow } from "./services/key";
-import type { QueryService as QueryServiceType } from "./services/query";
+import type { DbHelperService as DbHelperServiceType } from "./services/db-helper";
 
 /**
  * Worker API definition
@@ -53,7 +53,7 @@ export interface WorkerAPI {
     conflict: ConflictService;
     annotation: AnnotationService;
     key: KeyService;
-    query: QueryServiceType;
+    dbHelper: DbHelperServiceType;
     pdfProcessor: PDFProcessWorker;
     tasks: TaskManager;
     updateSettings(settings: ZotFlowSettings): void;
@@ -91,7 +91,7 @@ let _localTemplate: LocalTemplateService | undefined;
 let _conflict: ConflictService | undefined;
 let _annotation: AnnotationService | undefined;
 let _key: KeyService | undefined;
-let _query: QueryService | undefined;
+let _dbHelper: DbHelperService | undefined;
 let _pdfProcessor: PDFProcessWorker | undefined;
 let _taskManager: TaskManager | undefined;
 let _currentSettings: ZotFlowSettings | undefined;
@@ -111,7 +111,7 @@ function assertInitialized() {
         !_conflict ||
         !_annotation ||
         !_key ||
-        !_query ||
+        !_dbHelper ||
         !_taskManager ||
         !_currentSettings
     ) {
@@ -203,7 +203,7 @@ const exposedApi: WorkerAPI = {
 
             _annotation = new AnnotationService(_note, parentHost);
             _key = new KeyService(_zotero, parentHost);
-            _query = new QueryService();
+            _dbHelper = new DbHelperService(parentHost);
 
             _taskManager = new TaskManager(parentHost);
 
@@ -325,14 +325,14 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_key);
     },
 
-    get query() {
-        if (!_query)
+    get dbHelper() {
+        if (!_dbHelper)
             throw new ZotFlowError(
                 ZotFlowErrorCode.UNKNOWN,
                 "Worker",
                 "Worker not initialized",
             );
-        return Comlink.proxy(_query);
+        return Comlink.proxy(_dbHelper);
     },
 
     get pdfProcessor() {

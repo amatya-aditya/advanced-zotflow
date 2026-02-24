@@ -17,7 +17,7 @@ import type { LocalNoteService } from "worker/services/local-note";
 import type { ConflictService } from "worker/services/conflict";
 import type { AnnotationService } from "worker/services/annotation";
 import type { KeyService } from "worker/services/key";
-import type { QueryService } from "worker/services/query";
+import type { DbHelperService } from "worker/services/db-helper";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
 import type { BatchNoteInput } from "worker/tasks/impl/batch-note-task";
 import type {
@@ -47,7 +47,7 @@ export class WorkerBridge {
     private _conflict: ConflictService;
     private _annotation: AnnotationService;
     private _key: KeyService;
-    private _query: QueryService;
+    private _dbHelper: DbHelperService;
     private _pdfProcessor: PDFProcessWorker;
     private _tasks: TaskManager;
 
@@ -82,7 +82,7 @@ export class WorkerBridge {
         this._conflict = await this._api.conflict;
         this._annotation = await this._api.annotation;
         this._key = await this._api.key;
-        this._query = await this._api.query;
+        this._dbHelper = await this._api.dbHelper;
         this._pdfProcessor = await this._api.pdfProcessor;
         this._tasks = await this._api.tasks;
 
@@ -154,9 +154,9 @@ export class WorkerBridge {
         return this._key;
     }
 
-    get query() {
+    get dbHelper() {
         this.assertInitialized();
-        return this._query;
+        return this._dbHelper;
     }
 
     get pdfProcessWorker() {

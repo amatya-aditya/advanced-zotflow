@@ -81,6 +81,10 @@ interface _IDBZoteroItem<T extends ZoteroItemData> {
     // Annotation Image Version Tracking
     annotationImageVersion?: number;
 
+    // Reader View State (persisted so the reader reopens at the same position)
+    primaryViewState?: Record<string, unknown>;
+    secondaryViewState?: Record<string, unknown>;
+
     // Citation Key
     citationKey?: string;
 
