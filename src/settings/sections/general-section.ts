@@ -150,10 +150,8 @@ export class GeneralSection {
 
         zoteroReaderSettingGroup.addSetting((setting) => {
             setting
-                .setName("Reader Color Scheme")
-                .setDesc(
-                    "Color scheme for the Zotero Reader UI and page background.",
-                )
+                .setName("Reader UI Color Scheme")
+                .setDesc("Color scheme for the Zotero Reader UI.")
                 .addDropdown((dropdown) => {
                     dropdown
                         .addOption("light", "Light")
@@ -174,8 +172,10 @@ export class GeneralSection {
 
         zoteroReaderSettingGroup.addSetting((setting) => {
             setting
-                .setName("Default Light Theme")
-                .setDesc("Default page theme when the reader is in light mode.")
+                .setName("Default Viewer Light Theme")
+                .setDesc(
+                    "Default viewer theme when the reader is in light mode.",
+                )
                 .addDropdown((dropdown) => {
                     dropdown.addOption("original_fallback", "Original");
                     dropdown.addOption("dark", "Dark");
@@ -195,8 +195,10 @@ export class GeneralSection {
 
         zoteroReaderSettingGroup.addSetting((setting) => {
             setting
-                .setName("Default Dark Theme")
-                .setDesc("Default page theme when the reader is in dark mode.")
+                .setName("Default Viewer Dark Theme")
+                .setDesc(
+                    "Default viewer theme when the reader is in dark mode.",
+                )
                 .addDropdown((dropdown) => {
                     dropdown.addOption("original_fallback", "Original");
                     dropdown.addOption("dark", "Dark");
