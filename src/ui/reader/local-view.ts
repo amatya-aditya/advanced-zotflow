@@ -7,6 +7,7 @@ import type {
     CreateReaderOptions,
     ColorScheme,
     AnnotationJSON,
+    CustomReaderTheme,
 } from "types/zotero-reader";
 import { services } from "services/services";
 
@@ -132,15 +133,17 @@ export class LocalReaderView extends ItemView {
                 });
 
                 this.bridge.onEventType("saveCustomThemes", (evt) => {
-                    console.log("Custom themes saved:", evt.customThemes);
+                    services.viewStateService.saveCustomThemes(
+                        evt.customThemes as CustomReaderTheme[],
+                    );
                 });
 
                 this.bridge.onEventType("setLightTheme", (evt) => {
-                    console.log("Set light theme:", evt.theme);
+                    this.handleSetTheme("light", evt.theme);
                 });
 
                 this.bridge.onEventType("setDarkTheme", (evt) => {
-                    console.log("Set dark theme:", evt.theme);
+                    this.handleSetTheme("dark", evt.theme);
                 });
 
                 // Observe color scheme changes via Obsidian's css-change event
@@ -170,7 +173,12 @@ export class LocalReaderView extends ItemView {
 
             // Initialize Reader if ready
             if (this.bridge.state === "bridge-ready") {
-                const themeOverrides = services.settings
+                // Read persisted view state (including saved themes)
+                const viewState = services.viewStateService.getViewState(
+                    file.path,
+                );
+
+                const themeDefaults = services.settings
                     .readerFollowObsidianTheme
                     ? { lightTheme: "obsidian", darkTheme: "obsidian" }
                     : services.settings.readerFollowObsidianScheme
@@ -183,19 +191,23 @@ export class LocalReaderView extends ItemView {
                             darkTheme: "original_fallback",
                         };
 
+                // User's saved theme takes top priority
+                const themeOverrides = {
+                    lightTheme:
+                        viewState?.lightTheme ?? themeDefaults.lightTheme,
+                    darkTheme: viewState?.darkTheme ?? themeDefaults.darkTheme,
+                };
+
                 const opts: Partial<CreateReaderOptions> = {
                     ...this.readerOptions,
-                    colorScheme: this.colorScheme,
                     annotations: loadedAnnotations,
+                    colorScheme: this.colorScheme,
+                    primaryViewState: viewState?.primaryViewState,
+                    customThemes: services.viewStateService.getCustomThemes(),
                     ...themeOverrides,
                 };
 
                 const type = this.getReaderType(file.extension);
-
-                // Read persisted view state from data.json
-                const viewState = services.viewStateService.getViewState(
-                    file.path,
-                );
 
                 // Initialize Reader Logic
                 this.bridge.initReader({
@@ -205,8 +217,6 @@ export class LocalReaderView extends ItemView {
                     },
                     type: type as any,
                     authorName: "",
-                    primaryViewState: viewState?.primaryViewState,
-                    secondaryViewState: viewState?.secondaryViewState,
                     ...opts,
                 });
             }
@@ -283,6 +293,14 @@ export class LocalReaderView extends ItemView {
             primary,
             state as Record<string, unknown>,
         );
+    }
+
+    /**
+     * Persist a theme choice to the view state.
+     */
+    private handleSetTheme(kind: "light" | "dark", theme: unknown) {
+        if (!this.file) return;
+        services.viewStateService.saveTheme(this.file.path, kind, theme);
     }
 
     /**

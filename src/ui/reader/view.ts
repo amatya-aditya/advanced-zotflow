@@ -8,9 +8,10 @@ import type { ViewStateResult } from "obsidian";
 import type { AttachmentData } from "types/zotero-item";
 import type { IDBZoteroItem, IDBZoteroKey } from "types/db-schema";
 import type {
-    CreateReaderOptions,
     AnnotationJSON,
     ColorScheme,
+    CreateReaderOptions,
+    CustomReaderTheme,
 } from "types/zotero-reader";
 import type { ITaskInfo } from "types/tasks";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
@@ -21,13 +22,11 @@ export const ZOTERO_READER_VIEW_TYPE = "zotflow-zotero-reader-view";
 interface ReaderViewState extends Record<string, unknown> {
     libraryID: number;
     itemKey: string;
-    readerOptions: Partial<CreateReaderOptions>;
 }
 
 /** Obsidian `ItemView` that embeds the Zotero reader iframe for remote/cloud attachments. */
 export class ZoteroReaderView extends ItemView {
     private attachmentItem: IDBZoteroItem<AttachmentData>;
-    private readerOptions: Partial<CreateReaderOptions>;
     private keyInfo: IDBZoteroKey;
 
     private bridge?: IframeReaderBridge;
@@ -92,7 +91,6 @@ export class ZoteroReaderView extends ItemView {
             this.loadDocument();
         }
 
-        this.readerOptions = state.readerOptions;
         super.setState(state, result);
     }
 
@@ -173,15 +171,17 @@ export class ZoteroReaderView extends ItemView {
                 });
 
                 this.bridge.onEventType("saveCustomThemes", (evt) => {
-                    console.log("Custom themes saved:", evt.customThemes);
+                    services.viewStateService.saveCustomThemes(
+                        evt.customThemes as CustomReaderTheme[],
+                    );
                 });
 
                 this.bridge.onEventType("setLightTheme", (evt) => {
-                    console.log("Set light theme:", evt.theme);
+                    this.handleSetTheme("light", evt.theme);
                 });
 
                 this.bridge.onEventType("setDarkTheme", (evt) => {
-                    console.log("Set dark theme:", evt.theme);
+                    this.handleSetTheme("dark", evt.theme);
                 });
 
                 // Observe color scheme changes via Obsidian's css-change event
@@ -237,7 +237,14 @@ export class ZoteroReaderView extends ItemView {
             );
             // Initialize Reader if ready
             if (this.bridge.state === "bridge-ready") {
-                const themeOverrides = services.settings
+                const savedViewState = services.viewStateService.getViewState(
+                    ViewStateService.remoteKey(
+                        this.attachmentItem.libraryID,
+                        this.attachmentItem.key,
+                    ),
+                );
+
+                const themeDefaults = services.settings
                     .readerFollowObsidianTheme
                     ? { lightTheme: "obsidian", darkTheme: "obsidian" }
                     : services.settings.readerFollowObsidianScheme
@@ -250,10 +257,19 @@ export class ZoteroReaderView extends ItemView {
                             darkTheme: "original_fallback",
                         };
 
+                // User's saved theme takes top priority
+                const themeOverrides = {
+                    lightTheme:
+                        savedViewState?.lightTheme ?? themeDefaults.lightTheme,
+                    darkTheme:
+                        savedViewState?.darkTheme ?? themeDefaults.darkTheme,
+                };
+
                 const opts: Partial<CreateReaderOptions> = {
-                    ...this.readerOptions,
-                    colorScheme: this.colorScheme,
                     annotations: annotationJson,
+                    primaryViewState: savedViewState?.primaryViewState,
+                    colorScheme: this.colorScheme,
+                    customThemes: services.viewStateService.getCustomThemes(),
                     ...themeOverrides,
                 };
 
@@ -289,13 +305,6 @@ export class ZoteroReaderView extends ItemView {
                         ? this.keyInfo.username || ""
                         : "";
 
-                const savedViewState = services.viewStateService.getViewState(
-                    ViewStateService.remoteKey(
-                        this.attachmentItem.libraryID,
-                        this.attachmentItem.key,
-                    ),
-                );
-
                 // Initialize Reader Logic
                 this.bridge.initReader({
                     data: {
@@ -304,7 +313,6 @@ export class ZoteroReaderView extends ItemView {
                     },
                     type: type,
                     authorName,
-                    primaryViewState: savedViewState?.primaryViewState,
                     ...opts,
                 });
 
@@ -341,7 +349,6 @@ export class ZoteroReaderView extends ItemView {
         return {
             libraryID: this.attachmentItem.libraryID,
             itemKey: this.attachmentItem.key,
-            readerOptions: this.readerOptions,
         };
     }
 
@@ -488,6 +495,21 @@ export class ZoteroReaderView extends ItemView {
                 "Failed to extract external annotations",
             );
         }
+    }
+
+    /**
+     * Persist a theme choice to the view state.
+     */
+    private handleSetTheme(kind: "light" | "dark", theme: unknown) {
+        if (!this.attachmentItem) return;
+        services.viewStateService.saveTheme(
+            ViewStateService.remoteKey(
+                this.attachmentItem.libraryID,
+                this.attachmentItem.key,
+            ),
+            kind,
+            theme,
+        );
     }
 
     /**

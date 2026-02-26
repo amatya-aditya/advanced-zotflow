@@ -35,6 +35,7 @@ import type {
     ZotFlowPluginData,
     ViewStateEntry,
 } from "./settings/types";
+import type { CustomReaderTheme } from "types/zotero-reader";
 
 import {
     LOCAL_ZOTERO_READER_VIEW_TYPE,
@@ -48,6 +49,7 @@ const SUPPORTED_EXTENSIONS = ["pdf", "epub", "html"];
 export default class ZotFlow extends Plugin {
     settings: ZotFlowSettings;
     viewStates: Record<string, ViewStateEntry>;
+    customThemes: CustomReaderTheme[] = [];
 
     async onload() {
         // Load settings
@@ -56,6 +58,7 @@ export default class ZotFlow extends Plugin {
         // Initialize local services
         services.initialize(this, this.settings);
         services.viewStateService.setViewStates(this.viewStates);
+        services.viewStateService.setCustomThemes(this.customThemes);
 
         // Initialize worker bridge
         try {
@@ -280,10 +283,12 @@ export default class ZotFlow extends Plugin {
             const data = raw as Partial<ZotFlowPluginData>;
             this.settings = { ...DEFAULT_SETTINGS, ...data.settings };
             this.viewStates = { ...(data.viewStates ?? {}) };
+            this.customThemes = data.customThemes ?? [];
         } else {
             // Legacy flat format
             this.settings = { ...DEFAULT_SETTINGS, ...raw };
             this.viewStates = {};
+            this.customThemes = [];
         }
 
         // Load sensitive credentials from SecretStorage (cross-platform safe)
@@ -296,6 +301,7 @@ export default class ZotFlow extends Plugin {
         // Persist nested data.json (without sensitive fields)
         const data: ZotFlowPluginData = {
             settings: stripCredentials(this.settings),
+            customThemes: services.viewStateService.getCustomThemes(),
             viewStates: services.viewStateService.getViewStatesMap(),
         };
         await this.saveData(data);

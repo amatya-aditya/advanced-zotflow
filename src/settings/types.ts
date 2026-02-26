@@ -1,3 +1,5 @@
+import type { CustomReaderTheme } from "types/zotero-reader";
+
 /** Per-library sync mode. */
 export type LibrarySyncMode = "bidirectional" | "readonly" | "ignored";
 
@@ -36,6 +38,8 @@ export interface ZotFlowSettings {
 export interface ViewStateEntry {
     primaryViewState?: Record<string, unknown>;
     secondaryViewState?: Record<string, unknown>;
+    lightTheme?: string;
+    darkTheme?: string;
 }
 
 /**
@@ -46,6 +50,7 @@ export interface ViewStateEntry {
  */
 export interface ZotFlowPluginData {
     settings: ZotFlowSettings;
+    customThemes: CustomReaderTheme[];
     viewStates: Record<string, ViewStateEntry>;
 }
 
@@ -72,5 +77,6 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
 /** Default shape of the full `data.json` blob (settings + view states). */
 export const DEFAULT_PLUGIN_DATA: ZotFlowPluginData = {
     settings: { ...DEFAULT_SETTINGS },
+    customThemes: [],
     viewStates: {},
 };

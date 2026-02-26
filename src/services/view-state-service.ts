@@ -5,6 +5,7 @@ import type {
     ZotFlowPluginData,
     ZotFlowSettings,
 } from "settings/types";
+import type { CustomReaderTheme } from "types/zotero-reader";
 import { stripCredentials } from "utils/credentials";
 
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 1_000;
@@ -31,10 +32,27 @@ export class ViewStateService {
 
     private _viewStates: Record<string, ViewStateEntry> = {};
     private _viewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
+    private _customThemes: CustomReaderTheme[] = [];
 
     /** Bulk-set the in-memory view state map (called once during plugin load). */
     setViewStates(states: Record<string, ViewStateEntry>) {
         this._viewStates = states;
+    }
+
+    /** Bulk-set custom themes (called once during plugin load). */
+    setCustomThemes(themes: CustomReaderTheme[]) {
+        this._customThemes = themes;
+    }
+
+    /** Get the current custom themes array. */
+    getCustomThemes(): CustomReaderTheme[] {
+        return this._customThemes;
+    }
+
+    /** Persist new custom themes and schedule a debounced save. */
+    saveCustomThemes(themes: CustomReaderTheme[]): void {
+        this._customThemes = themes;
+        this.schedulePersistViewStates();
     }
 
     /** Get persisted view state by key. */
@@ -61,6 +79,22 @@ export class ViewStateService {
             entry.primaryViewState = state;
         } else {
             entry.secondaryViewState = state;
+        }
+        this._viewStates[key] = entry;
+        this.schedulePersistViewStates();
+    }
+
+    /** Save a theme preference for an attachment and schedule a debounced persist. */
+    saveTheme(
+        key: string,
+        kind: "light" | "dark",
+        theme: unknown,
+    ): void {
+        const entry = this._viewStates[key] ?? {};
+        if (kind === "light") {
+            entry.lightTheme = theme as string | undefined;
+        } else {
+            entry.darkTheme = theme as string | undefined;
         }
         this._viewStates[key] = entry;
         this.schedulePersistViewStates();
@@ -111,6 +145,7 @@ export class ViewStateService {
     private persistViewStates(): void {
         const data: ZotFlowPluginData = {
             settings: stripCredentials(this._settingsGetter()),
+            customThemes: this._customThemes,
             viewStates: this._viewStates,
         };
         this._plugin.saveData(data).catch((e: unknown) => {
