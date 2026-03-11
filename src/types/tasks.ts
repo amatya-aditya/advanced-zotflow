@@ -14,6 +14,7 @@ export type TaskType =
     | "batch-extract-images"
     | "batch-extract-external-annotations"
     | "download-attachment"
+    | "workflow"
     | "test-task";
 
 /** Progress snapshot for a running task. */

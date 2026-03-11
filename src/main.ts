@@ -42,6 +42,19 @@ import {
     LocalReaderView,
 } from "ui/reader/local-view";
 import { ZotFlowCommentExtension } from "ui/editor/zotflow-comment-extension";
+import {
+    WORKFLOW_VIEW_TYPE,
+    WORKFLOW_EXTENSION,
+    ZotFlowWorkflowView,
+} from "ui/workflow/view";
+import { conditionNode } from "ui/workflow/nodes/controls/ConditionNode";
+import { setVariableNode } from "ui/workflow/nodes/controls/SetVariableNode";
+import { terminateNode } from "ui/workflow/nodes/controls/TerminateNode";
+import { switchNode } from "ui/workflow/nodes/controls/SwitchNode";
+import { applyToEachNode } from "ui/workflow/nodes/controls/ApplyToEachNode";
+import { registerNodeType } from "ui/workflow/node-registry";
+import { exampleAction } from "ui/workflow/nodes/actions/ExampleActionNode";
+import { manualTrigger } from "ui/workflow/nodes/triggers/ManualTriggerNode";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "epub", "html"];
 
@@ -88,6 +101,13 @@ export default class ZotFlow extends Plugin {
             LOCAL_ZOTERO_READER_VIEW_TYPE,
             (leaf) => new LocalReaderView(leaf),
         );
+        this.registerView(
+            WORKFLOW_VIEW_TYPE,
+            (leaf) => new ZotFlowWorkflowView(leaf),
+        );
+
+        // Register .zotflow extension
+        this.registerExtensions([WORKFLOW_EXTENSION], WORKFLOW_VIEW_TYPE);
 
         // Add tree view to left
         this.app.workspace.onLayoutReady(async () => {
@@ -147,6 +167,15 @@ export default class ZotFlow extends Plugin {
             "",
             new Component(),
         );
+
+        // Register all built-in node types
+        registerNodeType(manualTrigger);
+        registerNodeType(exampleAction);
+        registerNodeType(conditionNode);
+        registerNodeType(setVariableNode);
+        registerNodeType(terminateNode);
+        registerNodeType(switchNode);
+        registerNodeType(applyToEachNode);
 
         this.addRibbonIcon(
             "zotero-icon",

@@ -12,6 +12,7 @@ const TASK_TYPE_ICONS: Record<TaskType, string> = {
     "batch-extract-images": "image",
     "batch-extract-external-annotations": "scan-search",
     "download-attachment": "download",
+    workflow: "git-branch",
     "test-task": "flask-conical",
 };
 
@@ -56,9 +57,13 @@ const ActiveTaskCard: React.FC<{
     const handleCancel = useCallback(
         (e: React.MouseEvent) => {
             e.stopPropagation();
-            workerBridge.cancelTask(task.id);
+            if (task.type === "workflow") {
+                services.workflowService.cancelRun(task.id);
+            } else {
+                workerBridge.cancelTask(task.id);
+            }
         },
-        [task.id],
+        [task.id, task.type],
     );
 
     const inputJson = formatDetailsJson(task.input);

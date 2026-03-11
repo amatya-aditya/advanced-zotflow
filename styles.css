@@ -1,3 +1,847 @@
+/* Query Builder Styles */
+:root {
+    --rqb-spacing: 0.5rem;
+    --rqb-border-width: 1px;
+    --rqb-branch-indent: var(--rqb-spacing);
+    --rqb-branch-width: var(--rqb-border-width);
+    --rqb-base-color: #004bb8;
+    --rqb-background-color: color-mix(in srgb, transparent, #004bb8 20%);
+    --rqb-border-color: #8081a2;
+    --rqb-border-style: solid;
+    --rqb-border-radius: 0.25rem;
+    --rqb-dnd-drop-indicator-color: rebeccapurple;
+    --rqb-dnd-drop-indicator-style: dashed;
+    --rqb-dnd-drop-indicator-width: 2px;
+    --rqb-dnd-drop-indicator-copy-color: #693;
+    --rqb-dnd-drop-indicator-copy-style: dashed;
+    --rqb-dnd-drop-indicator-copy-width: 2px;
+    --rqb-dnd-drop-indicator-group-color: #369;
+    --rqb-dnd-drop-indicator-group-style: dashed;
+    --rqb-dnd-drop-indicator-group-width: 2px;
+    --rqb-dnd-drop-not-allowed-cursor: not-allowed;
+    --rqb-branch-color: var(--rqb-border-color);
+    --rqb-branch-radius: var(--rqb-border-radius);
+    --rqb-branch-style: var(--rqb-border-style);
+}
+.ruleGroup {
+    display: flex;
+    flex-direction: column;
+    gap: var(--rqb-spacing);
+    padding: var(--rqb-spacing);
+    border-width: var(--rqb-border-width);
+}
+.ruleGroup .ruleGroup-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--rqb-spacing);
+}
+.ruleGroup .ruleGroup-body:empty {
+    display: none;
+}
+.ruleGroup .ruleGroup-header,
+.ruleGroup .rule {
+    display: flex;
+    gap: var(--rqb-spacing);
+    align-items: center;
+}
+.ruleGroup .rule .rule-value:has(.rule-value-list-item) {
+    display: flex;
+    gap: var(--rqb-spacing);
+    align-items: baseline;
+}
+.ruleGroup .rule.rule-hasSubQuery {
+    flex-wrap: wrap;
+    padding: var(--rqb-spacing);
+    border-width: var(--rqb-border-width);
+}
+.ruleGroup .rule.rule-hasSubQuery .ruleGroup-body {
+    flex-basis: 100%;
+}
+.ruleGroup .betweenRules {
+    display: flex;
+}
+.ruleGroup .shiftActions {
+    display: flex;
+    flex-direction: column;
+}
+.ruleGroup .shiftActions > * {
+    padding: 0;
+}
+.dndOver.rule,
+.dndOver.ruleGroup-header {
+    padding-bottom: var(--rqb-spacing);
+}
+.dndOver.betweenRules {
+    padding-top: var(--rqb-spacing);
+}
+.dndGroup.rule.dndOver,
+.dndGroup.ruleGroup:has(.ruleGroup-header.dndOver) {
+    padding: var(--rqb-spacing);
+}
+.queryBuilder-branches:dir(ltr) .ruleGroup-body {
+    margin-left: calc(2 * var(--rqb-branch-indent));
+}
+.queryBuilder-branches:dir(ltr) .rule,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup {
+    position: relative;
+}
+.queryBuilder-branches:dir(ltr) .rule::before,
+.queryBuilder-branches:dir(ltr) .rule::after,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::before,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::after {
+    content: "";
+    width: var(--rqb-branch-indent);
+    left: calc(-1 * (var(--rqb-branch-indent) + var(--rqb-branch-width)));
+    border-radius: 0;
+    position: absolute;
+}
+.queryBuilder-branches:dir(ltr) .rule::before,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::before {
+    top: calc(-1 * var(--rqb-spacing));
+    height: calc(50% + var(--rqb-spacing));
+    border-width: 0 0 var(--rqb-branch-width) var(--rqb-branch-width);
+}
+.queryBuilder-branches:dir(ltr) .rule::after,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::after {
+    top: 50%;
+    height: 50%;
+    border-width: 0 0 0 var(--rqb-branch-width);
+}
+.queryBuilder-branches:dir(ltr) .rule:last-child::after,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup:last-child::after {
+    display: none;
+}
+.queryBuilder-branches:dir(ltr) .rule-hasSubQuery::before,
+.queryBuilder-branches:dir(ltr) .rule-hasSubQuery::after,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::before,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::after {
+    left: calc(
+        -1 *
+            (
+                var(--rqb-branch-indent) + var(--rqb-branch-width) +
+                    var(--rqb-border-width)
+            )
+    );
+}
+.queryBuilder-branches:dir(ltr) .rule-hasSubQuery::before,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::before {
+    top: calc(-1 * (var(--rqb-spacing) + var(--rqb-border-width)));
+    height: calc(50% + var(--rqb-spacing) + var(--rqb-border-width));
+}
+.queryBuilder-branches:dir(ltr) .rule-hasSubQuery::after,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::after {
+    height: calc(50% + var(--rqb-border-width));
+}
+.queryBuilder-branches:dir(ltr) .betweenRules {
+    position: relative;
+}
+.queryBuilder-branches:dir(ltr) .betweenRules::before {
+    content: "";
+    width: var(--rqb-branch-indent);
+    left: calc(-1 * (var(--rqb-branch-indent) + var(--rqb-branch-width)));
+    border-radius: 0;
+    position: absolute;
+    top: calc(-1 * var(--rqb-spacing));
+    height: calc(100% + var(--rqb-spacing));
+    border-width: 0 0 0 var(--rqb-branch-width);
+}
+.queryBuilder-branches:dir(rtl) .ruleGroup-body {
+    margin-right: calc(2 * var(--rqb-branch-indent));
+}
+.queryBuilder-branches:dir(rtl) .rule,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup {
+    position: relative;
+}
+.queryBuilder-branches:dir(rtl) .rule::before,
+.queryBuilder-branches:dir(rtl) .rule::after,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::before,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::after {
+    content: "";
+    width: var(--rqb-branch-indent);
+    right: calc(-1 * (var(--rqb-branch-indent) + var(--rqb-branch-width)));
+    border-radius: 0;
+    position: absolute;
+}
+.queryBuilder-branches:dir(rtl) .rule::after,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::after {
+    top: calc(-1 * var(--rqb-spacing));
+    height: calc(50% + var(--rqb-spacing));
+    border-width: 0 var(--rqb-branch-width) var(--rqb-branch-width) 0;
+}
+.queryBuilder-branches:dir(rtl) .rule::before,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::before {
+    top: 50%;
+    height: 50%;
+    border-width: 0 var(--rqb-branch-width) 0 0;
+}
+.queryBuilder-branches:dir(rtl) .rule:last-child::before,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup:last-child::before {
+    display: none;
+}
+.queryBuilder-branches:dir(rtl) .rule-hasSubQuery::before,
+.queryBuilder-branches:dir(rtl) .rule-hasSubQuery::after,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::before,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::after {
+    right: calc(
+        -1 *
+            (
+                var(--rqb-branch-indent) + var(--rqb-branch-width) +
+                    var(--rqb-border-width)
+            )
+    );
+}
+.queryBuilder-branches:dir(rtl) .rule-hasSubQuery::after,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::after {
+    top: calc(-1 * (var(--rqb-spacing) + var(--rqb-border-width)));
+    height: calc(50% + var(--rqb-spacing) + var(--rqb-border-width));
+}
+.queryBuilder-branches:dir(rtl) .rule-hasSubQuery::before,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::before {
+    height: calc(50% + var(--rqb-border-width));
+}
+.queryBuilder-branches:dir(rtl) .betweenRules {
+    position: relative;
+}
+.queryBuilder-branches:dir(rtl) .betweenRules::after {
+    content: "";
+    width: var(--rqb-branch-indent);
+    right: calc(-1 * (var(--rqb-branch-indent) + var(--rqb-branch-width)));
+    border-radius: 0;
+    position: absolute;
+    top: calc(-1 * var(--rqb-spacing));
+    height: calc(100% + var(--rqb-spacing));
+    border-width: 0 var(--rqb-branch-width) 0 0;
+}
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .rule-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-combinators + .rule-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .rule-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .rule-remove,
+.queryBuilder-justified:dir(ltr) .shiftActions + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .shiftActions + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .shiftActions + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .shiftActions + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .shiftActions + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .shiftActions + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .shiftActions + .rule-lock,
+.queryBuilder-justified:dir(ltr) .shiftActions + .rule-remove,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr)
+    .queryBuilder-dragHandle
+    + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .rule-lock,
+.queryBuilder-justified:dir(ltr) .queryBuilder-dragHandle + .rule-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .rule-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-notToggle + .rule-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .rule-lock,
+.queryBuilder-justified:dir(ltr) .ruleGroup-header + .rule-remove,
+.queryBuilder-justified:dir(ltr) .rule-operators + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .rule-operators + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .rule-operators + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .rule-operators + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .rule-operators + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .rule-operators + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .rule-operators + .rule-lock,
+.queryBuilder-justified:dir(ltr) .rule-operators + .rule-remove,
+.queryBuilder-justified:dir(ltr) .rule-value + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .rule-value + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .rule-value + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .rule-value + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .rule-value + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .rule-value + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .rule-value + .rule-lock,
+.queryBuilder-justified:dir(ltr) .rule-value + .rule-remove,
+.queryBuilder-justified:dir(ltr) .control + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .control + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) .control + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .control + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .control + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .control + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .control + .rule-lock,
+.queryBuilder-justified:dir(ltr) .control + .rule-remove,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr)
+    .chakra-select__wrapper
+    + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .rule-lock,
+.queryBuilder-justified:dir(ltr) .chakra-select__wrapper + .rule-remove,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .ruleGroup-addRule,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .ruleGroup-lock,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .ruleGroup-remove,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .rule-cloneRule,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .rule-lock,
+.queryBuilder-justified:dir(ltr) input[type="hidden"] + .rule-remove {
+    margin-left: auto !important;
+}
+.queryBuilder-justified:dir(ltr) .ruleGroup-addRule:first-child,
+.queryBuilder-justified:dir(ltr) .ruleGroup-addGroup:first-child {
+    margin-left: auto !important;
+}
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .rule-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-combinators + .rule-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .rule-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .rule-remove,
+.queryBuilder-justified:dir(rtl) .shiftActions + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .shiftActions + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .shiftActions + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .shiftActions + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .shiftActions + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .shiftActions + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .shiftActions + .rule-lock,
+.queryBuilder-justified:dir(rtl) .shiftActions + .rule-remove,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl)
+    .queryBuilder-dragHandle
+    + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .rule-lock,
+.queryBuilder-justified:dir(rtl) .queryBuilder-dragHandle + .rule-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .rule-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-notToggle + .rule-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .rule-lock,
+.queryBuilder-justified:dir(rtl) .ruleGroup-header + .rule-remove,
+.queryBuilder-justified:dir(rtl) .rule-operators + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .rule-operators + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .rule-operators + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .rule-operators + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .rule-operators + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .rule-operators + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .rule-operators + .rule-lock,
+.queryBuilder-justified:dir(rtl) .rule-operators + .rule-remove,
+.queryBuilder-justified:dir(rtl) .rule-value + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .rule-value + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .rule-value + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .rule-value + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .rule-value + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .rule-value + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .rule-value + .rule-lock,
+.queryBuilder-justified:dir(rtl) .rule-value + .rule-remove,
+.queryBuilder-justified:dir(rtl) .control + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .control + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) .control + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .control + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .control + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .control + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .control + .rule-lock,
+.queryBuilder-justified:dir(rtl) .control + .rule-remove,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl)
+    .chakra-select__wrapper
+    + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .rule-lock,
+.queryBuilder-justified:dir(rtl) .chakra-select__wrapper + .rule-remove,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .ruleGroup-addRule,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .ruleGroup-addGroup,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .ruleGroup-cloneGroup,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .ruleGroup-lock,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .ruleGroup-remove,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .rule-cloneRule,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .rule-lock,
+.queryBuilder-justified:dir(rtl) input[type="hidden"] + .rule-remove {
+    margin-right: auto !important;
+}
+.queryBuilder-justified:dir(rtl) .ruleGroup-addRule:first-child,
+.queryBuilder-justified:dir(rtl) .ruleGroup-addGroup:first-child {
+    margin-right: auto !important;
+}
+.ruleGroup,
+.rule-hasSubQuery {
+    border-color: var(--rqb-border-color);
+    border-style: var(--rqb-border-style);
+    border-radius: var(--rqb-border-radius);
+    background: var(--rqb-background-color);
+}
+.ruleGroup .shiftActions > *,
+.rule-hasSubQuery .shiftActions > * {
+    background-color: rgba(0, 0, 0, 0);
+    border: none;
+    cursor: pointer;
+}
+.dndOver.rule,
+.dndOver.ruleGroup-header:not(.dndGroup .ruleGroup-header) {
+    border-bottom-width: var(--rqb-dnd-drop-indicator-width);
+    border-bottom-style: var(--rqb-dnd-drop-indicator-style);
+    border-bottom-color: var(--rqb-dnd-drop-indicator-color);
+}
+.dndOver.rule.dndCopy,
+.dndOver.ruleGroup-header:not(.dndGroup .ruleGroup-header).dndCopy {
+    border-bottom-width: var(--rqb-dnd-drop-indicator-copy-width);
+    border-bottom-style: var(--rqb-dnd-drop-indicator-copy-style);
+    border-bottom-color: var(--rqb-dnd-drop-indicator-copy-color);
+}
+.dndOver.betweenRules {
+    border-top-width: var(--rqb-dnd-drop-indicator-width);
+    border-top-style: var(--rqb-dnd-drop-indicator-style);
+    border-top-color: var(--rqb-dnd-drop-indicator-color);
+}
+.dndOver.betweenRules.dndCopy {
+    border-top-width: var(--rqb-dnd-drop-indicator-copy-width);
+    border-top-style: var(--rqb-dnd-drop-indicator-copy-style);
+    border-top-color: var(--rqb-dnd-drop-indicator-copy-color);
+}
+.dndDropNotAllowed {
+    cursor: var(--rqb-dnd-drop-not-allowed-cursor);
+}
+.dndGroup.rule.dndOver,
+.dndGroup.ruleGroup:has(> .ruleGroup-header.dndOver) {
+    border-width: var(--rqb-dnd-drop-indicator-group-width);
+    border-style: var(--rqb-dnd-drop-indicator-group-style);
+    border-color: var(--rqb-dnd-drop-indicator-group-color);
+    border-radius: var(--rqb-border-radius);
+}
+.dndGroup.rule.dndOver.dndCopy,
+.dndGroup.ruleGroup:has(> .ruleGroup-header.dndOver).dndCopy {
+    border-color: var(--rqb-dnd-drop-indicator-copy-color);
+    border-width: var(--rqb-dnd-drop-indicator-copy-width);
+    border-style: var(--rqb-dnd-drop-indicator-copy-style);
+}
+.ruleGroup.dndDragging,
+.rule.dndDragging {
+    opacity: 0.5;
+}
+.ruleGroup .queryBuilder-dragHandle,
+.rule .queryBuilder-dragHandle {
+    cursor: move;
+}
+.ruleGroup.queryBuilder-disabled .queryBuilder-dragHandle,
+.rule.queryBuilder-disabled .queryBuilder-dragHandle {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+.queryBuilder-branches:dir(ltr) .rule::before,
+.queryBuilder-branches:dir(ltr) .rule::after,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::before,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup::after {
+    border-color: var(--rqb-branch-color);
+    border-style: var(--rqb-branch-style);
+}
+.queryBuilder-branches:dir(ltr) .rule:last-child::before,
+.queryBuilder-branches:dir(ltr) .ruleGroup .ruleGroup:last-child::before {
+    border-bottom-left-radius: var(--rqb-branch-radius);
+}
+.queryBuilder-branches:dir(ltr) .betweenRules {
+    position: relative;
+}
+.queryBuilder-branches:dir(ltr) .betweenRules::before {
+    border-color: var(--rqb-branch-color);
+    border-style: var(--rqb-branch-style);
+}
+.queryBuilder-branches:dir(rtl) .rule::before,
+.queryBuilder-branches:dir(rtl) .rule::after,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::before,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup::after {
+    border-color: var(--rqb-branch-color);
+    border-style: var(--rqb-branch-style);
+}
+.queryBuilder-branches:dir(rtl) .rule:last-child::after,
+.queryBuilder-branches:dir(rtl) .ruleGroup .ruleGroup:last-child::after {
+    border-bottom-right-radius: var(--rqb-branch-radius);
+}
+.queryBuilder-branches:dir(rtl) .betweenRules {
+    position: relative;
+}
+.queryBuilder-branches:dir(rtl) .betweenRules::after {
+    border-color: var(--rqb-branch-color);
+    border-style: var(--rqb-branch-style);
+}
+
+/*-----------------------------------------------------------------------------
+ * ZotFlow Query Builder (Sidebar Customization)
+ * --------------------------------------------------------------------------*/
+
+.zotflow-query-builder {
+    --rqb-spacing: 0.25rem;
+    --rqb-border-width: 1px;
+    --rqb-border-color: var(--background-modifier-border);
+    --rqb-border-radius: var(--radius-s);
+    --rqb-background-color: var(--background-secondary);
+    --rqb-branch-color: var(--background-modifier-border);
+    margin-top: 4px;
+    width: 100%;
+    /* Keep width constrained to parent node */
+    max-width: 100%;
+}
+
+.zotflow-query-builder .ruleGroup {
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: 10px;
+}
+
+.zotflow-query-builder .ruleGroup-header {
+    flex-wrap: wrap;
+    gap: var(--rqb-spacing);
+}
+
+.zotflow-query-builder .rule {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--rqb-spacing);
+    align-items: center;
+    background: var(--background-secondary-alt);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: 10px;
+}
+
+/* Base styling for buttons and inputs so they look native to Obsidian */
+.zotflow-query-builder input,
+.zotflow-query-builder button {
+    background-color: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    border-radius: var(--radius-s);
+    padding: 0.25rem 0.5rem;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-interface);
+    min-height: 24px;
+    box-sizing: border-box;
+    transition:
+        box-shadow 0.15s ease-in-out,
+        border-color 0.15s ease-in-out;
+}
+
+.zotflow-query-builder input:hover,
+.zotflow-query-builder button:hover {
+    border-color: var(--background-modifier-border-hover);
+}
+
+.zotflow-query-builder input:focus {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+    outline: none;
+}
+
+/* Action buttons */
+.zotflow-query-builder button {
+    cursor: pointer;
+    background-color: var(--interactive-normal);
+    color: var(--text-muted);
+}
+
+.zotflow-query-builder button:hover {
+    background-color: var(--interactive-hover);
+    color: var(--text-normal);
+}
+
+/* Specific styling for Remove (Trash) buttons */
+.zotflow-query-builder button.rule-remove,
+.zotflow-query-builder button.group-remove {
+    background-color: transparent;
+    color: var(--text-error);
+    border: none;
+    box-shadow: none;
+    padding: 0.25em;
+}
+
+.zotflow-query-builder button.rule-remove:hover,
+.zotflow-query-builder button.group-remove:hover {
+    background-color: transparent;
+    color: var(--text-error-hover, #ff5555);
+    opacity: 0.8;
+}
+
+/* Row 1: field (1st child) + operator (2nd child) fill the line */
+.zotflow-query-builder .rule > :nth-child(1),
+.zotflow-query-builder .rule > :nth-child(2) {
+    flex: 1 1 calc(50% - var(--rqb-spacing) / 2);
+    min-width: calc(50% - var(--rqb-spacing) / 2);
+}
+
+/* Row 2: value editor (middle children) fills remaining space */
+.zotflow-query-builder .rule > :nth-child(n + 3):not(:last-child) {
+    flex: 1 1 0%;
+    min-width: 0;
+}
+
+/* Trash button (always last child) */
+.zotflow-query-builder .rule > :last-child {
+    flex: 0 0 auto;
+}
+
+/* Ensure expression wrappers and selects fill their flex containers */
+.zotflow-query-builder .rule .zotflow-wf-expression-wrapper {
+    width: 100%;
+}
+
+.zotflow-query-builder .rule > select {
+    width: 100%;
+}
+
+/* --- Condition node canvas summary ------------------------------------- */
+
+.zotflow-wf-condition-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-wf-condition-summary--empty {
+    font-style: italic;
+}
+
+.zotflow-wf-condition-rule {
+    background: var(--background-secondary);
+    border-radius: var(--radius-s);
+    padding: 2px 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+}
+
+.zotflow-wf-condition-combinator {
+    text-transform: uppercase;
+    font-size: 10px;
+    font-weight: var(--font-semibold);
+    color: var(--text-faint);
+    padding: 0 2px;
+    text-align: center;
+}
+
+.zotflow-wf-condition-more,
+.zotflow-wf-condition-count {
+    font-size: 10px;
+    color: var(--text-faint);
+    text-align: right;
+}
+
+/* Set Variable node — canvas body */
+
+.zotflow-wf-setvar-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.zotflow-wf-setvar-body--empty {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.zotflow-wf-setvar-assignment {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--font-ui-smaller);
+    font-family: var(--font-monospace);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-wf-setvar-name {
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+}
+
+.zotflow-wf-setvar-arrow {
+    color: var(--text-muted);
+}
+
+.zotflow-wf-setvar-value {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.zotflow-wf-setvar-more {
+    font-size: 10px;
+    color: var(--text-faint);
+    text-align: right;
+}
+
+/* Set Variable node — properties panel */
+
+.zotflow-wf-setvar-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.zotflow-wf-setvar-inputs {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    padding: var(--size-2-2) 0;
+}
+
+.zotflow-wf-setvar-inputs > input[type="text"] {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.zotflow-wf-setvar-inputs > select {
+    flex: 0 0 auto;
+}
+
+.zotflow-wf-setvar-inputs > .zotflow-wf-expression-wrapper {
+    flex: 2 1 0;
+    min-width: 0;
+}
+
+.zotflow-wf-setvar-row > .clickable-icon {
+    flex: 0 0 auto;
+}
+
+.zotflow-wf-setvar-add {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: var(--font-ui-smaller);
+    padding: 4px 0;
+}
+
+.zotflow-wf-setvar-add:hover {
+    color: var(--text-normal);
+}
+
+/* Terminate node — canvas body */
+
+.zotflow-wf-terminate-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-ui-smaller);
+}
+
+.zotflow-wf-terminate-msg {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Switch node — canvas body */
+
+.zotflow-wf-switch-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.zotflow-wf-switch-expr {
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-wf-switch-info {
+    font-size: 10px;
+    color: var(--text-faint);
+}
+
+/* Switch node — properties */
+
+.zotflow-wf-switch-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.zotflow-wf-switch-row > input[type="text"] {
+    flex: 1 1 0;
+    min-width: 60px;
+}
+
+.zotflow-wf-switch-row > .zotflow-wf-expression-wrapper {
+    flex: 2 1 0;
+    min-width: 80px;
+}
+
+.zotflow-wf-switch-add {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: var(--font-ui-smaller);
+    padding: 4px 0;
+}
+
+.zotflow-wf-switch-add:hover {
+    color: var(--text-normal);
+}
+
 /* Notification Styles */
 
 .zotflow-notice-container {
@@ -1325,4 +2169,1409 @@
     color: var(--text-faint);
     text-align: center;
     padding: var(--size-4-6);
+}
+
+/* =========================================================================
+   Workflow View (.zotflow)
+   ========================================================================= */
+
+.zotflow-wf-root {
+    padding: 0 !important;
+    overflow: hidden;
+}
+
+.zotflow-wf-container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+}
+
+.zotflow-wf-canvas {
+    flex: 1;
+    min-height: 0;
+}
+
+/* --- Node base --------------------------------------------------------- */
+
+.zotflow-wf-node {
+    background: var(--background-primary);
+    border: 1px solid rgba(var(--node-color-rgb), var(--callout-border-opacity));
+    border-radius: var(--radius-m);
+    min-width: 180px;
+    max-width: 280px;
+    box-shadow: var(--shadow-s);
+    overflow: hidden;
+    transition: box-shadow 120ms ease;
+    font-size: var(--font-ui-medium);
+}
+
+.zotflow-wf-node--selected {
+    box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+/* --- Node header ------------------------------------------------------- */
+
+.zotflow-wf-node-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-weight: var(--font-semibold);
+    font-size: var(--font-ui-medium);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+
+    background: rgba(var(--node-color-rgb), 0.1);
+    color: rgb(var(--node-color-rgb));
+}
+
+.zotflow-wf-node-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: inherit;
+}
+
+.zotflow-wf-node-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Node body --------------------------------------------------------- */
+
+.zotflow-wf-node-body {
+    padding: 8px 10px;
+}
+
+.zotflow-wf-node-desc {
+    color: var(--text-muted);
+    font-size: var(--font-ui-medium);
+    margin-bottom: 6px;
+}
+
+/* --- Handles ----------------------------------------------------------- */
+
+.zotflow-wf-handle {
+    width: 10px !important;
+    height: 10px !important;
+    background: var(--color-accent) !important;
+    border: 2px solid var(--background-primary) !important;
+    border-radius: 50% !important;
+    transition:
+        opacity 0.15s ease,
+        transform 0.15s ease;
+}
+
+.zotflow-wf-handle-labels {
+    display: flex;
+    justify-content: space-around;
+    padding: 2px 10px 6px;
+    gap: 4px;
+}
+
+.zotflow-wf-handle-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    text-align: center;
+    flex: 1;
+}
+
+/* --- Node Palette ----------------------------------------------------------- */
+.zotflow-wf-palette {
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-3);
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-s);
+    width: 200px; /* Fixed width to prevent jumping when collapsing */
+    max-height: calc(100% - 50px);
+}
+
+.zotflow-wf-palette-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+}
+
+.zotflow-wf-palette-title {
+    font-size: var(--font-ui-medium);
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+}
+
+.zotflow-wf-palette-section {
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-medium);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 6px 0 2px;
+    margin-top: 4px;
+}
+
+.zotflow-wf-palette-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.zotflow-wf-palette-toggle.expanded {
+    transform: rotate(180deg);
+}
+
+.zotflow-wf-palette-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition:
+        grid-template-rows 0.2s ease,
+        margin-top 0.2s ease;
+}
+
+.zotflow-wf-palette-content.expanded {
+    grid-template-rows: 1fr;
+    margin-top: var(--size-4-2);
+}
+
+.zotflow-wf-palette-content-inner {
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+.zotflow-wf-palette-content-inner.expanded {
+    overflow-y: auto;
+}
+
+.zotflow-wf-palette-desc {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-bottom: var(--size-4-1);
+}
+
+.zotflow-wf-palette-item {
+    padding: var(--size-4-2) var(--size-4-3);
+    border: 1px solid rgba(var(--node-color-rgb), var(--callout-border-opacity));
+    border-radius: var(--radius-s);
+    background-color: rgba(var(--node-color-rgb), 0.1);
+    color: rgb(var(--node-color-rgb));
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-medium);
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-3);
+    transition: background-color 0.15s ease;
+}
+
+.zotflow-wf-palette-item:hover {
+    background-color: rgba(var(--node-color-rgb), 0.2);
+}
+
+.zotflow-wf-palette-item:active {
+    cursor: grabbing;
+}
+
+/* --- Node Properties Panel ----------------------------------------------------------- */
+.zotflow-wf-props-panel {
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-4);
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-s);
+    width: 350px;
+    max-height: calc(100% - 50px);
+}
+
+.zotflow-wf-props-header {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: var(--size-4-2);
+}
+
+.zotflow-wf-props-title-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+}
+
+.zotflow-wf-props-title {
+    font-size: var(--font-ui-medium);
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+}
+
+.zotflow-wf-props-toggle-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+.zotflow-wf-props-toggle-icon.expanded {
+    transform: rotate(180deg);
+}
+
+.zotflow-wf-props-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition:
+        grid-template-rows 0.2s ease,
+        margin-top 0.2s ease;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.zotflow-wf-props-content.expanded {
+    grid-template-rows: 1fr;
+    margin-top: var(--size-4-3);
+}
+
+.zotflow-wf-props-content-inner {
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-4);
+    padding: 2px;
+}
+
+.zotflow-wf-props-content-inner.expanded {
+    overflow-y: auto;
+}
+
+.zotflow-wf-props-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+}
+
+.zotflow-wf-props-toggle-field {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.zotflow-wf-props-toggle-field input[type="checkbox"] {
+    width: auto;
+}
+
+.zotflow-wf-props-field label {
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-medium);
+    color: var(--text-muted);
+}
+
+.zotflow-wf-props-field input,
+.zotflow-wf-props-field textarea {
+    width: 100%;
+    background-color: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    border-radius: var(--radius-s);
+    padding: var(--size-4-1) var(--size-4-2);
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    transition:
+        box-shadow 0.15s ease,
+        border-color 0.15s ease;
+}
+
+.zotflow-wf-props-field input:focus,
+.zotflow-wf-props-field textarea:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
+}
+
+.zotflow-wf-props-field textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+.zotflow-wf-props-section {
+    padding-top: 8px;
+    border-top: 1px solid var(--background-modifier-border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+
+.zotflow-wf-props-section:first-child {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+.zotflow-wf-props-section-title {
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-medium);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.zotflow-wf-props-field-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+
+.zotflow-wf-props-readonly-icon {
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+}
+
+.zotflow-wf-props-readonly-icon .svg-icon {
+    width: 10px;
+    height: 10px;
+}
+
+.zotflow-wf-props-readonly {
+    opacity: 0.9;
+}
+
+.zotflow-wf-props-readonly-text {
+    width: 100%;
+    background-color: var(--background-secondary-alt);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    border-radius: var(--radius-s);
+    padding: var(--size-4-1) var(--size-4-2);
+    font-family: inherit;
+    font-size: var(--font-ui-small);
+    user-select: text;
+    cursor: default;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+}
+
+.zotflow-wf-props-readonly-text.is-multiline {
+    align-items: flex-start;
+    min-height: 60px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.zotflow-wf-props-readonly-text.is-empty {
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+.zotflow-wf-props-placeholder {
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+/* --- Controls & MiniMap ------------------------------------------------ */
+
+.zotflow-wf-controls {
+    background: var(--background-primary);
+}
+
+.zotflow-wf-minimap {
+    background: var(--background-secondary) !important;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    box-shadow: var(--shadow-s);
+}
+
+/* React Flow overrides inside the workflow view */
+.zotflow-wf-canvas .react-flow__pane {
+    cursor: grab;
+}
+
+.zotflow-wf-canvas .react-flow__edge-path {
+    stroke: var(--text-faint);
+    stroke-width: 2;
+}
+
+.zotflow-wf-canvas .react-flow__edge.selected .react-flow__edge-path {
+    stroke: var(--color-accent);
+}
+
+/* React Flow base styles (bundled from @xyflow/react) */
+
+/* While a connection is being dragged, dim handles that are not valid targets */
+.react-flow__handle.connectingfrom:not(.valid),
+.react-flow__handle.connectingto:not(.valid) {
+    opacity: 0.2 !important;
+    pointer-events: none;
+}
+
+/* Pulse valid handles to guide the user */
+.react-flow__handle.valid {
+    transform: scale(1.3) translateX(-25%) translateY(-25%);
+    opacity: 1 !important;
+}
+
+/* Obsidian-themed: all hardcoded colors replaced with Obsidian CSS variables */
+.react-flow {
+    direction: ltr;
+
+    --xy-edge-stroke-default: var(--text-faint);
+    --xy-edge-stroke-width-default: 1;
+    --xy-edge-stroke-selected-default: var(--color-accent);
+
+    --xy-connectionline-stroke-default: var(--text-faint);
+    --xy-connectionline-stroke-width-default: 1;
+
+    --xy-attribution-background-color-default: var(--background-secondary);
+
+    --xy-minimap-background-color-default: var(--background-secondary);
+    --xy-minimap-mask-background-color-default: var(
+        --background-modifier-cover
+    );
+    --xy-minimap-mask-stroke-color-default: transparent;
+    --xy-minimap-mask-stroke-width-default: 1;
+    --xy-minimap-node-background-color-default: var(
+        --background-modifier-border
+    );
+    --xy-minimap-node-stroke-color-default: transparent;
+    --xy-minimap-node-stroke-width-default: 2;
+
+    --xy-background-color-default: var(--background-primary);
+    --xy-background-pattern-dots-color-default: var(--text-faint);
+    --xy-background-pattern-lines-color-default: var(
+        --background-modifier-border
+    );
+    --xy-background-pattern-cross-color-default: var(
+        --background-modifier-border
+    );
+    background-color: var(
+        --xy-background-color,
+        var(--xy-background-color-default)
+    );
+
+    --xy-node-color-default: var(--text-normal);
+    --xy-node-border-default: 1px solid var(--background-modifier-border);
+    --xy-node-background-color-default: var(--background-primary);
+    --xy-node-group-background-color-default: var(--background-secondary);
+    --xy-node-boxshadow-hover-default: var(--shadow-s);
+    --xy-node-boxshadow-selected-default: 0 0 0 0.5px var(--color-accent);
+    --xy-node-border-radius-default: var(--radius-s);
+
+    --xy-handle-background-color-default: var(--color-accent);
+    --xy-handle-border-color-default: var(--background-primary);
+
+    --xy-selection-background-color-default: hsla(
+        var(--color-accent-hsl),
+        0.08
+    );
+    --xy-selection-border-default: 1px dotted var(--color-accent);
+
+    --xy-controls-button-background-color-default: var(--background-primary);
+    --xy-controls-button-background-color-hover-default: var(
+        --background-modifier-hover
+    );
+    --xy-controls-button-color-default: var(--text-normal);
+    --xy-controls-button-color-hover-default: var(--text-normal);
+    --xy-controls-button-border-color-default: var(
+        --background-modifier-border
+    );
+    --xy-controls-box-shadow-default: var(--shadow-s);
+
+    --xy-edge-label-background-color-default: var(--background-primary);
+    --xy-edge-label-color-default: var(--text-normal);
+    --xy-resize-background-color-default: var(--color-accent);
+}
+
+.react-flow__background {
+    background-color: var(
+        --xy-background-color-props,
+        var(--xy-background-color, var(--xy-background-color-default))
+    );
+    pointer-events: none;
+    z-index: -1;
+}
+.react-flow__container {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+}
+.react-flow__pane {
+    z-index: 1;
+}
+.react-flow__pane.draggable {
+    cursor: grab;
+}
+.react-flow__pane.dragging {
+    cursor: grabbing;
+}
+.react-flow__pane.selection {
+    cursor: pointer;
+}
+.react-flow__viewport {
+    transform-origin: 0 0;
+    z-index: 2;
+    pointer-events: none;
+}
+.react-flow__renderer {
+    z-index: 4;
+}
+.react-flow__selection {
+    z-index: 6;
+}
+.react-flow__nodesselection-rect:focus,
+.react-flow__nodesselection-rect:focus-visible {
+    outline: none;
+}
+.react-flow__edge-path {
+    stroke: var(--xy-edge-stroke, var(--xy-edge-stroke-default));
+    stroke-width: var(
+        --xy-edge-stroke-width,
+        var(--xy-edge-stroke-width-default)
+    );
+    fill: none;
+}
+.react-flow__connection-path {
+    stroke: var(
+        --xy-connectionline-stroke,
+        var(--xy-connectionline-stroke-default)
+    );
+    stroke-width: var(
+        --xy-connectionline-stroke-width,
+        var(--xy-connectionline-stroke-width-default)
+    );
+    fill: none;
+}
+.react-flow .react-flow__edges {
+    position: absolute;
+}
+.react-flow .react-flow__edges svg {
+    overflow: visible;
+    position: absolute;
+    pointer-events: none;
+}
+.react-flow__edge {
+    pointer-events: visibleStroke;
+}
+.react-flow__edge.selectable {
+    cursor: pointer;
+}
+.react-flow__edge.animated path {
+    stroke-dasharray: 5;
+    animation: dashdraw 0.5s linear infinite;
+}
+.react-flow__edge.animated path.react-flow__edge-interaction {
+    stroke-dasharray: none;
+    animation: none;
+}
+.react-flow__edge.inactive {
+    pointer-events: none;
+}
+.react-flow__edge.selected,
+.react-flow__edge:focus,
+.react-flow__edge:focus-visible {
+    outline: none;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge.selectable:focus .react-flow__edge-path,
+.react-flow__edge.selectable:focus-visible .react-flow__edge-path {
+    stroke: var(
+        --xy-edge-stroke-selected,
+        var(--xy-edge-stroke-selected-default)
+    );
+}
+.react-flow__edge-textwrapper {
+    pointer-events: all;
+}
+.react-flow__edge .react-flow__edge-text {
+    pointer-events: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+}
+/* Arrowhead marker styles - use CSS custom properties as default */
+.react-flow__arrowhead polyline {
+    stroke: var(--xy-edge-stroke, var(--xy-edge-stroke-default));
+}
+.react-flow__arrowhead polyline.arrowclosed {
+    fill: var(--xy-edge-stroke, var(--xy-edge-stroke-default));
+}
+.react-flow__connection {
+    pointer-events: none;
+}
+.react-flow__connection .animated {
+    stroke-dasharray: 5;
+    animation: dashdraw 0.5s linear infinite;
+}
+svg.react-flow__connectionline {
+    z-index: 1001;
+    overflow: visible;
+    position: absolute;
+}
+.react-flow__nodes {
+    pointer-events: none;
+    transform-origin: 0 0;
+}
+.react-flow__node {
+    position: absolute;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    pointer-events: all;
+    transform-origin: 0 0;
+    box-sizing: border-box;
+    cursor: default;
+}
+.react-flow__node.selectable {
+    cursor: pointer;
+}
+.react-flow__node.draggable {
+    cursor: grab;
+    pointer-events: all;
+}
+.react-flow__node.draggable.dragging {
+    cursor: grabbing;
+}
+.react-flow__nodesselection {
+    z-index: 3;
+    transform-origin: left top;
+    pointer-events: none;
+}
+.react-flow__nodesselection-rect {
+    position: absolute;
+    pointer-events: all;
+    cursor: grab;
+}
+.react-flow__handle {
+    position: absolute;
+    pointer-events: none;
+    min-width: 5px;
+    min-height: 5px;
+    width: 6px;
+    height: 6px;
+    background-color: var(
+        --xy-handle-background-color,
+        var(--xy-handle-background-color-default)
+    );
+    border: 1px solid
+        var(--xy-handle-border-color, var(--xy-handle-border-color-default));
+    border-radius: 100%;
+}
+.react-flow__handle.connectingfrom {
+    pointer-events: all;
+}
+.react-flow__handle.connectionindicator {
+    pointer-events: all;
+    cursor: crosshair;
+}
+.react-flow__handle-bottom {
+    top: auto;
+    left: 50%;
+    bottom: 0;
+    transform: translate(-50%, 50%);
+}
+.react-flow__handle-top {
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+.react-flow__handle-left {
+    top: 50%;
+    left: 0;
+    transform: translate(-50%, -50%);
+}
+.react-flow__handle-right {
+    top: 50%;
+    right: 0;
+    transform: translate(50%, -50%);
+}
+.react-flow__edgeupdater {
+    cursor: move;
+    pointer-events: all;
+}
+.react-flow__pane.selection .react-flow__panel {
+    pointer-events: none;
+}
+.react-flow__panel {
+    position: absolute;
+    z-index: 5;
+    margin: 15px;
+}
+.react-flow__panel.top {
+    top: 0;
+}
+.react-flow__panel.bottom {
+    bottom: 0;
+}
+.react-flow__panel.top.center,
+.react-flow__panel.bottom.center {
+    left: 50%;
+    transform: translateX(-15px) translateX(-50%);
+}
+.react-flow__panel.left {
+    left: 0;
+}
+.react-flow__panel.right {
+    right: 0;
+}
+.react-flow__panel.left.center,
+.react-flow__panel.right.center {
+    top: 50%;
+    transform: translateY(-15px) translateY(-50%);
+}
+.react-flow__attribution {
+    font-size: 10px;
+    background: var(
+        --xy-attribution-background-color,
+        var(--xy-attribution-background-color-default)
+    );
+    padding: 2px 3px;
+    margin: 0;
+}
+.react-flow__attribution a {
+    text-decoration: none;
+    color: #999;
+}
+@keyframes dashdraw {
+    from {
+        stroke-dashoffset: 10;
+    }
+}
+.react-flow__edgelabel-renderer {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    left: 0;
+    top: 0;
+}
+.react-flow__viewport-portal {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    left: 0;
+    top: 0;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+}
+.react-flow__minimap {
+    background: var(
+        --xy-minimap-background-color-props,
+        var(
+            --xy-minimap-background-color,
+            var(--xy-minimap-background-color-default)
+        )
+    );
+}
+.react-flow__minimap-svg {
+    display: block;
+}
+.react-flow__minimap-mask {
+    fill: var(
+        --xy-minimap-mask-background-color-props,
+        var(
+            --xy-minimap-mask-background-color,
+            var(--xy-minimap-mask-background-color-default)
+        )
+    );
+    stroke: var(
+        --xy-minimap-mask-stroke-color-props,
+        var(
+            --xy-minimap-mask-stroke-color,
+            var(--xy-minimap-mask-stroke-color-default)
+        )
+    );
+    stroke-width: var(
+        --xy-minimap-mask-stroke-width-props,
+        var(
+            --xy-minimap-mask-stroke-width,
+            var(--xy-minimap-mask-stroke-width-default)
+        )
+    );
+}
+.react-flow__minimap-node {
+    fill: var(
+        --xy-minimap-node-background-color-props,
+        var(
+            --xy-minimap-node-background-color,
+            var(--xy-minimap-node-background-color-default)
+        )
+    );
+    stroke: var(
+        --xy-minimap-node-stroke-color-props,
+        var(
+            --xy-minimap-node-stroke-color,
+            var(--xy-minimap-node-stroke-color-default)
+        )
+    );
+    stroke-width: var(
+        --xy-minimap-node-stroke-width-props,
+        var(
+            --xy-minimap-node-stroke-width,
+            var(--xy-minimap-node-stroke-width-default)
+        )
+    );
+}
+.react-flow__background-pattern.dots {
+    fill: var(
+        --xy-background-pattern-color-props,
+        var(
+            --xy-background-pattern-color,
+            var(--xy-background-pattern-dots-color-default)
+        )
+    );
+}
+.react-flow__background-pattern.lines {
+    stroke: var(
+        --xy-background-pattern-color-props,
+        var(
+            --xy-background-pattern-color,
+            var(--xy-background-pattern-lines-color-default)
+        )
+    );
+}
+.react-flow__background-pattern.cross {
+    stroke: var(
+        --xy-background-pattern-color-props,
+        var(
+            --xy-background-pattern-color,
+            var(--xy-background-pattern-cross-color-default)
+        )
+    );
+}
+.react-flow__controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-1);
+}
+.react-flow__controls.horizontal {
+    flex-direction: row;
+}
+.react-flow__controls-button {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 26px;
+    width: 26px;
+    padding: 4px;
+    border: none;
+    background: var(
+        --xy-controls-button-background-color,
+        var(--xy-controls-button-background-color-default)
+    );
+    border-bottom: 1px solid
+        var(
+            --xy-controls-button-border-color-props,
+            var(
+                --xy-controls-button-border-color,
+                var(--xy-controls-button-border-color-default)
+            )
+        );
+    color: var(
+        --xy-controls-button-color-props,
+        var(--xy-controls-button-color, var(--xy-controls-button-color-default))
+    );
+    cursor: pointer;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+}
+.react-flow__controls-button svg {
+    width: 100%;
+    max-width: 12px;
+    max-height: 12px;
+    fill: currentColor;
+}
+.react-flow__edge.updating .react-flow__edge-path {
+    stroke: #777;
+}
+.react-flow__edge-text {
+    font-size: 10px;
+}
+.react-flow__node.selectable:focus,
+.react-flow__node.selectable:focus-visible {
+    outline: none;
+}
+.react-flow__node-input,
+.react-flow__node-default,
+.react-flow__node-output,
+.react-flow__node-group {
+    padding: 10px;
+    border-radius: var(
+        --xy-node-border-radius,
+        var(--xy-node-border-radius-default)
+    );
+    width: 150px;
+    font-size: 12px;
+    color: var(--xy-node-color, var(--xy-node-color-default));
+    text-align: center;
+    border: var(--xy-node-border, var(--xy-node-border-default));
+    background-color: var(
+        --xy-node-background-color,
+        var(--xy-node-background-color-default)
+    );
+}
+.react-flow__node-input.selectable:hover,
+.react-flow__node-default.selectable:hover,
+.react-flow__node-output.selectable:hover,
+.react-flow__node-group.selectable:hover {
+    box-shadow: var(
+        --xy-node-boxshadow-hover,
+        var(--xy-node-boxshadow-hover-default)
+    );
+}
+.react-flow__node-input.selectable.selected,
+.react-flow__node-input.selectable:focus,
+.react-flow__node-input.selectable:focus-visible,
+.react-flow__node-default.selectable.selected,
+.react-flow__node-default.selectable:focus,
+.react-flow__node-default.selectable:focus-visible,
+.react-flow__node-output.selectable.selected,
+.react-flow__node-output.selectable:focus,
+.react-flow__node-output.selectable:focus-visible,
+.react-flow__node-group.selectable.selected,
+.react-flow__node-group.selectable:focus,
+.react-flow__node-group.selectable:focus-visible {
+    box-shadow: var(
+        --xy-node-boxshadow-selected,
+        var(--xy-node-boxshadow-selected-default)
+    );
+}
+.react-flow__node-group {
+    background-color: var(
+        --xy-node-group-background-color,
+        var(--xy-node-group-background-color-default)
+    );
+}
+.react-flow__nodesselection-rect,
+.react-flow__selection {
+    background: var(
+        --xy-selection-background-color,
+        var(--xy-selection-background-color-default)
+    );
+    border: var(--xy-selection-border, var(--xy-selection-border-default));
+}
+.react-flow__nodesselection-rect:focus,
+.react-flow__nodesselection-rect:focus-visible,
+.react-flow__selection:focus,
+.react-flow__selection:focus-visible {
+    outline: none;
+}
+.react-flow__controls-button:hover {
+    background: var(
+        --xy-controls-button-background-color-hover-props,
+        var(
+            --xy-controls-button-background-color-hover,
+            var(--xy-controls-button-background-color-hover-default)
+        )
+    );
+    color: var(
+        --xy-controls-button-color-hover-props,
+        var(
+            --xy-controls-button-color-hover,
+            var(--xy-controls-button-color-hover-default)
+        )
+    );
+}
+.react-flow__controls-button:disabled {
+    pointer-events: none;
+}
+.react-flow__controls-button:disabled svg {
+    fill-opacity: 0.4;
+}
+.react-flow__controls-button:last-child {
+    border-bottom: none;
+}
+.react-flow__controls.horizontal .react-flow__controls-button {
+    border-bottom: none;
+    border-right: 1px solid
+        var(
+            --xy-controls-button-border-color-props,
+            var(
+                --xy-controls-button-border-color,
+                var(--xy-controls-button-border-color-default)
+            )
+        );
+}
+.react-flow__controls.horizontal .react-flow__controls-button:last-child {
+    border-right: none;
+}
+.react-flow__resize-control {
+    position: absolute;
+}
+.react-flow__resize-control.left,
+.react-flow__resize-control.right {
+    cursor: ew-resize;
+}
+.react-flow__resize-control.top,
+.react-flow__resize-control.bottom {
+    cursor: ns-resize;
+}
+.react-flow__resize-control.top.left,
+.react-flow__resize-control.bottom.right {
+    cursor: nwse-resize;
+}
+.react-flow__resize-control.bottom.left,
+.react-flow__resize-control.top.right {
+    cursor: nesw-resize;
+}
+/* handle styles */
+.react-flow__resize-control.handle {
+    width: 5px;
+    height: 5px;
+    border: 1px solid #fff;
+    border-radius: 1px;
+    background-color: var(
+        --xy-resize-background-color,
+        var(--xy-resize-background-color-default)
+    );
+    translate: -50% -50%;
+}
+.react-flow__resize-control.handle.left {
+    left: 0;
+    top: 50%;
+}
+.react-flow__resize-control.handle.right {
+    left: 100%;
+    top: 50%;
+}
+.react-flow__resize-control.handle.top {
+    left: 50%;
+    top: 0;
+}
+.react-flow__resize-control.handle.bottom {
+    left: 50%;
+    top: 100%;
+}
+.react-flow__resize-control.handle.top.left {
+    left: 0;
+}
+.react-flow__resize-control.handle.bottom.left {
+    left: 0;
+}
+.react-flow__resize-control.handle.top.right {
+    left: 100%;
+}
+.react-flow__resize-control.handle.bottom.right {
+    left: 100%;
+}
+/* line styles */
+.react-flow__resize-control.line {
+    border-color: var(
+        --xy-resize-background-color,
+        var(--xy-resize-background-color-default)
+    );
+    border-width: 0;
+    border-style: solid;
+}
+.react-flow__resize-control.line.left,
+.react-flow__resize-control.line.right {
+    width: 1px;
+    transform: translate(-50%, 0);
+    top: 0;
+    height: 100%;
+}
+.react-flow__resize-control.line.left {
+    left: 0;
+    border-left-width: 1px;
+}
+.react-flow__resize-control.line.right {
+    left: 100%;
+    border-right-width: 1px;
+}
+.react-flow__resize-control.line.top,
+.react-flow__resize-control.line.bottom {
+    height: 1px;
+    transform: translate(0, -50%);
+    left: 0;
+    width: 100%;
+}
+.react-flow__resize-control.line.top {
+    top: 0;
+    border-top-width: 1px;
+}
+.react-flow__resize-control.line.bottom {
+    border-bottom-width: 1px;
+    top: 100%;
+}
+.react-flow__edge-textbg {
+    fill: var(
+        --xy-edge-label-background-color,
+        var(--xy-edge-label-background-color-default)
+    );
+}
+.react-flow__edge-text {
+    fill: var(--xy-edge-label-color, var(--xy-edge-label-color-default));
+}
+
+/* --- Workflow node error/warning badge --------------------------------- */
+
+.zotflow-wf-node-badge {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.zotflow-wf-node-badge svg {
+    width: 16px;
+    height: 16px;
+}
+
+.zotflow-wf-node-badge--error {
+    color: var(--text-error);
+}
+
+.zotflow-wf-node-badge--warning {
+    color: var(--text-warning);
+}
+
+/* --- Workflow validation indicators ------------------------------------ */
+
+.zotflow-wf-validation-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+}
+
+.zotflow-wf-validation-error,
+.zotflow-wf-validation-warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: var(--font-ui-small);
+    line-height: 1.4;
+}
+
+.zotflow-wf-validation-error {
+    color: var(--text-error);
+}
+
+.zotflow-wf-validation-warning {
+    color: var(--text-warning);
+}
+
+.zotflow-wf-validation-error svg,
+.zotflow-wf-validation-warning svg {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    margin-top: 1px;
+}
+
+/* --- Context Variable Picker ------------------------------------------- */
+
+.zotflow-wf-expression-wrapper {
+    position: relative;
+}
+
+.zotflow-wf-props-field .zotflow-wf-expression-wrapper > input,
+.zotflow-wf-props-field .zotflow-wf-expression-wrapper > textarea {
+    width: 100%;
+    padding-right: 28px;
+}
+
+.zotflow-wf-ctx-popover {
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    box-shadow: var(--shadow-s);
+    display: flex;
+    flex-direction: column;
+    max-height: 260px;
+    overflow: hidden;
+}
+
+.zotflow-wf-ctx-search {
+    padding: var(--size-4-1);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.zotflow-wf-ctx-search input {
+    width: 100%;
+    background-color: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    padding: var(--size-4-1) var(--size-4-2);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+}
+
+.zotflow-wf-ctx-search input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+}
+
+.zotflow-wf-ctx-tree {
+    overflow-y: auto;
+    padding: var(--size-4-1) 0;
+}
+
+.zotflow-wf-ctx-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    cursor: pointer;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
+    border-radius: var(--radius-s);
+    margin: 0 var(--size-4-1);
+}
+
+.zotflow-wf-ctx-row:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.zotflow-wf-ctx-row.is-leaf:hover {
+    background-color: var(--background-modifier-active-hover);
+}
+
+.zotflow-wf-ctx-chevron,
+.zotflow-wf-ctx-leaf-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--text-faint);
+}
+
+.zotflow-wf-ctx-chevron .svg-icon,
+.zotflow-wf-ctx-leaf-icon .svg-icon {
+    width: 12px;
+    height: 12px;
+}
+
+.zotflow-wf-ctx-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-wf-ctx-type {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--text-faint);
+    background-color: var(--background-secondary);
+    padding: 0 4px;
+    border-radius: var(--radius-s);
+    font-family: var(--font-monospace);
+}
+
+.zotflow-wf-ctx-empty {
+    padding: var(--size-4-2) var(--size-4-3);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    font-style: italic;
+    text-align: center;
+}
+
+/* --- Compound node (group container) ----------------------------------- */
+
+.zotflow-wf-compound {
+    background: rgba(var(--node-color-rgb), 0.04);
+    border: 2px dashed rgba(var(--node-color-rgb), 0.35);
+    border-radius: var(--radius-m);
+    min-width: 300px;
+    min-height: 200px;
+    width: 100%;
+    height: 100%;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.zotflow-wf-compound--selected {
+    border-color: rgba(var(--node-color-rgb), 0.7);
+    box-shadow: 0 0 0 2px rgba(var(--node-color-rgb), 0.15);
+}
+
+.zotflow-wf-compound-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-weight: var(--font-semibold);
+    font-size: var(--font-ui-medium);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: rgba(var(--node-color-rgb), 0.1);
+    color: rgb(var(--node-color-rgb));
+    border-bottom: 1px solid rgba(var(--node-color-rgb), 0.2);
+    border-radius: var(--radius-m) var(--radius-m) 0 0;
+}
+
+.zotflow-wf-compound-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-wf-compound-body {
+    padding: 4px 10px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-wf-compound-inner {
+    flex: 1;
+    min-height: 100px;
+}
+
+.zotflow-wf-compound-resize-line {
+    border-color: rgba(var(--node-color-rgb), 0.4) !important;
+}
+
+.zotflow-wf-compound-resize-handle {
+    background: rgba(var(--node-color-rgb), 0.6) !important;
+    border-color: var(--background-primary) !important;
+}
+
+/* --- Apply to Each (loop) node body ------------------------------------ */
+
+.zotflow-wf-loop-body {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-wf-loop-icon {
+    font-size: 16px;
+    color: rgba(var(--node-color-rgb), 0.8);
+}
+
+.zotflow-wf-loop-path {
+    font-family: var(--font-monospace);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
