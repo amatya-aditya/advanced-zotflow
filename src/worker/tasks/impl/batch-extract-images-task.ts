@@ -2,7 +2,7 @@ import { BaseTask } from "../base";
 import { db } from "db/db";
 import { getAnnotationJson } from "db/annotation";
 
-import type { NoteService } from "worker/services/note";
+import type { LibraryNoteService } from "worker/services/library-note";
 import type { AttachmentService } from "worker/services/attachment";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
 import type { ZotFlowSettings } from "settings/types";
@@ -130,7 +130,7 @@ export class BatchExtractImagesTask extends BaseTask {
 
     /**
      * Extract annotation images for a single parent item.
-     * Mirrors `NoteService.extractAnnotationImages` but operates independently.
+     * Mirrors `LibraryNoteService.extractAnnotationImages` but operates independently.
      */
     private async extractForItem(item: AnyIDBZoteroItem, forceUpdate: boolean) {
         // Resolve PDF attachments

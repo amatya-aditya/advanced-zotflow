@@ -12,7 +12,10 @@ import type { SyncService } from "worker/services/sync";
 import type { ZoteroAPIService } from "worker/services/zotero";
 import type { WebDavService } from "worker/services/webdav";
 import type { TreeViewService } from "worker/services/tree-view";
-import type { NoteService, UpdateOptions } from "worker/services/note";
+import type {
+    LibraryNoteService,
+    UpdateOptions,
+} from "worker/services/library-note";
 import type { LocalNoteService } from "worker/services/local-note";
 import type { ConflictService } from "worker/services/conflict";
 import type { AnnotationService } from "worker/services/annotation";
@@ -43,7 +46,7 @@ export class WorkerBridge {
     private _zotero: ZoteroAPIService;
     private _webdav: WebDavService;
     private _treeView: TreeViewService;
-    private _note: NoteService;
+    private _libraryNote: LibraryNoteService;
     private _localNote: LocalNoteService;
     private _conflict: ConflictService;
     private _annotation: AnnotationService;
@@ -78,7 +81,7 @@ export class WorkerBridge {
         this._zotero = await this._api.zotero;
         this._webdav = await this._api.webdav;
         this._treeView = await this._api.treeView;
-        this._note = await this._api.note;
+        this._libraryNote = await this._api.libraryNote;
         this._localNote = await this._api.localNote;
         this._conflict = await this._api.conflict;
         this._annotation = await this._api.annotation;
@@ -130,9 +133,9 @@ export class WorkerBridge {
         return this._treeView;
     }
 
-    get note() {
+    get libraryNote() {
         this.assertInitialized();
-        return this._note;
+        return this._libraryNote;
     }
 
     get localNote() {

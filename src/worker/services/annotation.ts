@@ -4,7 +4,7 @@ import { toZoteroDate } from "db/normalize";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { IParentProxy } from "bridge/types";
-import type { NoteService, UpdateOptions } from "./note";
+import type { LibraryNoteService, UpdateOptions } from "./library-note";
 import type { IDBZoteroItem, IDBZoteroKey } from "types/db-schema";
 import type {
     AnnotationData,
@@ -25,7 +25,7 @@ export interface SaveAnnotationsResult {
  */
 export class AnnotationService {
     constructor(
-        private noteService: NoteService,
+        private noteService: LibraryNoteService,
         private parentHost: IParentProxy,
     ) {}
 
@@ -61,7 +61,7 @@ export class AnnotationService {
     /**
      * Process annotations saved/updated from the reader iframe.
      * Handles create-vs-update logic, image persistence, and triggers
-     * source-note updates via `NoteService`.
+     * source-note updates via `LibraryNoteService`.
      *
      * This method replaces `ZoteroReaderView.handleAnnotationsSaved`.
      */

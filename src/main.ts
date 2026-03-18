@@ -365,7 +365,7 @@ export default class ZotFlow extends Plugin {
             }
 
             if (type === "open-note") {
-                await workerBridge.note.openNote(libID, key);
+                await workerBridge.libraryNote.openNote(libID, key);
             } else if (type === "open-attachment") {
                 await openAttachment(libID, key, this.app, navigation);
             } else {

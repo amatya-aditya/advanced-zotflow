@@ -4,8 +4,8 @@ import { SyncService } from "./services/sync";
 import { AttachmentService } from "./services/attachment";
 import { WebDavService } from "./services/webdav";
 import { TreeViewService } from "./services/tree-view";
-import { TemplateService } from "./services/template";
-import { NoteService } from "./services/note";
+import { LibraryTemplateService } from "./services/library-template";
+import { LibraryNoteService } from "./services/library-note";
 import { PDFProcessWorker } from "./services/pdf-processor";
 import { LocalNoteService } from "./services/local-note";
 import { LocalTemplateService } from "./services/local-template";
@@ -13,12 +13,13 @@ import { ConflictService } from "./services/conflict";
 import { AnnotationService } from "./services/annotation";
 import { KeyService } from "./services/key";
 import { DbHelperService } from "./services/db-helper";
+import { NotePathService } from "./services/note-path";
 import { TaskManager } from "./tasks/manager";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
-import type { UpdateOptions } from "./services/note";
+import type { UpdateOptions } from "./services/library-note";
 import type { BatchNoteInput } from "./tasks/impl/batch-note-task";
 import type {
     BatchExtractImagesInput,
@@ -47,7 +48,7 @@ export interface WorkerAPI {
     attachment: AttachmentService;
     webdav: WebDavService;
     treeView: TreeViewService;
-    note: NoteService;
+    libraryNote: LibraryNoteService;
 
     localNote: LocalNoteService;
     conflict: ConflictService;
@@ -83,8 +84,8 @@ let _webdav: WebDavService | undefined;
 let _attachment: AttachmentService | undefined;
 let _sync: SyncService | undefined;
 let _treeView: TreeViewService | undefined;
-let _template: TemplateService | undefined;
-let _note: NoteService | undefined;
+let _template: LibraryTemplateService | undefined;
+let _libraryNote: LibraryNoteService | undefined;
 
 let _localNote: LocalNoteService | undefined;
 let _localTemplate: LocalTemplateService | undefined;
@@ -92,6 +93,7 @@ let _conflict: ConflictService | undefined;
 let _annotation: AnnotationService | undefined;
 let _key: KeyService | undefined;
 let _dbHelper: DbHelperService | undefined;
+let _notePath: NotePathService | undefined;
 let _pdfProcessor: PDFProcessWorker | undefined;
 let _taskManager: TaskManager | undefined;
 let _currentSettings: ZotFlowSettings | undefined;
@@ -104,7 +106,7 @@ function assertInitialized() {
         !_sync ||
         !_treeView ||
         !_template ||
-        !_note ||
+        !_libraryNote ||
         !_pdfProcessor ||
         !_localNote ||
         !_localTemplate ||
@@ -112,6 +114,7 @@ function assertInitialized() {
         !_annotation ||
         !_key ||
         !_dbHelper ||
+        !_notePath ||
         !_taskManager ||
         !_currentSettings
     ) {
@@ -183,13 +186,15 @@ const exposedApi: WorkerAPI = {
                 blobUrls,
             );
 
-            _template = new TemplateService(settings, parentHost);
-            _note = new NoteService(
+            _template = new LibraryTemplateService(settings, parentHost);
+            _notePath = new NotePathService(settings);
+            _libraryNote = new LibraryNoteService(
                 settings,
                 _template,
                 parentHost,
                 _attachment,
                 _pdfProcessor,
+                _notePath,
             );
 
             _localTemplate = new LocalTemplateService(settings, parentHost);
@@ -197,11 +202,12 @@ const exposedApi: WorkerAPI = {
                 settings,
                 parentHost,
                 _localTemplate,
+                _notePath,
             );
 
             _conflict = new ConflictService(parentHost);
 
-            _annotation = new AnnotationService(_note, parentHost);
+            _annotation = new AnnotationService(_libraryNote, parentHost);
             _key = new KeyService(_zotero, parentHost);
             _dbHelper = new DbHelperService(settings, parentHost);
 
@@ -275,14 +281,14 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_treeView);
     },
 
-    get note() {
-        if (!_note)
+    get libraryNote() {
+        if (!_libraryNote)
             throw new ZotFlowError(
                 ZotFlowErrorCode.UNKNOWN,
                 "Worker",
                 "Worker not initialized",
             );
-        return Comlink.proxy(_note);
+        return Comlink.proxy(_libraryNote);
     },
 
     get localNote() {
@@ -356,7 +362,7 @@ const exposedApi: WorkerAPI = {
     },
 
     dispose: () => {
-        _note?.dispose();
+        _libraryNote?.dispose();
         _localNote?.dispose();
     },
 
@@ -376,7 +382,7 @@ const exposedApi: WorkerAPI = {
     ) => {
         assertInitialized();
         return _taskManager!.createBatchNoteTask(
-            _note!,
+            _libraryNote!,
             input,
             options,
             isUpdate,
@@ -427,10 +433,11 @@ const exposedApi: WorkerAPI = {
         _sync!.updateSettings(settings);
         _treeView!.updateSettings(settings);
         _template!.updateSettings(settings);
-        _note!.updateSettings(settings);
+        _libraryNote!.updateSettings(settings);
 
         _localNote!.updateSettings(settings);
         _localTemplate!.updateSettings(settings);
+        _notePath!.updateSettings(settings);
         _dbHelper!.updateSettings(settings);
         _pdfProcessor!.updateSettings(settings);
         _currentSettings = settings;

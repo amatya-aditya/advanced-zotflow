@@ -1,7 +1,10 @@
 import { BaseTask } from "../base";
 import { db } from "db/db";
 
-import type { NoteService, UpdateOptions } from "worker/services/note";
+import type {
+    LibraryNoteService,
+    UpdateOptions,
+} from "worker/services/library-note";
 import type { TaskType, TaskStatus } from "types/tasks";
 import type { ItemIdentifier } from "./batch-extract-images-task";
 
@@ -22,7 +25,7 @@ export interface BatchNoteInput {
  */
 export class BatchNoteTask extends BaseTask {
     constructor(
-        private noteService: NoteService,
+        private noteService: LibraryNoteService,
         private input: BatchNoteInput,
         private options: UpdateOptions,
         type: TaskType = "batch-create-notes",

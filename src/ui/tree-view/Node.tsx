@@ -201,7 +201,7 @@ export const NodeItem = ({
                     .setIcon("file-badge")
                     .onClick(async () => {
                         try {
-                            await workerBridge.note.openNote(
+                            await workerBridge.libraryNote.openNote(
                                 node.data.libraryID,
                                 node.data.key,
                                 {
@@ -228,7 +228,7 @@ export const NodeItem = ({
                     .onClick(async () => {
                         try {
                             // Open/update the note file (foreground)
-                            workerBridge.note.openNote(
+                            workerBridge.libraryNote.openNote(
                                 node.data.libraryID,
                                 node.data.key,
                                 {
@@ -286,7 +286,7 @@ export const NodeItem = ({
             dragText = node.data.name;
         } else if (nodeType === "item" && node.data.itemType !== "attachment") {
             // Try force update the source note
-            workerBridge.note
+            workerBridge.libraryNote
                 .triggerUpdate(node.data.libraryID, node.data.key)
                 .catch((e) =>
                     services.logService.error(
@@ -306,17 +306,17 @@ export const NodeItem = ({
                 );
                 dragText = file.name;
             } else {
-                const path = getNotePath({
-                    citationKey: node.data.citationKey,
-                    title: node.data.name,
-                    key: node.data.key,
-                    sourceNoteFolder: services.settings.sourceNoteFolder,
-                    libraryName: node.data.libraryName,
-                });
-                const filename = path.split("/").pop()!;
-                const alias = filename.split(".").shift()!;
-                link = `[[${path}|${alias}]]`;
-                dragText = filename;
+                // const path = getNotePath({
+                //     citationKey: node.data.citationKey,
+                //     title: node.data.name,
+                //     key: node.data.key,
+                //     sourceNoteFolder: services.settings.sourceNoteFolder,
+                //     libraryName: node.data.libraryName,
+                // });
+                // const filename = path.split("/").pop()!;
+                // const alias = filename.split(".").shift()!;
+                // link = `[[${path}|${alias}]]`;
+                // dragText = filename;
             }
         }
 

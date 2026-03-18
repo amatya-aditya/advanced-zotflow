@@ -42,10 +42,12 @@ export interface ZotFlowSettings {
     webdavpassword?: string;
     useCache: boolean;
     maxCacheSizeMB: number;
-    sourceNoteTemplatePath: string;
+    librarySourceNoteTemplatePath: string;
     localSourceNoteTemplatePath: string;
     localSourceNoteFolder: string;
     sourceNoteFolder: string;
+    librarySourceNotePathTemplate: string;
+    localSourceNotePathTemplate: string;
     autoImportAnnotationImages: boolean;
     annotationImageFolder: string;
     overwriteViewer: boolean;
@@ -85,10 +87,13 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     useWebDav: false,
     useCache: true,
     maxCacheSizeMB: 500,
-    sourceNoteTemplatePath: "",
+    librarySourceNoteTemplatePath: "",
     sourceNoteFolder: "",
+    librarySourceNotePathTemplate:
+        "Source/{{libraryName}}/@{{citationKey | default: title | default: key}}",
     localSourceNoteTemplatePath: "",
     localSourceNoteFolder: "",
+    localSourceNotePathTemplate: "Source/Local/@{{basename}}",
     autoImportAnnotationImages: false,
     annotationImageFolder: "",
     overwriteViewer: true,

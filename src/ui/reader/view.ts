@@ -43,9 +43,11 @@ export class ZoteroReaderView extends ItemView {
     }
 
     getDisplayText() {
-        return this.attachmentItem?.raw.data.filename
-            ?? this.attachmentItem?.raw.data.title
-            ?? "Zotero Reader";
+        return (
+            this.attachmentItem?.raw.data.filename ??
+            this.attachmentItem?.raw.data.title ??
+            "Zotero Reader"
+        );
     }
 
     getIcon() {
@@ -90,9 +92,9 @@ export class ZoteroReaderView extends ItemView {
             this.containerEl
                 .getElementsByClassName("view-header-title")[0]
                 ?.setText(
-                    this.attachmentItem.raw.data.filename
-                    ?? this.attachmentItem.raw.data.title
-                    ?? "Zotero Reader",
+                    this.attachmentItem.raw.data.filename ??
+                        this.attachmentItem.raw.data.title ??
+                        "Zotero Reader",
                 );
             this.loadDocument();
         }
@@ -108,7 +110,7 @@ export class ZoteroReaderView extends ItemView {
         loadingEl.setText(`Downloading/Loading ${this.attachmentItem.key}...`);
 
         // Try force update the source note
-        workerBridge.note
+        workerBridge.libraryNote
             .triggerUpdate(
                 this.attachmentItem.libraryID,
                 this.attachmentItem.parentItem !== ""

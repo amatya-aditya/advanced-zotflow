@@ -2,7 +2,10 @@ import type { IParentProxy } from "bridge/types";
 import type { BaseTask } from "./base";
 import type { ITaskInfo } from "types/tasks";
 import type { SyncService } from "worker/services/sync";
-import type { NoteService, UpdateOptions } from "worker/services/note";
+import type {
+    LibraryNoteService,
+    UpdateOptions,
+} from "worker/services/library-note";
 import type { AttachmentService } from "worker/services/attachment";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
 import type { ZotFlowSettings } from "settings/types";
@@ -76,7 +79,7 @@ export class TaskManager {
     }
 
     public async createBatchNoteTask(
-        noteService: NoteService,
+        noteService: LibraryNoteService,
         input: BatchNoteInput,
         options: UpdateOptions,
         isUpdate: boolean,

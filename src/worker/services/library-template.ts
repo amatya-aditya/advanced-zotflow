@@ -91,8 +91,8 @@ doi: {{ item.DOI | json }}
 {%- endif -%}
 `;
 
-/** LiquidJS template engine for rendering Zotero item source notes. */
-export class TemplateService {
+/** LiquidJS template engine for rendering library (Zotero) item source notes. */
+export class LibraryTemplateService {
     private engine: Liquid;
 
     constructor(
@@ -165,7 +165,7 @@ export class TemplateService {
                     this.parentHost.log(
                         "error",
                         "Failed to parse template frontmatter",
-                        "TemplateService",
+                        "LibraryTemplateService",
                     );
                 }
             }
@@ -197,7 +197,7 @@ export class TemplateService {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.PARSE_ERROR,
-                "TemplateService",
+                "LibraryTemplateService",
                 "Template rendering failed",
             );
         }

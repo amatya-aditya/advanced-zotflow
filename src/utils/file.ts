@@ -154,7 +154,7 @@ export async function deleteFile(app: App, path: string): Promise<void> {
 /**
  * Get linked source note
  */
-export function getLinkedSourceNote(
+export function getLinkedLocalSourceNote(
     app: App,
     file: TFileWithoutParentAndVault,
 ): TFileWithoutParentAndVault | null {

@@ -1,6 +1,7 @@
 import type { IParentProxy } from "bridge/types";
 import type { ZotFlowSettings } from "settings/types";
 import type { LocalTemplateService } from "./local-template";
+import type { NotePathService } from "./note-path";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
@@ -19,11 +20,13 @@ export class LocalNoteService {
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
         private templateService: LocalTemplateService,
+        private notePathService: NotePathService,
     ) {}
 
     public updateSettings(settings: ZotFlowSettings) {
         this.settings = settings;
         this.templateService.updateSettings(settings);
+        this.notePathService.updateSettings(settings);
     }
 
     /**
@@ -52,7 +55,7 @@ export class LocalNoteService {
     ) {
         try {
             const result =
-                await this.parentHost.getLinkedSourceNote(localAttachment);
+                await this.parentHost.getLinkedLocalSourceNote(localAttachment);
 
             if (result) {
                 this.parentHost.log(
@@ -203,7 +206,7 @@ export class LocalNoteService {
 
         try {
             const notePath =
-                await this.parentHost.getLinkedSourceNote(localAttachment);
+                await this.parentHost.getLinkedLocalSourceNote(localAttachment);
             if (!notePath) return annotations;
 
             const note = await this.parentHost.readTextFile(notePath.path);
@@ -305,7 +308,7 @@ export class LocalNoteService {
         annotations: AnnotationJSON[],
     ) {
         const notePath =
-            await this.parentHost.getLinkedSourceNote(localAttachment);
+            await this.parentHost.getLinkedLocalSourceNote(localAttachment);
 
         if (notePath) {
             const fileCheck = await this.parentHost.checkFile(notePath.path);
@@ -335,13 +338,10 @@ export class LocalNoteService {
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
     ): Promise<string> {
-        // Construct default path
-        const localSourceNoteFolder = this.settings.localSourceNoteFolder;
-        const folder = localSourceNoteFolder.replace(/\/$/, "");
-
-        // Base filename
-        let baseName = `@${localAttachment.basename}`;
-        let notePath = `${folder}/${baseName}.md`.replace(/\/\//g, "/");
+        // Resolve path from template
+        let notePath =
+            await this.notePathService.resolveLocalNotePath(localAttachment);
+        const baseName = notePath.replace(/\.md$/, "");
 
         // Check duplicate and resolve naming collision
         let fileCheck = await this.parentHost.checkFile(notePath);
@@ -349,10 +349,7 @@ export class LocalNoteService {
         const maxRetries = 100; // Safety break
 
         while (fileCheck.exists && counter < maxRetries) {
-            notePath = `${folder}/${baseName} (${counter}).md`.replace(
-                /\/\//g,
-                "/",
-            );
+            notePath = `${baseName} (${counter}).md`;
             fileCheck = await this.parentHost.checkFile(notePath);
             counter++;
         }
