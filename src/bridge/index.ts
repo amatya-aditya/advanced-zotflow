@@ -22,6 +22,9 @@ import type { AnnotationService } from "worker/services/annotation";
 import type { KeyService } from "worker/services/key";
 import type { DbHelperService } from "worker/services/db-helper";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { LibraryTemplateService } from "worker/services/library-template";
+import type { LocalTemplateService } from "worker/services/local-template";
+import type { NotePathService } from "worker/services/note-path";
 import type { BatchNoteInput } from "worker/tasks/impl/batch-note-task";
 import type {
     BatchExtractImagesInput,
@@ -53,6 +56,9 @@ export class WorkerBridge {
     private _key: KeyService;
     private _dbHelper: DbHelperService;
     private _pdfProcessor: PDFProcessWorker;
+    private _libraryTemplate: LibraryTemplateService;
+    private _localTemplate: LocalTemplateService;
+    private _notePath: NotePathService;
     private _tasks: TaskManager;
 
     private _workerBlobUrl: string;
@@ -88,6 +94,9 @@ export class WorkerBridge {
         this._key = await this._api.key;
         this._dbHelper = await this._api.dbHelper;
         this._pdfProcessor = await this._api.pdfProcessor;
+        this._libraryTemplate = await this._api.libraryTemplate;
+        this._localTemplate = await this._api.localTemplate;
+        this._notePath = await this._api.notePath;
         this._tasks = await this._api.tasks;
 
         this._initialized = true;
@@ -166,6 +175,21 @@ export class WorkerBridge {
     get pdfProcessWorker() {
         this.assertInitialized();
         return this._pdfProcessor;
+    }
+
+    get libraryTemplate() {
+        this.assertInitialized();
+        return this._libraryTemplate;
+    }
+
+    get localTemplate() {
+        this.assertInitialized();
+        return this._localTemplate;
+    }
+
+    get notePath() {
+        this.assertInitialized();
+        return this._notePath;
     }
 
     get tasks() {

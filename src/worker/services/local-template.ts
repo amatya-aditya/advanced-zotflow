@@ -7,8 +7,8 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import type { AnnotationTemplateContext } from "types/template-context";
 
 /** Default LiquidJS template string for local vault file source notes. */
-export const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
-zotflow-locked: true
+const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
+zotflow-locked: {{true}}
 zotflow-local-attachment: [[{{ path }}]]
 ---
 {%- capture quote_string %}{{ newline }}> {% endcapture -%}
@@ -60,8 +60,6 @@ export class LocalTemplateService {
             };
             return encodeURIComponent(JSON.stringify(navInfo));
         });
-
-
     }
 
     updateSettings(newSettings: ZotFlowSettings) {
@@ -207,5 +205,53 @@ export class LocalTemplateService {
                     this.settings.annotationImageFolder.replace(/\/$/, ""),
             },
         };
+    }
+
+    /** Preview-render a local vault file with the given template content. */
+    async previewLocalNote(
+        file: TFileWithoutParentAndVault,
+        templateContent: string,
+    ): Promise<string> {
+        const annotations = await this.loadSidecarAnnotations(file);
+        return this.renderLocalNote(file, annotations, templateContent, {});
+    }
+
+    /** Load annotations from the co-located `.zf.json` sidecar file, if it exists. */
+    private async loadSidecarAnnotations(
+        file: TFileWithoutParentAndVault,
+    ): Promise<AnnotationJSON[]> {
+        const lastDot = file.path.lastIndexOf(".");
+        const basePath =
+            lastDot !== -1 ? file.path.substring(0, lastDot) : file.path;
+        const jsonPath = `${basePath}.zf.json`;
+
+        try {
+            const result = await this.parentHost.checkFile(jsonPath);
+            if (!result.exists) return [];
+
+            const content = await this.parentHost.readTextFile(jsonPath);
+            if (!content) return [];
+
+            const parsed = JSON.parse(content) as {
+                annotations?: AnnotationJSON[];
+            };
+            return Array.isArray(parsed.annotations) ? parsed.annotations : [];
+        } catch {
+            return [];
+        }
+    }
+
+    /** Return the user-configured template file content, or the built-in default. */
+    async getDefaultTemplate(): Promise<string> {
+        const path = this.settings.localSourceNoteTemplatePath;
+        if (path) {
+            try {
+                const content = await this.parentHost.readTextFile(path);
+                if (content != null) return content;
+            } catch {
+                // Fall through to default
+            }
+        }
+        return DEFAULT_LOCAL_NOTE_TEMPLATE;
     }
 }

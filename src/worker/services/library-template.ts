@@ -288,6 +288,7 @@ export class LibraryTemplateService {
             date: (data as any).date || null,
             dateAdded: item.dateAdded,
             dateModified: item.dateModified,
+            accessDate: (data as any).accessDate || null,
             abstractNote: (data as any).abstractNote,
             publicationTitle: (data as any).publicationTitle,
             publisher: (data as any).publisher,
@@ -364,5 +365,36 @@ export class LibraryTemplateService {
 
             annotations,
         };
+    }
+
+    /** Preview-render a library item with the given template content. */
+    async previewItem(
+        libraryID: number,
+        key: string,
+        templateContent: string,
+    ): Promise<string> {
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "LibraryTemplateService",
+                `Item not found: ${libraryID}/${key}`,
+            );
+        }
+        return this.renderItem(item, templateContent, {});
+    }
+
+    /** Return the user-configured template file content, or the built-in default. */
+    async getDefaultTemplate(): Promise<string> {
+        const path = this.settings.librarySourceNoteTemplatePath;
+        if (path) {
+            try {
+                const content = await this.parentHost.readTextFile(path);
+                if (content != null) return content;
+            } catch {
+                // Fall through to default
+            }
+        }
+        return DEFAULT_ITEM_TEMPLATE;
     }
 }

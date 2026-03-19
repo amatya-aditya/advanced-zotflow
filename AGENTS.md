@@ -41,10 +41,10 @@ processing.
 │       │                                                      │
 │       ├── ui/                                                │
 │       │     ├── reader/   (ZoteroReaderView, IframeReaderBridge, │
-│       │     │              LocalReaderView, LocalAnnotationManager) │
+│       │     │              LocalReaderView, LocalDataManager)    │
 │       │     ├── tree-view/ (React: ZotFlowTree, Node)        │
 │       │     ├── activity-center/ (React: ActivityCenterModal) │
-│       │     ├── modals/suggest.ts (currently disabled)        │
+│       │     ├── modals/suggest.ts (BaseItemSearchModal + ZoteroSearchModal) │
 │       │     ├── zotflow-lock-extension.ts (CM6 readonly)      │
 │       │     └── zotflow-comment-extension.ts (CM6 deco)       │
 │       │                                                      │
@@ -119,6 +119,47 @@ The Zotero Reader is embedded as an iframe. All reader assets (PDF.js, viewer HT
 
 The iframe bridge (`ui/reader/bridge.ts`) is a **state machine**:
 `idle → connecting → bridge-ready → reader-ready → disposing → disposed`
+
+### 2.3.1 Local annotation sidecar (`.zf.json`)
+
+Annotations made on local vault files (PDF/EPUB) are persisted in a **co-located
+sidecar JSON file** next to the attachment:
+
+```
+Papers/myPaper.pdf      → Papers/myPaper.zf.json
+Books/intro.epub        → Books/intro.zf.json
+```
+
+The sidecar format:
+
+```json
+{
+    "version": 1,
+    "annotations": [
+        /* AnnotationJSON[] */
+    ]
+}
+```
+
+**Main-thread** (`LocalDataManager` in `ui/reader/local-data-manager.ts`):
+
+- Reads/writes the `.zf.json` file via Obsidian vault I/O (`utils/file.ts`).
+- Maintains an in-memory annotation cache during a reader session.
+- On save/delete, persists to `.zf.json` then triggers a worker-side note
+  re-render via `workerBridge.localNote.triggerUpdate()`.
+- Falls back to legacy inline-comment parsing (worker-side) and auto-migrates
+  to the `.zf.json` format.
+
+**Worker-thread** (`LocalTemplateService`):
+
+- `previewLocalNote()` reads annotations from the sidecar via
+  `parentHost.checkFile()` / `parentHost.readTextFile()` so template previews
+  include annotation data.
+
+**Lifecycle** (`main.ts`):
+
+- File rename → renames the sidecar (`handleSidecarRename`).
+- File delete → deletes the sidecar (`handleSidecarDelete`).
 
 ### 2.4 Logging
 
@@ -264,7 +305,7 @@ src/
 │   │   ├── view.ts                 # ZoteroReaderView (remote Zotero items)
 │   │   ├── local-view.ts           # LocalReaderView (vault files)
 │   │   ├── bridge.ts               # IframeReaderBridge (penpal state machine)
-│   │   └── local-anno-manager.ts   # In-memory annotation cache for local reader
+│   │   └── local-data-manager.ts   # Sidecar .zf.json I/O + annotation cache for local reader
 │   ├── tree-view/
 │   │   ├── view.tsx                # ZotFlowTreeView (Obsidian ItemView wrapper)
 │   │   ├── TreeView.tsx            # React: tree component (react-arborist)
@@ -272,9 +313,12 @@ src/
 │   ├── activity-center/
 │   │   ├── modal.tsx               # ActivityCenterModal (Obsidian Modal wrapper)
 │   │   ├── ZotFlowActivityCenter.tsx # Tab container component
-│   │   └── SyncView.tsx            # Sync tab content (stub)
+│   │   ├── SyncView.tsx            # Sync tab content (stub)
+│   │   └── TemplateTestView.tsx    # Template testing tab
 │   └── modals/
-│       └── suggest.ts              # Item search modal (currently disabled)
+│       ├── suggest.ts              # BaseItemSearchModal + ZoteroSearchModal
+│       ├── item-picker.ts          # ItemPickerModal (extends BaseItemSearchModal)
+│       └── file-picker.ts          # FilePickerModal (local vault file picker)
 │
 ├── worker/
 │   ├── worker.ts                   # Worker entry point — exposes WorkerAPI via Comlink

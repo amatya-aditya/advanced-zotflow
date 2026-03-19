@@ -2,6 +2,8 @@ import { Liquid } from "liquidjs";
 import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
+import { db } from "db/db";
+import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 const FALLBACK_ZOTERO_TEMPLATE =
     "Source/{{libraryName}}/@{{citationKey | default: title | default: key}}";
@@ -23,14 +25,22 @@ function sanitizeSegment(segment: string): string {
     return s;
 }
 
-/** Sanitize all string values in a template context object. */
+/** Keys that hold date/time values and should not be sanitized (colons are valid in ISO 8601). */
+const DATE_KEYS: ReadonlySet<string> = new Set([
+    "date",
+    "dateAdded",
+    "dateModified",
+    "accessDate",
+]);
+
+/** Sanitize all string values in a template context object, skipping date fields. */
 function sanitizeContext(
     ctx: Record<string, unknown>,
 ): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(ctx)) {
         if (typeof value === "string") {
-            result[key] = sanitizeSegment(value);
+            result[key] = DATE_KEYS.has(key) ? value : sanitizeSegment(value);
         } else if (
             Array.isArray(value) &&
             value.length > 0 &&
@@ -73,8 +83,10 @@ export class NotePathService {
     async resolveLibraryNotePath(
         item: AnyIDBZoteroItem,
         libraryName: string,
+        templateOverride?: string,
     ): Promise<string> {
         const template =
+            templateOverride?.trim() ||
             this.settings.librarySourceNotePathTemplate.trim() ||
             FALLBACK_ZOTERO_TEMPLATE;
 
@@ -110,6 +122,7 @@ export class NotePathService {
             date: (data.date as string) || "",
             dateAdded: item.dateAdded,
             dateModified: item.dateModified,
+            accessDate: (data.accessDate as string) || "",
             abstractNote: (data.abstractNote as string) || "",
             publicationTitle: (data.publicationTitle as string) || "",
             publisher: (data.publisher as string) || "",
@@ -144,8 +157,10 @@ export class NotePathService {
     /** Resolve the vault path for a local attachment source note. */
     async resolveLocalNotePath(
         localAttachment: TFileWithoutParentAndVault,
+        templateOverride?: string,
     ): Promise<string> {
         const template =
+            templateOverride?.trim() ||
             this.settings.localSourceNotePathTemplate.trim() ||
             FALLBACK_LOCAL_TEMPLATE;
 
@@ -161,5 +176,39 @@ export class NotePathService {
             sanitizeContext(context),
         );
         return sanitizePath(rendered);
+    }
+
+    /** Preview the resolved path for a library item with a custom path template. */
+    async previewLibraryNotePath(
+        libraryID: number,
+        key: string,
+        pathTemplate: string,
+    ): Promise<string> {
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "NotePathService",
+                `Item not found: ${libraryID}/${key}`,
+            );
+        }
+        const library = await db.libraries.get(libraryID);
+        const libraryName = library?.name || "Unknown";
+        return this.resolveLibraryNotePath(item, libraryName, pathTemplate);
+    }
+
+    /** Preview the resolved path for a local file with a custom path template. */
+    async previewLocalNotePath(
+        file: TFileWithoutParentAndVault,
+        pathTemplate: string,
+    ): Promise<string> {
+        return this.resolveLocalNotePath(file, pathTemplate);
+    }
+
+    /** Return the current path template string from settings. */
+    getDefaultPathTemplate(mode: "library" | "local"): string {
+        return mode === "library"
+            ? this.settings.librarySourceNotePathTemplate
+            : this.settings.localSourceNotePathTemplate;
     }
 }

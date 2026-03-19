@@ -1,7 +1,13 @@
 import { Scope } from "obsidian";
 
-import { EditorSelection, Prec } from "@codemirror/state";
-import { EditorView, keymap, placeholder, ViewUpdate } from "@codemirror/view";
+import { EditorSelection, EditorState, Prec } from "@codemirror/state";
+import {
+    EditorView,
+    keymap,
+    lineNumbers,
+    placeholder,
+    ViewUpdate,
+} from "@codemirror/view";
 
 import { around } from "monkey-around";
 
@@ -63,6 +69,9 @@ export interface MarkdownEditorProps {
     cls?: string;
     placeholder?: string;
     singleLine?: boolean; // New option for single line mode
+    readOnly?: boolean;
+    sourceMode?: boolean;
+    showLineNumbers?: boolean;
 
     onEnter: (
         editor: EmbeddableMarkdownEditor,
@@ -80,6 +89,9 @@ const defaultProperties: MarkdownEditorProps = {
     cursorLocation: { anchor: 0, head: 0 },
     value: "",
     singleLine: false,
+    readOnly: false,
+    sourceMode: false,
+    showLineNumbers: false,
     cls: "",
     placeholder: "",
 
@@ -292,6 +304,17 @@ export class EmbeddableMarkdownEditor {
                         }
 
                         extensions.push(Prec.highest(keymap.of(keyBindings)));
+
+                        if (self.options.readOnly) {
+                            extensions.push(
+                                EditorView.editable.of(false),
+                                EditorState.readOnly.of(true),
+                            );
+                        }
+
+                        if (self.options.showLineNumbers) {
+                            extensions.push(lineNumbers());
+                        }
                     }
 
                     return extensions;
@@ -323,6 +346,12 @@ export class EmbeddableMarkdownEditor {
 
         // Set initial content
         this.set(options.value || "", false);
+
+        // Enable source mode (disable live preview) if requested
+        if (this.options.sourceMode) {
+            this.editor.sourceMode = true;
+            this.editor.updateOptions();
+        }
 
         // Prevent active leaf changes while focused
         this.register(

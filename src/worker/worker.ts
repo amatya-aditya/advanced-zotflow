@@ -56,6 +56,9 @@ export interface WorkerAPI {
     key: KeyService;
     dbHelper: DbHelperServiceType;
     pdfProcessor: PDFProcessWorker;
+    libraryTemplate: LibraryTemplateService;
+    localTemplate: LocalTemplateService;
+    notePath: NotePathService;
     tasks: TaskManager;
     updateSettings(settings: ZotFlowSettings): void;
 
@@ -359,6 +362,36 @@ const exposedApi: WorkerAPI = {
                 "Worker not initialized",
             );
         return Comlink.proxy(_taskManager);
+    },
+
+    get libraryTemplate() {
+        if (!_template)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_template);
+    },
+
+    get localTemplate() {
+        if (!_localTemplate)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_localTemplate);
+    },
+
+    get notePath() {
+        if (!_notePath)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_notePath);
     },
 
     dispose: () => {

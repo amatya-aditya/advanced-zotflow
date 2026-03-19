@@ -12,19 +12,27 @@ interface SearchHeader {
     isHeader: true;
     label: string;
 }
-type SuggestionItem = AnyIDBZoteroItem | SearchHeader;
+export type SuggestionItem = AnyIDBZoteroItem | SearchHeader;
 
-export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
-    private settings: ZotFlowSettings;
-    private itemPaths: Record<string, string[]> = {};
+/**
+ * Abstract base class for Zotero item search modals.
+ * Provides shared query logic, rendering, and highlight helpers.
+ * Subclasses implement `handleItemSelected()` to define the action.
+ */
+export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
+    protected itemPaths: Record<string, string[]> = {};
 
-    constructor(app: App, settings: ZotFlowSettings) {
+    constructor(app: App, placeholder = "Search Zotero Library...") {
         super(app);
-        this.settings = settings;
-        this.setPlaceholder("Search Zotero Library...");
+        this.setPlaceholder(placeholder);
         this.modalEl.addClass("zotflow-search-modal");
         this.limit = 20;
     }
+
+    protected abstract handleItemSelected(
+        item: AnyIDBZoteroItem,
+        evt: MouseEvent | KeyboardEvent,
+    ): void;
 
     async getSuggestions(query: string): Promise<SuggestionItem[]> {
         try {
@@ -80,7 +88,7 @@ export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
                 } catch (pathErr) {
                     services.logService.error(
                         "Failed to fetch item paths",
-                        "ZoteroSearchModal",
+                        "BaseItemSearchModal",
                         pathErr,
                     );
                 }
@@ -88,7 +96,11 @@ export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
 
             return items;
         } catch (e) {
-            services.logService.error("Search failed", "ZoteroSearchModal", e);
+            services.logService.error(
+                "Search failed",
+                "BaseItemSearchModal",
+                e,
+            );
             return [];
         }
     }
@@ -132,20 +144,6 @@ export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
 
         this.renderHighlight(metaEl, metaText, query);
 
-        /*
-        // Down-Right: Tags
-        if (zItem.searchTags && zItem.searchTags.length > 0) {
-            const tagsEl = bottomRow.createDiv({ cls: "zotflow-tags" });
-
-            // Limit to 3 tags
-            const visibleTags = zItem.searchTags.slice(0, 3);
-            visibleTags.forEach((tagText) => {
-                const tagSpan = tagsEl.createSpan({ cls: "tag" });
-                this.renderHighlight(tagSpan, `#${tagText}`, query);
-            });
-        }
-        */
-
         // Path pills
         const paths = this.itemPaths[`${zItem.libraryID}:${zItem.key}`];
         if (paths && paths.length > 0) {
@@ -177,7 +175,53 @@ export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
         if ("isHeader" in item) return;
 
         const zItem = item as AnyIDBZoteroItem;
-        this.handleSelection(zItem, evt);
+        this.handleItemSelected(zItem, evt);
+    }
+
+    protected formatCreators(creators: string[]): string | null {
+        if (!creators || creators.length === 0) return null;
+        if (creators.length === 1) return creators[0]!;
+        if (creators.length === 2) return `${creators[0]} & ${creators[1]}`;
+        return `${creators[0]} et al.`;
+    }
+
+    protected extractYear(dateString: string): string {
+        if (!dateString) return "n.d.";
+        const match = dateString.match(/\d{4}/);
+        return match ? match[0] : "n.d.";
+    }
+
+    protected renderHighlight(el: HTMLElement, text: string, query: string) {
+        if (!query) {
+            el.setText(text);
+            return;
+        }
+        const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`(${escapedQuery})`, "gi");
+
+        text.split(regex).forEach((part) => {
+            if (part.toLowerCase() === query.toLowerCase()) {
+                el.createSpan({ cls: "suggestion-highlight", text: part });
+            } else {
+                el.createSpan({ text: part });
+            }
+        });
+    }
+}
+
+export class ZoteroSearchModal extends BaseItemSearchModal {
+    private settings: ZotFlowSettings;
+
+    constructor(app: App, settings: ZotFlowSettings) {
+        super(app);
+        this.settings = settings;
+    }
+
+    protected handleItemSelected(
+        item: AnyIDBZoteroItem,
+        evt: MouseEvent | KeyboardEvent,
+    ): void {
+        this.handleSelection(item, evt);
     }
 
     private async handleSelection(
@@ -215,37 +259,5 @@ export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
                 this,
             ).open();
         }
-    }
-
-    // --- Helpers ---
-
-    private formatCreators(creators: string[]): string | null {
-        if (!creators || creators.length === 0) return null;
-        if (creators.length === 1) return creators[0]!;
-        if (creators.length === 2) return `${creators[0]} & ${creators[1]}`;
-        return `${creators[0]} et al.`;
-    }
-
-    private extractYear(dateString: string): string {
-        if (!dateString) return "n.d.";
-        const match = dateString.match(/\d{4}/);
-        return match ? match[0] : "n.d.";
-    }
-
-    private renderHighlight(el: HTMLElement, text: string, query: string) {
-        if (!query) {
-            el.setText(text);
-            return;
-        }
-        const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`(${escapedQuery})`, "gi");
-
-        text.split(regex).forEach((part) => {
-            if (part.toLowerCase() === query.toLowerCase()) {
-                el.createSpan({ cls: "suggestion-highlight", text: part });
-            } else {
-                el.createSpan({ text: part });
-            }
-        });
     }
 }

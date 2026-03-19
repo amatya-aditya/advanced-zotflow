@@ -27,6 +27,7 @@ export interface ItemTemplateContext {
     dateAdded: string;
     dateModified: string;
 
+    accessDate?: string;
     abstractNote?: string;
     publicationTitle?: string;
     publisher?: string;

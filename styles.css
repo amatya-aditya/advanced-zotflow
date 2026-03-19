@@ -546,7 +546,7 @@
 .zotflow-ac-content {
     flex: 1;
     overflow: auto;
-    padding: var(--size-4-4) 0;
+    padding: var(--size-4-4) var(--size-2-2);
     display: flex;
     flex-direction: column;
     gap: var(--size-4-3);
@@ -1429,4 +1429,136 @@
     color: var(--text-faint);
     text-align: center;
     padding: var(--size-4-6);
+}
+
+/* ============================================================
+   Activity Center: Template Test View
+   ============================================================ */
+
+.zotflow-template-test {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    height: 100%;
+}
+
+.zotflow-template-test-section-header {
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--size-4-2);
+    flex-shrink: 0;
+}
+
+.zotflow-template-test-env-section {
+    display: flex;
+    flex-direction: column;
+}
+
+.zotflow-template-test-env {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.zotflow-template-test-selection {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.zotflow-template-test-panels {
+    display: flex;
+    gap: var(--size-4-3);
+    flex: 1;
+    min-height: 0;
+}
+
+.zotflow-template-test-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: var(--size-2-2);
+}
+
+.zotflow-template-test-editor {
+    flex: 1;
+    min-height: 200px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+}
+
+.zotflow-template-test-editor .cm-editor {
+    height: 100%;
+}
+
+.zotflow-template-test-editor .cm-scroller {
+    overflow: auto;
+}
+
+.zotflow-template-test-output {
+    flex: 1;
+    min-height: 200px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+}
+
+.zotflow-template-test-output .cm-editor {
+    height: 100%;
+}
+
+.zotflow-template-test-output .cm-scroller {
+    overflow: auto;
+}
+
+.zotflow-template-test-preview {
+    overflow: auto;
+    padding: var(--size-4-2);
+}
+
+.zotflow-template-test-placeholder {
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+.zotflow-template-test-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.zotflow-template-test-panel-header .zotflow-template-test-section-header {
+    margin-bottom: 0;
+}
+
+.zotflow-template-test-mode-toggle {
+    display: flex;
+    gap: var(--size-2-2);
+}
+
+.zotflow-template-test-mode-toggle .clickable-icon.is-active {
+    color: var(--text-accent);
+}
+
+.zotflow-template-test-error {
+    font-size: var(--font-ui-small);
+    color: var(--text-error);
+    padding: var(--size-4-2);
+    border: 1px solid var(--text-error);
+    border-radius: var(--radius-s);
+    background: rgba(var(--color-red-rgb), 0.05);
+}
+
+.zotflow-template-test-actions {
+    display: flex;
+    justify-content: flex-end;
 }
