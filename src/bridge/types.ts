@@ -43,6 +43,7 @@ export interface IParentProxy {
     // Utils
     parseYaml(text: string): Promise<any>;
     stringifyYaml(obj: any): Promise<string>;
+    joinPath(...segments: string[]): Promise<string>;
     getLinkedLocalSourceNote(
         file: TFileWithoutParentAndVault,
     ): Promise<TFileWithoutParentAndVault | null>;

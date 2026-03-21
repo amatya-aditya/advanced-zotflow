@@ -2,6 +2,7 @@ import { BaseTask } from "../base";
 import { db, getCombinations } from "db/db";
 import { annotationItemFromJSON } from "db/annotation";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import SparkMD5 from "spark-md5";
 
 import type { AttachmentService } from "worker/services/attachment";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
@@ -144,12 +145,12 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
     private async extractForAttachment(
         attachment: IDBZoteroItem<AttachmentData>,
     ): Promise<AnnotationJSON[]> {
-        const currentMD5 = attachment.raw.data.md5;
+        const serverMD5 = attachment.raw.data.md5;
         const lastExtractionMD5 =
             attachment.externalAnnotationExtractionFileMD5;
 
-        // Skip if MD5 matches (already extracted)
-        if (currentMD5 && currentMD5 === lastExtractionMD5) {
+        // Fast path: server MD5 available and matches last extraction
+        if (serverMD5 && serverMD5 === lastExtractionMD5) {
             this.log(
                 "debug",
                 `Skipping ${attachment.key} — MD5 match`,
@@ -158,7 +159,32 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
             return [];
         }
 
-        // Delete existing external annotations for this attachment
+        // Download the PDF
+        const fileBlob = await this.attachmentService.getFileBlob(attachment);
+        if (!fileBlob) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "BatchExtractExternalAnnotationsTask",
+                `File blob not available for ${attachment.key}`,
+            );
+        }
+
+        const buffer = await fileBlob.arrayBuffer();
+
+        // Determine effective MD5: use server value, or compute from file content (linked files)
+        const effectiveMD5 = serverMD5 || SparkMD5.ArrayBuffer.hash(buffer);
+
+        // Slow path: no server MD5 (linked file) — check computed MD5 against last extraction
+        if (!serverMD5 && effectiveMD5 === lastExtractionMD5) {
+            this.log(
+                "debug",
+                `Skipping ${attachment.key} — computed MD5 match`,
+                "BatchExtractExternalAnnotationsTask",
+            );
+            return [];
+        }
+
+        // Delete existing external annotations before re-extraction
         const existingExternal = await db.items
             .where({
                 libraryID: attachment.libraryID,
@@ -174,18 +200,6 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
         if (existingExternal.length > 0) {
             await db.items.bulkDelete(existingExternal);
         }
-
-        // Download the PDF
-        const fileBlob = await this.attachmentService.getFileBlob(attachment);
-        if (!fileBlob) {
-            throw new ZotFlowError(
-                ZotFlowErrorCode.RESOURCE_MISSING,
-                "BatchExtractExternalAnnotationsTask",
-                `File blob not available for ${attachment.key}`,
-            );
-        }
-
-        const buffer = await fileBlob.arrayBuffer();
 
         // Extract via PDF worker
         const rawAnnotations = await this.pdfProcessor.import(buffer, true);
@@ -266,11 +280,9 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
         }
 
         // Update extraction MD5 on the attachment
-        if (currentMD5) {
-            await db.items.update([attachment.libraryID, attachment.key], {
-                externalAnnotationExtractionFileMD5: currentMD5,
-            });
-        }
+        await db.items.update([attachment.libraryID, attachment.key], {
+            externalAnnotationExtractionFileMD5: effectiveMD5,
+        });
 
         this.log(
             "debug",

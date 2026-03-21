@@ -144,6 +144,11 @@ export class ParentHost implements IParentProxy {
         }
     }
 
+    public async joinPath(...segments: string[]): Promise<string> {
+        const path = require("path");
+        return path.join(...segments) as string;
+    }
+
     public async parseYaml(text: string): Promise<any> {
         return parseYaml(text);
     }

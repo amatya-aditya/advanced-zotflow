@@ -56,6 +56,7 @@ export interface ZotFlowSettings {
     defaultDarkTheme: string;
     treeCollectionSort: CollectionSortOrder;
     treeItemSort: ItemSortOrder;
+    linkedAttachmentBaseDir: string;
 }
 
 /** Persisted reader view state for a single attachment (local or zotero). */
@@ -102,6 +103,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     defaultDarkTheme: "obsidian",
     treeCollectionSort: "name-asc",
     treeItemSort: "title-asc",
+    linkedAttachmentBaseDir: "",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

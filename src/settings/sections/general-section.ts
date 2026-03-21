@@ -104,6 +104,30 @@ export class GeneralSection {
                 });
         });
 
+        const linkedAttachmentGroup = new SettingGroup(containerEl);
+        linkedAttachmentGroup.setHeading("Linked Attachments");
+
+        linkedAttachmentGroup.addSetting((setting) => {
+            setting
+                .setName("Linked Attachment Base Directory")
+                .setDesc(
+                    "Absolute path to the base directory for Zotero linked attachments (LABD). " +
+                        'Set this to match the "Linked Attachment Base Directory" configured in ' +
+                        "Zotero (Preferences → Advanced → Files and Folders). Required for opening " +
+                        'attachments whose path starts with "attachments:".',
+                )
+                .addText((text) => {
+                    text.setPlaceholder("e.g. D:\\Papers or /Users/name/Papers")
+                        .setValue(this.plugin.settings.linkedAttachmentBaseDir)
+                        .onChange(async (value) => {
+                            this.plugin.settings.linkedAttachmentBaseDir =
+                                value;
+                            await this.plugin.saveSettings();
+                        });
+                    text.inputEl.size = 40;
+                });
+        });
+
         const generalSettingGroup = new SettingGroup(containerEl);
         generalSettingGroup.setHeading("General Settings");
 
