@@ -13,7 +13,7 @@ import { ObsidianIcon } from "../ObsidianIcon";
 import { NodeItem, INDENT_SIZE } from "./Node";
 import { services } from "services/services";
 import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
-import { openAttachment } from "ui/viewer";
+import { openAttachment } from "utils/viewer";
 
 import type { TreeTransferPayload } from "worker/services/tree-view";
 import type {
@@ -22,12 +22,13 @@ import type {
     CollectionSortOrder,
     ItemSortOrder,
 } from "settings/types";
+import type { TFile } from "obsidian";
 
 /* ================================================================ */
 /*  Types                                                          */
 /* ================================================================ */
 
-type ViewMode = "library" | "bookmarks" | "recent";
+type ViewMode = "library" | "bookmarks" | "recent" | "notes";
 
 /** Tree node representing a library, collection, item, or spacer in the tree view. */
 export type ViewNode = {
@@ -160,15 +161,143 @@ const SidebarItem = ({
         if (itemType === "attachment") {
             await openAttachment(libraryID, itemKey, services.app);
         } else {
-            await workerBridge.note.openNote(libraryID, itemKey, {
+            await workerBridge.libraryNote.openNote(libraryID, itemKey, {
                 forceUpdateContent: true,
                 forceUpdateImages: false,
             });
         }
     };
 
+    const handleContextMenu = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const menu = new Menu();
+
+        // Open source note — always available
+        menu.addItem((item) => {
+            item.setTitle("Open source note")
+                .setIcon("file-badge")
+                .onClick(async () => {
+                    services.addRecentItem({
+                        libraryID,
+                        key: itemKey,
+                        name,
+                        itemType,
+                        contentType,
+                    });
+                    try {
+                        await workerBridge.libraryNote.openNote(
+                            libraryID,
+                            itemKey,
+                            {
+                                forceUpdateContent: true,
+                                forceUpdateImages: false,
+                            },
+                        );
+                    } catch (err) {
+                        services.logService.error(
+                            "Failed to open note",
+                            "SidebarItem",
+                            err,
+                        );
+                        services.notificationService.notify(
+                            "error",
+                            "Failed to open source note.",
+                        );
+                    }
+                });
+        });
+
+        // Extract annotation images — always available
+        menu.addItem((item) => {
+            item.setTitle("Extract annotation images")
+                .setIcon("image")
+                .onClick(async () => {
+                    try {
+                        workerBridge.libraryNote.openNote(libraryID, itemKey, {
+                            forceUpdateContent: true,
+                            forceUpdateImages: false,
+                        });
+                        const taskId =
+                            await workerBridge.createBatchExtractImagesTask({
+                                items: [{ libraryID, itemKey }],
+                                forceUpdate: true,
+                            });
+                        services.notificationService.notify(
+                            "success",
+                            `Image extraction started (task ${taskId.slice(0, 8)})`,
+                        );
+                    } catch (err) {
+                        services.logService.error(
+                            "Failed to extract images",
+                            "SidebarItem",
+                            err,
+                        );
+                        services.notificationService.notify(
+                            "error",
+                            "Failed to start image extraction.",
+                        );
+                    }
+                });
+        });
+
+        // Open in reader (for attachment items)
+        if (itemType === "attachment") {
+            menu.addItem((item) => {
+                item.setTitle("Open in reader")
+                    .setIcon("book-open")
+                    .onClick(async () => {
+                        services.addRecentItem({
+                            libraryID,
+                            key: itemKey,
+                            name,
+                            itemType,
+                            contentType,
+                        });
+                        await openAttachment(
+                            libraryID,
+                            itemKey,
+                            services.app,
+                        );
+                    });
+            });
+        }
+
+        // Bookmark toggle
+        const isBookmarked = services.isBookmarked(libraryID, itemKey);
+        menu.addItem((item) => {
+            item.setTitle(isBookmarked ? "Remove bookmark" : "Bookmark item")
+                .setIcon(isBookmarked ? "bookmark-minus" : "bookmark-plus")
+                .onClick(async () => {
+                    await services.toggleBookmark({
+                        libraryID,
+                        key: itemKey,
+                        name,
+                        itemType,
+                        contentType,
+                    });
+                });
+        });
+
+        // Remove from recents (only for recent items, not bookmarks — avoid duplicate)
+        if (onRemove && removeIcon !== "bookmark-minus") {
+            menu.addItem((item) => {
+                item.setTitle(removeLabel)
+                    .setIcon(removeIcon)
+                    .onClick(() => onRemove());
+            });
+        }
+
+        menu.showAtMouseEvent(e.nativeEvent);
+    };
+
     return (
-        <div className="zotflow-sidebar-item" onClick={handleClick}>
+        <div
+            className="zotflow-sidebar-item"
+            onClick={handleClick}
+            onContextMenu={handleContextMenu}
+        >
             {iconName && (
                 <ObsidianIcon icon={iconName} className="zotflow-file-icon" />
             )}
@@ -315,6 +444,17 @@ const ToolbarButton = ({
 );
 
 /* ================================================================ */
+/*  Persisted open-state (survives unmount / remount)               */
+/* ================================================================ */
+
+/**
+ * Module-level map tracking which tree nodes are expanded.
+ * Persists across React unmount/remount cycles so the tree doesn't
+ * collapse when the sidebar loses focus.
+ */
+const persistedOpenState: Record<string, boolean> = {};
+
+/* ================================================================ */
 /*  Main Tree Component                                            */
 /* ================================================================ */
 
@@ -334,6 +474,8 @@ export const ZotFlowTree = () => {
     const [viewMode, setViewMode] = useState<ViewMode>("library");
     const [searchOpen, setSearchOpen] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const [noteFiles, setNoteFiles] = useState<TFile[]>([]);
 
     // Sort state — initialised from persisted settings
     const [collectionSort, setCollectionSort] = useState<CollectionSortOrder>(
@@ -356,6 +498,13 @@ export const ZotFlowTree = () => {
             unsubRecents();
         };
     }, []);
+
+    // Load note files when switching to notes view
+    useEffect(() => {
+        if (viewMode === "notes") {
+            setNoteFiles(services.indexService.getAllIndexedFiles());
+        }
+    }, [viewMode]);
 
     // Auto-focus search input when opened
     useEffect(() => {
@@ -520,6 +669,14 @@ export const ZotFlowTree = () => {
         return items.filter((i) => i.name.toLowerCase().includes(lower));
     };
 
+    const handleToggle = useCallback((id: string) => {
+        if (persistedOpenState[id]) {
+            delete persistedOpenState[id];
+        } else {
+            persistedOpenState[id] = true;
+        }
+    }, []);
+
     const handleSearch = (node: NodeApi<ViewNode>, term: string) => {
         const lowerTerm = term.toLowerCase();
 
@@ -597,6 +754,8 @@ export const ZotFlowTree = () => {
                             searchTerm={term}
                             searchMatch={handleSearch}
                             openByDefault={false}
+                            initialOpenState={persistedOpenState}
+                            onToggle={handleToggle}
                             disableDrag={true}
                             disableDrop={true}
                             disableMultiSelection={true}
@@ -664,6 +823,58 @@ export const ZotFlowTree = () => {
             );
         }
 
+        if (viewMode === "notes") {
+            const lower = term.toLowerCase();
+            const filtered = term
+                ? noteFiles.filter((f) =>
+                      f.basename.toLowerCase().includes(lower),
+                  )
+                : noteFiles;
+            const sorted = [...filtered].sort((a, b) =>
+                itemSort === "title-desc"
+                    ? -cmpStr(a.basename, b.basename)
+                    : itemSort === "modified-new"
+                      ? b.stat.mtime - a.stat.mtime
+                      : itemSort === "modified-old"
+                        ? a.stat.mtime - b.stat.mtime
+                        : itemSort === "added-new"
+                          ? b.stat.ctime - a.stat.ctime
+                          : itemSort === "added-old"
+                            ? a.stat.ctime - b.stat.ctime
+                            : cmpStr(a.basename, b.basename),
+            );
+            return (
+                <div className="zotflow-sidebar-list">
+                    {sorted.length === 0 && (
+                        <div className="zotflow-sidebar-empty">
+                            {noteFiles.length === 0
+                                ? "No source notes found."
+                                : "No matching notes."}
+                        </div>
+                    )}
+                    {sorted.map((f) => (
+                        <div
+                            key={f.path}
+                            className="zotflow-sidebar-item"
+                            onClick={() => {
+                                services.app.workspace
+                                    .getLeaf(false)
+                                    .openFile(f);
+                            }}
+                        >
+                            <ObsidianIcon
+                                icon="file-text"
+                                className="zotflow-file-icon"
+                            />
+                            <span className="zotflow-sidebar-item-name">
+                                {f.basename}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
         return null;
     };
 
@@ -689,6 +900,12 @@ export const ZotFlowTree = () => {
                         label="Bookmarks"
                         active={viewMode === "bookmarks"}
                         onClick={() => setViewMode("bookmarks")}
+                    />
+                    <ToolbarButton
+                        icon="file-text"
+                        label="Source Notes"
+                        active={viewMode === "notes"}
+                        onClick={() => setViewMode("notes")}
                     />
                 </div>
                 <div className="zotflow-toolbar-separator" />

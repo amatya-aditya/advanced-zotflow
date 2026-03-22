@@ -1205,6 +1205,7 @@
     font-size: var(--nav-item-size);
     font-weight: var(--nav-item-weight);
     line-height: var(--line-height-tight);
+    padding-right: 10px;
 }
 .zotflow-node:hover {
     color: var(--nav-item-color-hover);

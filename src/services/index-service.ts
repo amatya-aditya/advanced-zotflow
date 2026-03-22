@@ -99,6 +99,12 @@ export class IndexService {
         }
     }
 
+    /** Return all indexed files (files with zotero-key frontmatter). */
+    public getAllIndexedFiles(): TFile[] {
+        if (!this._initialized) return [];
+        return Array.from(this.keyToFileMap.values());
+    }
+
     // Public query API
     public getFileByKey(key: string): TFile | undefined {
         if (!this._initialized) {

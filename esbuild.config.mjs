@@ -41,6 +41,9 @@ const inlineWorkerPlugin = {
                 format: "iife",
                 target: "es2018",
                 minify: prod,
+                alias: {
+                    dexie: "dexie/dist/dexie.mjs",
+                },
                 plugins: [], // No plugins for the worker itself to avoid recursion if not needed
                 external: ["obsidian"],
             });
@@ -149,6 +152,11 @@ const context = await esbuild.context({
     },
     entryPoints: ["src/main.ts"],
     bundle: true,
+    alias: {
+        // Bypass Dexie's global singleton check (import-wrapper.mjs) to avoid
+        // "Two different versions of Dexie loaded" conflicts with other plugins
+        dexie: "dexie/dist/dexie.mjs",
+    },
     external: [
         "obsidian",
         "electron",

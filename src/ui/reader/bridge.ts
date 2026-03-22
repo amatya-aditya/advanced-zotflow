@@ -7,8 +7,8 @@ import type {
     AnnotationJSON,
 } from "types/zotero-reader";
 
-import { EditorView } from "@codemirror/view";
-import { Component, MarkdownRenderer, Platform } from "obsidian";
+import { EditorView } from "@codemirror/view"; // eslint-disable-line import/no-extraneous-dependencies
+import { Component, MarkdownRenderer, Platform, requestUrl } from "obsidian";
 import { v4 as uuidv4 } from "uuid";
 import { connect, WindowMessenger } from "penpal";
 import { getBlobUrls } from "bundle-assets/inline-assets";
@@ -18,6 +18,7 @@ import { workerBridge } from "bridge";
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
 import type { LocalDataManager } from "./local-data-manager";
+import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { getLinkedLocalSourceNote } from "utils/file";
 import type { TFile } from "obsidian";
 import {
@@ -108,6 +109,23 @@ export class IframeReaderBridge {
             isAndroidApp: () => Platform.isAndroidApp,
 
             handleEvent: (evt) => {
+                // Forward hotkeys to Obsidian's document so its Keymap
+                // picks them up (e.g. Ctrl+P → command palette)
+                if (evt.type === "forwardHotkey") {
+                    document.dispatchEvent(
+                        new KeyboardEvent("keydown", {
+                            key: evt.key,
+                            code: evt.code,
+                            ctrlKey: evt.ctrlKey,
+                            metaKey: evt.metaKey,
+                            shiftKey: evt.shiftKey,
+                            altKey: evt.altKey,
+                            bubbles: true,
+                            cancelable: true,
+                        }),
+                    );
+                    return;
+                }
                 const ls = this.typedListeners.get(evt.type);
                 if (ls) ls.forEach((l) => l(evt));
             },
@@ -116,37 +134,82 @@ export class IframeReaderBridge {
                 return window.location.origin;
             },
 
-            getMathJaxConfig: () => {
-                return (window as any).MathJax?.config || {};
+            getMathJaxConfig: (): Record<string, unknown> => {
+                const win = window as unknown as { MathJax?: { config?: Record<string, unknown> } };
+                return win.MathJax?.config ?? {};
             },
 
             getColorScheme: () => {
-                return getComputedStyle(document.body)
-                    .colorScheme as ColorScheme;
+                const scheme = services.settings.readerColorScheme;
+                if (scheme === "light") return "light" as ColorScheme;
+                if (scheme === "dark") return "dark" as ColorScheme;
+                return (document.body.classList.contains("theme-dark")
+                    ? "dark"
+                    : "light") as ColorScheme;
             },
 
             getStyleSheets: () => {
                 return document.styleSheets;
             },
 
+            getObsidianThemeVariables: () => {
+                const computed = getComputedStyle(document.body);
+                const vars: Record<string, string> = {};
+                const cssVarNames = [
+                    "--background-primary",
+                    "--background-primary-alt",
+                    "--background-secondary",
+                    "--background-secondary-alt",
+                    "--background-modifier-border",
+                    "--background-modifier-form-field",
+                    "--background-modifier-hover",
+                    "--background-modifier-active-hover",
+                    "--text-normal",
+                    "--text-muted",
+                    "--text-faint",
+                    "--text-on-accent",
+                    "--text-accent",
+                    "--text-accent-hover",
+                    "--interactive-normal",
+                    "--interactive-hover",
+                    "--interactive-accent",
+                    "--interactive-accent-hover",
+                    "--scrollbar-bg",
+                    "--scrollbar-thumb-bg",
+                    "--scrollbar-active-thumb-bg",
+                    "--scrollbar-width",
+                    "--scrollbar-height",
+                    "--scrollbar-radius",
+                    "--scrollbar-border-width",
+                ];
+                for (const name of cssVarNames) {
+                    const val = computed.getPropertyValue(name).trim();
+                    if (val) vars[name] = val;
+                }
+                return { ":root": vars };
+            },
+
             getPluginSettings: () => {
                 return services.settings;
             },
 
-            getLinkToSelection: (text: string, navigationInfo: any) => {
+            getLinkToSelection: (text: string, navigationInfo: Record<string, unknown>) => {
                 if (this.isLocal && this.localAttachment) {
-                    const note = getLinkedLocalSourceNote(
-                        services.app,
-                        this.localAttachment,
-                    );
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                    const note: TFileWithoutParentAndVault | null =
+                        getLinkedLocalSourceNote(
+                            services.app,
+                            this.localAttachment,
+                        );
 
                     if (note) {
                         const filePath = this.localAttachment.path;
                         const encodedNavigationInfo = encodeURIComponent(
                             JSON.stringify(navigationInfo),
                         );
+                        const pageLabel = navigationInfo.pageLabel as string | undefined;
 
-                        return `[[${filePath}${navigationInfo.pageLabel ? `#page=${navigationInfo.pageLabel}` : ""}#annotation=${encodedNavigationInfo})|${text}]]`;
+                        return `[[${filePath}${pageLabel ? `#page=${pageLabel}` : ""}#annotation=${encodedNavigationInfo})|${text}]]`;
                     }
 
                     return "";
@@ -183,10 +246,12 @@ export class IframeReaderBridge {
                     return;
                 } else {
                     if (this.isLocal && this.localAttachment) {
-                        const note = getLinkedLocalSourceNote(
-                            services.app,
-                            this.localAttachment,
-                        );
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                        const note: TFileWithoutParentAndVault | null =
+                            getLinkedLocalSourceNote(
+                                services.app,
+                                this.localAttachment,
+                            );
 
                         if (note) {
                             const content = annotations.reduce((acc, anno) => {
@@ -222,12 +287,12 @@ export class IframeReaderBridge {
                 options: Partial<MarkdownEditorProps>,
             ) => {
                 const editor = createEmbeddableMarkdownEditor(
-                    (window as any).app,
-                    container as HTMLElement,
+                    services.app,
+                    container,
                     {
                         ...options,
-                        onBlur: (editor) => {
-                            editor.activeCM.dispatch({
+                        onBlur: (blurEditor) => {
+                            blurEditor.activeCM.dispatch({
                                 effects: EditorView.scrollIntoView(0, {
                                     y: "start",
                                 }),
@@ -253,7 +318,7 @@ export class IframeReaderBridge {
                 comp.load();
                 container.empty();
                 container.addClass("content");
-                MarkdownRenderer.render(
+                void MarkdownRenderer.render(
                     services.app,
                     text,
                     container,
@@ -285,12 +350,16 @@ export class IframeReaderBridge {
         const doc = this.container.ownerDocument; // Get the document of the container
         this.iframe = doc.createElement("iframe");
         this.iframe.id = "zotero-reader-iframe";
-        this.iframe.style.cssText = "width:100%;height:100%;border:none;";
+        this.iframe.setCssStyles({
+            width: "100%",
+            height: "100%",
+            border: "none",
+        });
         const src = getBlobUrls()["reader.html"]!;
 
         if (Platform.isAndroidApp) {
-            const srcdoc = await fetch(src).then((res) => res.text());
-            this.iframe.srcdoc = srcdoc;
+            const response = await requestUrl({ url: src });
+            this.iframe.srcdoc = response.text;
         } else {
             this.iframe.src = src;
         }
@@ -312,12 +381,8 @@ export class IframeReaderBridge {
                     isDark = true;
                 } else {
                     // "obsidian" or "obsidian-theme", detect from parent
-                    const parentBody =
-                        this.iframe?.contentWindow?.parent?.document.body;
-                    if (parentBody) {
-                        isDark =
-                            getComputedStyle(parentBody).colorScheme === "dark";
-                    }
+                    isDark =
+                        document.body.classList.contains("theme-dark");
                 }
                 iframeDoc.documentElement.classList.toggle(
                     "obsidian-theme-dark",
@@ -348,7 +413,7 @@ export class IframeReaderBridge {
                     "IframeReaderBridge",
                 );
                 // Use setTimeout to avoid potential stack overflow
-                setTimeout(() => this.reconnect(), 0);
+                setTimeout(() => { void this.reconnect(); }, 0);
             }
         };
 
@@ -393,7 +458,7 @@ export class IframeReaderBridge {
                         });
                         // Make it non-enumerable & configurable (child can delete after use)
                         Object.defineProperty(
-                            this.iframe.contentWindow as any,
+                            this.iframe.contentWindow,
                             "__OBSIDIAN_BRIDGE__",
                             {
                                 value: _bridge,
@@ -489,9 +554,9 @@ export class IframeReaderBridge {
         });
     }
 
-    setColorScheme(colorScheme: ColorScheme) {
+    setColorScheme(colorScheme: ColorScheme, obsidianThemeMode?: boolean) {
         return this.runAfterBridgeReady(async () => {
-            await this.child!.setColorScheme(colorScheme);
+            await this.child!.setColorScheme(colorScheme, obsidianThemeMode);
         });
     }
 
@@ -507,7 +572,7 @@ export class IframeReaderBridge {
         });
     }
 
-    navigate(navigationInfo: any) {
+    navigate(navigationInfo: Record<string, unknown>) {
         return this.runAfterReaderReady(async () => {
             await this.child!.navigate(navigationInfo);
         });
@@ -522,9 +587,10 @@ export class IframeReaderBridge {
         this._state = "disposing";
         try {
             if (this.iframe?.contentWindow) {
-                delete (this.iframe.contentWindow as any).__ZREADER_BRIDGE__;
+                const win = this.iframe.contentWindow as Window & { __ZREADER_BRIDGE__?: unknown };
+                delete win.__ZREADER_BRIDGE__;
             }
-        } catch {}
+        } catch { /* iframe may be cross-origin after navigation */ }
         this.child = undefined;
         this.iframe?.remove();
         this.iframe = null;

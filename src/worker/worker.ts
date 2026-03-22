@@ -524,7 +524,7 @@ const exposedApi: WorkerAPI = {
                 `Item not found: libraryID=${libraryID}, key=${key}`,
             );
         }
-        await _note!.extractAnnotationImages(item, force);
+        await _libraryNote!.extractAnnotationImages(item, force);
     },
 
     updateSettings: (settings: ZotFlowSettings) => {

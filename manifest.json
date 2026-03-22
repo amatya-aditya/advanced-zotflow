@@ -1,11 +1,11 @@
 {
 	"id": "obsidian-zotflow",
-	"name": "Obsidian ZotFlow",
-	"version": "0.4.1",
+	"name": "Advanced ZotFlow",
+	"version": "0.5.0",
 	"minAppVersion": "1.11.4",
 	"description": "Keep your research in flow!",
-	"author": "Xianpi Duan",
-	"authorUrl": "https://github.com/duanxianpi/",
-	"fundingUrl": "https://buymeacoffee.com/duanxianpi",
+	"author": "Aditya Amatya",
+	"authorUrl": "https://github.com/amatya-aditya/",
+	"fundingUrl": "",
 	"isDesktopOnly": false
 }

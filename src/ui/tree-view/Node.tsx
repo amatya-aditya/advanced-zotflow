@@ -75,7 +75,7 @@ export const NodeItem = ({
 
         if (nodeType === "item" && node.data.itemType === "attachment") {
             // Track recent item
-            services.addRecentItem({
+            void services.addRecentItem({
                 libraryID: node.data.libraryID,
                 key: node.data.key,
                 name: node.data.name,
@@ -229,7 +229,7 @@ export const NodeItem = ({
                     .onClick(async () => {
                         try {
                             // Track recent item
-                            services.addRecentItem({
+                            void services.addRecentItem({
                                 libraryID: node.data.libraryID,
                                 key: node.data.key,
                                 name: node.data.name,
@@ -263,7 +263,7 @@ export const NodeItem = ({
                     .onClick(async () => {
                         try {
                             // Open/update the note file (foreground)
-                            workerBridge.libraryNote.openNote(
+                            void workerBridge.libraryNote.openNote(
                                 node.data.libraryID,
                                 node.data.key,
                                 {

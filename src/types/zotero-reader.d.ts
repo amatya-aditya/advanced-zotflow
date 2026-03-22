@@ -16,6 +16,7 @@ export interface CreateReaderOptions {
     password?: string;
     preview?: boolean;
     colorScheme?: ColorScheme;
+    obsidianThemeMode?: boolean;
     customThemes?: CustomReaderTheme[];
     lightTheme?: string;
     darkTheme?: string;
@@ -63,7 +64,8 @@ export type ChildEvents =
     | { type: "textSelectionAnnotationModeChanged"; mode: unknown }
     | { type: "saveCustomThemes"; customThemes: unknown }
     | { type: "setLightTheme"; theme: unknown }
-    | { type: "setDarkTheme"; theme: unknown };
+    | { type: "setDarkTheme"; theme: unknown }
+    | { type: "forwardHotkey"; key: string; code: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean };
 
 /** Penpal API exposed by the parent (Obsidian) to the reader iframe. */
 export type ParentAPI = {
@@ -74,6 +76,7 @@ export type ParentAPI = {
     getMathJaxConfig: () => any;
     getStyleSheets: () => StyleSheetList;
     getColorScheme: () => ColorScheme;
+    getObsidianThemeVariables: () => Record<string, Record<string, string>> | null;
     getPluginSettings: () => ZotFlowSettings;
     getLinkToSelection: (text: string, navigationInfo: any) => string;
     handleSetDataTransferAnnotations: (
@@ -94,7 +97,7 @@ export type ParentAPI = {
 /** Penpal API exposed by the reader iframe to the parent — init, navigate, annotate, destroy. */
 export type ChildAPI = {
     initReader: (opts: CreateReaderOptions) => Promise<boolean>;
-    setColorScheme: (colorScheme: ColorScheme) => Promise<boolean>;
+    setColorScheme: (colorScheme: ColorScheme, obsidianThemeMode?: boolean) => Promise<boolean>;
     addAnnotation: (annotation: AnnotationJSON) => Promise<boolean>;
     refreshAnnotations: (annotations: AnnotationJSON[]) => Promise<boolean>;
     navigate: (navigationInfo: any) => Promise<boolean>;

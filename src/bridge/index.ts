@@ -43,29 +43,29 @@ import type { ItemTemplateContext } from "types/template-context";
 
 /** Comlink-based RPC wrapper managing the Web Worker lifecycle and exposing all worker service proxies. */
 export class WorkerBridge {
-    private _worker: Worker;
+    private _worker!: Worker;
 
-    private _api: Comlink.Remote<WorkerAPI>;
+    private _api!: Comlink.Remote<WorkerAPI>;
 
-    private _attachment: AttachmentService;
-    private _sync: SyncService;
-    private _zotero: ZoteroAPIService;
-    private _webdav: WebDavService;
-    private _treeView: TreeViewService;
-    private _libraryNote: LibraryNoteService;
-    private _localNote: LocalNoteService;
-    private _conflict: ConflictService;
-    private _annotation: AnnotationService;
-    private _key: KeyService;
-    private _dbHelper: DbHelperService;
-    private _pdfProcessor: PDFProcessWorker;
-    private _libraryTemplate: LibraryTemplateService;
-    private _localTemplate: LocalTemplateService;
-    private _notePath: NotePathService;
-    private _tasks: TaskManager;
+    private _attachment!: AttachmentService;
+    private _sync!: SyncService;
+    private _zotero!: ZoteroAPIService;
+    private _webdav!: WebDavService;
+    private _treeView!: TreeViewService;
+    private _libraryNote!: LibraryNoteService;
+    private _localNote!: LocalNoteService;
+    private _conflict!: ConflictService;
+    private _annotation!: AnnotationService;
+    private _key!: KeyService;
+    private _dbHelper!: DbHelperService;
+    private _pdfProcessor!: PDFProcessWorker;
+    private _libraryTemplate!: LibraryTemplateService;
+    private _localTemplate!: LocalTemplateService;
+    private _notePath!: NotePathService;
+    private _tasks!: TaskManager;
 
     private _parentHost: ParentHost | undefined;
-    private _workerBlobUrl: string;
+    private _workerBlobUrl!: string;
     private _initialized = false;
 
     constructor() {

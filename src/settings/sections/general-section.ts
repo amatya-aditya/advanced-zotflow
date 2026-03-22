@@ -15,22 +15,19 @@ export class GeneralSection {
 
     render(containerEl: HTMLElement) {
         const zoteroSourceNote = new SettingGroup(containerEl);
-        zoteroSourceNote.setHeading("Library Source Note");
+        zoteroSourceNote.setHeading("Zotero Attachment Source Note");
 
         zoteroSourceNote.addSetting((setting) => {
             setting
                 .setName("Template Path")
                 .setDesc(
-                    "Path to template file for library source notes (relative to vault root).",
+                    "Path to template file for zotero attachment's source notes (relative to vault root).",
                 )
                 .addText((text) => {
                     text.setPlaceholder("e.g. templates/SourceNoteTemplate.md")
-                        .setValue(
-                            this.plugin.settings.librarySourceNoteTemplatePath,
-                        )
+                        .setValue(this.plugin.settings.librarySourceNoteTemplatePath)
                         .onChange(async (value) => {
-                            this.plugin.settings.librarySourceNoteTemplatePath =
-                                value;
+                            this.plugin.settings.librarySourceNoteTemplatePath = value;
                             await this.plugin.saveSettings();
                         });
                     text.inputEl.size = 40;
@@ -39,20 +36,15 @@ export class GeneralSection {
 
         zoteroSourceNote.addSetting((setting) => {
             setting
-                .setName("Library Source Note Path Template")
+                .setName("Default Source Note Folder")
                 .setDesc(
-                    "LiquidJS template for library source note file path (without .md extension).",
+                    "Default folder for zotero attachment's source notes (relative to vault root).",
                 )
                 .addText((text) => {
-                    text.setPlaceholder(
-                        "e.g. References/{{libraryName}}/@{{citationKey | default: key}}",
-                    )
-                        .setValue(
-                            this.plugin.settings.librarySourceNotePathTemplate,
-                        )
+                    text.setPlaceholder("e.g. Source/ZotFlow")
+                        .setValue(this.plugin.settings.sourceNoteFolder)
                         .onChange(async (value) => {
-                            this.plugin.settings.librarySourceNotePathTemplate =
-                                value;
+                            this.plugin.settings.sourceNoteFolder = value;
                             await this.plugin.saveSettings();
                         });
                     text.inputEl.size = 40;
@@ -60,7 +52,7 @@ export class GeneralSection {
         });
 
         const localSourceNote = new SettingGroup(containerEl);
-        localSourceNote.setHeading("Local Source Note");
+        localSourceNote.setHeading("Local Attachment Source Note");
 
         localSourceNote.addSetting((setting) => {
             setting
@@ -86,42 +78,15 @@ export class GeneralSection {
 
         localSourceNote.addSetting((setting) => {
             setting
-                .setName("Local Source Note Path Template")
+                .setName("Local Source Note Folder")
                 .setDesc(
-                    "LiquidJS template for local source note file path (without .md extension).",
+                    "Default folder for local source notes (relative to vault root).",
                 )
                 .addText((text) => {
-                    text.setPlaceholder("e.g. Local/@{{basename}}")
-                        .setValue(
-                            this.plugin.settings.localSourceNotePathTemplate,
-                        )
+                    text.setPlaceholder("e.g. Source/ZotFlow/Local")
+                        .setValue(this.plugin.settings.localSourceNoteFolder)
                         .onChange(async (value) => {
-                            this.plugin.settings.localSourceNotePathTemplate =
-                                value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        const linkedAttachmentGroup = new SettingGroup(containerEl);
-        linkedAttachmentGroup.setHeading("Linked Attachments");
-
-        linkedAttachmentGroup.addSetting((setting) => {
-            setting
-                .setName("Linked Attachment Base Directory")
-                .setDesc(
-                    "Absolute path to the base directory for Zotero linked attachments (LABD). " +
-                        'Set this to match the "Linked Attachment Base Directory" configured in ' +
-                        "Zotero (Preferences → Advanced → Files and Folders). Required for opening " +
-                        'attachments whose path starts with "attachments:".',
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. D:\\Papers or /Users/name/Papers")
-                        .setValue(this.plugin.settings.linkedAttachmentBaseDir)
-                        .onChange(async (value) => {
-                            this.plugin.settings.linkedAttachmentBaseDir =
-                                value;
+                            this.plugin.settings.localSourceNoteFolder = value;
                             await this.plugin.saveSettings();
                         });
                     text.inputEl.size = 40;
@@ -216,7 +181,9 @@ export class GeneralSection {
                     dropdown.addOption("dark", "Dark");
                     dropdown.addOption("snow", "Snow");
                     dropdown.addOption("sepia", "Sepia");
+                    dropdown.addOption("obsidian", "Obsidian");
                     for (const t of services.viewStateService.getCustomThemes()) {
+                        if (t.id === "obsidian") continue;
                         dropdown.addOption(t.id, t.label);
                     }
                     dropdown
@@ -241,6 +208,7 @@ export class GeneralSection {
                     dropdown.addOption("sepia", "Sepia");
                     dropdown.addOption("obsidian", "Obsidian");
                     for (const t of services.viewStateService.getCustomThemes()) {
+                        if (t.id === "obsidian") continue;
                         dropdown.addOption(t.id, t.label);
                     }
                     dropdown

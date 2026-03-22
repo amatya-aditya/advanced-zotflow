@@ -93,8 +93,9 @@ export class LocalReaderView extends ItemView {
         } else if (schemeSetting === "dark") {
             this.colorScheme = "dark";
         } else {
-            this.colorScheme = getComputedStyle(document.body)
-                .colorScheme as ColorScheme;
+            this.colorScheme = (document.body.classList.contains("theme-dark")
+                ? "dark"
+                : "light") as ColorScheme;
         }
 
         try {
@@ -162,14 +163,17 @@ export class LocalReaderView extends ItemView {
                             schemeSetting === "obsidian" ||
                             schemeSetting === "obsidian-theme"
                         ) {
-                            const newColorScheme = getComputedStyle(
-                                document.body,
-                            ).colorScheme as ColorScheme;
+                            const newColorScheme = (document.body.classList.contains("theme-dark")
+                                ? "dark"
+                                : "light") as ColorScheme;
                             if (
                                 newColorScheme &&
                                 newColorScheme !== this.colorScheme
                             ) {
-                                this.bridge!.setColorScheme(newColorScheme);
+                                this.bridge!.setColorScheme(
+                                    newColorScheme,
+                                    schemeSetting === "obsidian-theme",
+                                );
                                 this.colorScheme = newColorScheme;
                             }
                         }
@@ -209,6 +213,7 @@ export class LocalReaderView extends ItemView {
                     ...this.readerOptions,
                     annotations: loadedAnnotations,
                     colorScheme: this.colorScheme,
+                    obsidianThemeMode: schemeSetting === "obsidian-theme",
                     primaryViewState: viewState?.primaryViewState,
                     customThemes: services.viewStateService.getCustomThemes(),
                     ...themeOverrides,

@@ -146,8 +146,9 @@ export class ZoteroReaderView extends ItemView {
         } else if (schemeSetting === "dark") {
             this.colorScheme = "dark";
         } else {
-            this.colorScheme = getComputedStyle(document.body)
-                .colorScheme as ColorScheme;
+            this.colorScheme = (document.body.classList.contains("theme-dark")
+                ? "dark"
+                : "light") as ColorScheme;
         }
 
         try {
@@ -214,14 +215,17 @@ export class ZoteroReaderView extends ItemView {
                                 schemeSetting === "obsidian" ||
                                 schemeSetting === "obsidian-theme"
                             ) {
-                                const newColorScheme = getComputedStyle(
-                                    document.body,
-                                ).colorScheme as ColorScheme;
+                                const newColorScheme = (document.body.classList.contains("theme-dark")
+                                    ? "dark"
+                                    : "light") as ColorScheme;
                                 if (
                                     newColorScheme &&
                                     newColorScheme !== this.colorScheme
                                 ) {
-                                    this.bridge!.setColorScheme(newColorScheme);
+                                    this.bridge!.setColorScheme(
+                                        newColorScheme,
+                                        schemeSetting === "obsidian-theme",
+                                    );
                                     this.colorScheme = newColorScheme;
                                 }
                             }
@@ -287,10 +291,12 @@ export class ZoteroReaderView extends ItemView {
                         savedViewState?.darkTheme ?? themeDefaults.darkTheme,
                 };
 
+                const isObsidianThemeMode = schemeSetting === "obsidian-theme";
                 const opts: Partial<CreateReaderOptions> = {
                     annotations: annotationJson,
                     primaryViewState: savedViewState?.primaryViewState,
                     colorScheme: this.colorScheme,
+                    obsidianThemeMode: isObsidianThemeMode,
                     customThemes: services.viewStateService.getCustomThemes(),
                     ...themeOverrides,
                 };
