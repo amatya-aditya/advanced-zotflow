@@ -1,4 +1,6 @@
-# ZotFlow — Keep Your Research in Flow
+# Advanced ZotFlow — Keep Your Research in Flow
+
+> **Note:** This is a personal fork of [ZotFlow](https://github.com/duanxianpi/obsidian-zotflow) by Xianpi Duan, maintained by [Aditya Amatya](https://github.com/amatya-aditya) for personal use. It includes custom modifications and features not present in the upstream project. For the original plugin, please visit the [upstream repository](https://github.com/duanxianpi/obsidian-zotflow).
 
 ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply integrates [Zotero](https://www.zotero.org) into your note-taking workflow. It syncs your Zotero libraries, lets you read and annotate PDFs/EPUBs/snapshots directly inside Obsidian, and automatically generates richly-templated source notes — all without leaving your vault.
 
@@ -107,8 +109,8 @@ Communication flows through [Comlink](https://github.com/GoogleChromeLabs/comlin
 ### Setup
 
 ```bash
-git clone https://github.com/duanxianpi/obsidian-zotflow.git --recursive
-cd obsidian-zotflow
+git clone https://github.com/amatya-aditya/advanced-zotflow.git --recursive
+cd advanced-zotflow
 npm install
 ```
 
