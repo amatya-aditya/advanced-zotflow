@@ -29,6 +29,35 @@ export class AttachmentService {
         this.settings = settings;
     }
 
+    private static readonly ATTACHMENTS_PREFIX = "attachments:";
+
+    /**
+     * Resolve a Zotero linked-file path.
+     * If the path starts with "attachments:" (Zotero Linked Attachment Base
+     * Directory / LABD), strip the prefix and prepend the user-configured
+     * base directory. Otherwise return the path as-is (absolute OS path).
+     */
+    private async resolveLinkedFilePath(rawPath: string): Promise<string> {
+        if (!rawPath.startsWith(AttachmentService.ATTACHMENTS_PREFIX)) {
+            return rawPath;
+        }
+
+        const baseDir = this.settings.linkedAttachmentBaseDir;
+        if (!baseDir) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "AttachmentService",
+                `Attachment path uses "attachments:" prefix but no Linked Attachment Base Directory is configured. ` +
+                    `Set it in ZotFlow settings → General → Linked Attachments.`,
+            );
+        }
+
+        const relativePath = rawPath.slice(
+            AttachmentService.ATTACHMENTS_PREFIX.length,
+        );
+        return this.parentHost.joinPath(baseDir, relativePath);
+    }
+
     /**
      * Get file blob from cache or download from Zotero API
      * (Entry Point)
@@ -58,8 +87,9 @@ export class AttachmentService {
             );
         }
 
-        // Check Cache (Fast Path)
-        if (this.settings.useCache) {
+        // Check Cache (Fast Path), skip for linked files (read from disk each time)
+        const linkMode = item.raw.data.linkMode;
+        if (this.settings.useCache && linkMode !== "linked_file") {
             try {
                 const cached = await db.files.get([libraryID, itemKey]);
                 if (cached) {
@@ -95,20 +125,9 @@ export class AttachmentService {
             }
         }
 
-        // Start Download Task (with Lock)
-        this.parentHost.notify("info", `Downloading ${item.raw.data.filename}`);
-
-        const task = this._downloadTask(item)
-            .then((blob) => {
-                this.parentHost.notify(
-                    "info",
-                    `Downloaded ${item.raw.data.filename}`,
-                );
-                return blob;
-            })
-            .finally(() => {
-                this.downloadLocks.delete(item.key);
-            });
+        const task = this._downloadTask(item).finally(() => {
+            this.downloadLocks.delete(item.key);
+        });
 
         this.downloadLocks.set(item.key, task);
 
@@ -127,14 +146,32 @@ export class AttachmentService {
 
         // Download Strategy
         switch (linkMode) {
-            case "linked_file":
-                throw new ZotFlowError(
-                    ZotFlowErrorCode.UNKNOWN,
+            case "linked_file": {
+                const rawPath = item.raw.data.path;
+                if (!rawPath) {
+                    throw new ZotFlowError(
+                        ZotFlowErrorCode.RESOURCE_MISSING,
+                        "AttachmentService",
+                        `No path for linked_file ${item.key}`,
+                    );
+                }
+                const filePath = await this.resolveLinkedFilePath(rawPath);
+                this.parentHost.log(
+                    "info",
+                    `Reading linked file: ${filePath}`,
                     "AttachmentService",
-                    `Linked file detected for ${item.key}. Not implemented.`,
                 );
+                buffer = await this.parentHost.readExternalBinaryFile(filePath);
+                break;
+            }
             case "imported_file":
             case "imported_url":
+                // Start Download Task (with Lock)
+                this.parentHost.notify(
+                    "info",
+                    `Downloading ${item.raw.data.filename || item.raw.data.title || item.key}...`,
+                );
+
                 // Try WebDAV first if enabled
                 if (this.settings.useWebDav) {
                     try {
@@ -163,9 +200,21 @@ export class AttachmentService {
                     );
                     buffer = await this.downloadFromZoteroAPI(item);
                 }
+
+                this.parentHost.notify(
+                    "info",
+                    `Downloaded ${item.raw.data.filename || item.raw.data.title || item.key}`,
+                );
+
                 break;
             default:
                 buffer = await this.downloadFromZoteroAPI(item);
+
+                this.parentHost.notify(
+                    "info",
+                    `Downloaded ${item.raw.data.filename || item.raw.data.title || item.key}`,
+                );
+
                 break;
         }
 
@@ -178,76 +227,82 @@ export class AttachmentService {
             );
         }
 
-        // B. Integrity Check & Auto-Repair
-        const serverMd5 = item.raw.data.md5;
-        let finalMd5 = serverMd5 || "";
-
-        if (serverMd5) {
-            const calculatedMd5 = SparkMD5.ArrayBuffer.hash(buffer);
-
-            if (calculatedMd5 !== serverMd5) {
-                const msg = `MD5 Mismatch for ${item.key}! Expected: ${serverMd5}, Got: ${calculatedMd5}`;
-                this.parentHost.log("warn", msg, "AttachmentService");
-
-                // Smart Repair Strategy
-                if (linkMode === "imported_file" || !this.settings.useWebDav) {
-                    this.parentHost.log(
-                        "info",
-                        "Trusting live download. Auto-updating metadata.",
-                        "AttachmentService",
-                    );
-                    finalMd5 = calculatedMd5;
-                } else {
-                    // WebDAV might be stale. We warn but allow it (don't throw),
-                    // because user might still want to read the (slightly old) file.
-                    this.parentHost.log(
-                        "warn",
-                        "Integrity Warning: WebDAV file might be outdated.",
-                        "AttachmentService",
-                    );
-                }
-            }
-        } else {
-            finalMd5 = SparkMD5.ArrayBuffer.hash(buffer);
-        }
-
         const blob = new Blob([buffer], {
             type: item.raw.data.contentType || "application/pdf",
         });
 
-        // C. Save to Cache
-        if (this.settings.useCache) {
-            try {
-                const fileRecord: IDBZoteroFile = {
-                    libraryID: item.libraryID,
-                    key: item.key,
-                    blob: blob,
-                    mimeType: item.raw.data.contentType || "application/pdf",
-                    fileName: item.raw.data.filename || "file.pdf",
-                    md5: finalMd5,
-                    lastAccessedAt: new Date().toISOString(),
-                    size: buffer.byteLength,
-                };
+        // B. Integrity Check & Auto-Repair, skip for linked files (no server MD5, no cache)
+        if (linkMode !== "linked_file") {
+            const serverMd5 = item.raw.data.md5;
+            let finalMd5 = serverMd5 || "";
 
-                await db.files.put(fileRecord);
+            if (serverMd5) {
+                const calculatedMd5 = SparkMD5.ArrayBuffer.hash(buffer);
 
-                // Fire & Forget Pruning
-                this.pruneCache().catch((e) =>
+                if (calculatedMd5 !== serverMd5) {
+                    const msg = `MD5 Mismatch for ${item.key}! Expected: ${serverMd5}, Got: ${calculatedMd5}`;
+                    this.parentHost.log("warn", msg, "AttachmentService");
+
+                    // Smart Repair Strategy
+                    if (
+                        linkMode === "imported_file" ||
+                        !this.settings.useWebDav
+                    ) {
+                        this.parentHost.log(
+                            "info",
+                            "Trusting live download. Auto-updating metadata.",
+                            "AttachmentService",
+                        );
+                        finalMd5 = calculatedMd5;
+                    } else {
+                        // WebDAV might be stale. We warn but allow it (don't throw),
+                        // because user might still want to read the (slightly old) file.
+                        this.parentHost.log(
+                            "warn",
+                            "Integrity Warning: WebDAV file might be outdated.",
+                            "AttachmentService",
+                        );
+                    }
+                }
+            } else {
+                finalMd5 = SparkMD5.ArrayBuffer.hash(buffer);
+            }
+
+            // C. Save to Cache
+            if (this.settings.useCache) {
+                try {
+                    const fileRecord: IDBZoteroFile = {
+                        libraryID: item.libraryID,
+                        key: item.key,
+                        blob: blob,
+                        mimeType:
+                            item.raw.data.contentType || "application/pdf",
+                        fileName: item.raw.data.filename || "file.pdf",
+                        md5: finalMd5,
+                        lastAccessedAt: new Date().toISOString(),
+                        size: buffer.byteLength,
+                    };
+
+                    await db.files.put(fileRecord);
+
+                    // Fire & Forget Pruning
+                    this.pruneCache().catch((e) =>
+                        this.parentHost.log(
+                            "error",
+                            "Background prune failed",
+                            "AttachmentService",
+                            e,
+                        ),
+                    );
+                } catch (e) {
                     this.parentHost.log(
                         "error",
-                        "Background prune failed",
+                        "Failed to save to cache",
                         "AttachmentService",
                         e,
-                    ),
-                );
-            } catch (e) {
-                this.parentHost.log(
-                    "error",
-                    "Failed to save to cache",
-                    "AttachmentService",
-                    e,
-                );
-                // Cache failure shouldn't stop the user from viewing the file, so we don't throw.
+                    );
+                    // Cache failure shouldn't stop the user from viewing the file, so we don't throw.
+                }
             }
         }
 

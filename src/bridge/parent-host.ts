@@ -15,7 +15,7 @@ import {
     readTextFile,
     checkFile,
     deleteFile,
-    getLinkedSourceNote,
+    getLinkedLocalSourceNote,
 } from "utils/file";
 import { services } from "services/services";
 
@@ -126,6 +126,29 @@ export class ParentHost implements IParentProxy {
         await deleteFile(this.app, path);
     }
 
+    public async readExternalBinaryFile(
+        absolutePath: string,
+    ): Promise<ArrayBuffer> {
+        try {
+            // Use Node.js fs directly — FileSystemAdapter prepends vault path
+            // which breaks absolute OS paths. fs is available in Electron.
+            const fs = require("fs").promises;
+            const nodeBuffer: Buffer = await fs.readFile(absolutePath);
+            const arrayBuffer = nodeBuffer.buffer.slice(
+                nodeBuffer.byteOffset,
+                nodeBuffer.byteOffset + nodeBuffer.byteLength,
+            ) as ArrayBuffer;
+            return Comlink.transfer(arrayBuffer, [arrayBuffer]);
+        } catch (e: any) {
+            throw new Error(`Failed to read external file: ${e.message}`);
+        }
+    }
+
+    public async joinPath(...segments: string[]): Promise<string> {
+        const path = require("path");
+        return path.join(...segments) as string;
+    }
+
     public async parseYaml(text: string): Promise<any> {
         return parseYaml(text);
     }
@@ -134,10 +157,10 @@ export class ParentHost implements IParentProxy {
         return stringifyYaml(obj);
     }
 
-    public async getLinkedSourceNote(
+    public async getLinkedLocalSourceNote(
         file: TFileWithoutParentAndVault,
     ): Promise<TFileWithoutParentAndVault | null> {
-        return getLinkedSourceNote(this.app, file);
+        return getLinkedLocalSourceNote(this.app, file);
     }
 
     public onTaskUpdate(taskId: string, info: ITaskInfo): void {

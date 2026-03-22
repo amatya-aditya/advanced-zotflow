@@ -1,10 +1,13 @@
 import { App } from "obsidian";
-import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./reader/view";
+import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "../ui/reader/view";
+import { workerBridge } from "../bridge";
 
 /**
  * Open an attachment in the default application.
- * @param item The attachment item to open.
- * @param fallback Optional fallback function to execute if the attachment type is not supported.
+ * @param libraryID The library ID of the attachment.
+ * @param key The item key of the attachment.
+ * @param app The Obsidian App instance.
+ * @param navigationInfo Optional navigation info.
  */
 export async function openAttachment(
     libraryID: number,
@@ -12,6 +15,11 @@ export async function openAttachment(
     app: App,
     navigationInfo?: any,
 ) {
+    // Update last accessed timestamp
+    workerBridge.dbHelper.updateLastAccessed(libraryID, key).catch(() => {
+        // Silent catch: timestamp update shouldn't block opening
+    });
+
     let activeLeaf;
     const leaves = app.workspace.getLeavesOfType(ZOTERO_READER_VIEW_TYPE);
 

@@ -9,7 +9,9 @@ import {
     Modal,
     Plugin,
     TFile,
+    TAbstractFile,
     WorkspaceLeaf,
+    normalizePath,
     type ObsidianProtocolData,
 } from "obsidian";
 
@@ -27,8 +29,9 @@ import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
 import { services } from "./services/services";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
 
-import { openAttachment } from "ui/viewer";
+import { openAttachment } from "utils/viewer";
 import { ActivityCenterModal } from "ui/activity-center/modal";
+import { ZoteroSearchModal } from "ui/modals/suggest";
 
 import type {
     ZotFlowSettings,
@@ -202,6 +205,18 @@ export default class ZotFlow extends Plugin {
         });
 
         this.addCommand({
+            id: "search-zotero",
+            name: "Search Zotero Library",
+            callback: () => {
+                new ZoteroSearchModal(this.app, this.settings).open();
+            },
+        });
+
+        this.addRibbonIcon("zotero-search", "ZotFlow: Search Zotero", () => {
+            new ZoteroSearchModal(this.app, this.settings).open();
+        });
+
+        this.addCommand({
             id: "trigger-test-task",
             name: "Trigger Test Task",
             callback: async () => {
@@ -228,17 +243,19 @@ export default class ZotFlow extends Plugin {
 
         this.addSettingTab(new ZotFlowSettingTab(this.app, this));
 
-        // Track file renames to keep viewStates keys in sync
+        // Track file renames to keep viewStates and .zf.json sidecar in sync
         this.registerEvent(
             this.app.vault.on("rename", (file, oldPath) => {
                 services.viewStateService.renameViewState(oldPath, file.path);
+                this.handleSidecarRename(file, oldPath);
             }),
         );
 
-        // Clean up view state when an attachment is deleted
+        // Clean up view state and .zf.json sidecar when an attachment is deleted
         this.registerEvent(
             this.app.vault.on("delete", (file) => {
                 services.viewStateService.deleteViewState(file.path);
+                this.handleSidecarDelete(file);
             }),
         );
     }
@@ -285,6 +302,12 @@ export default class ZotFlow extends Plugin {
             <path
             style="fill:none;fill-opacity:1;stroke:currentColor;stroke-width:8.33331;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
             d="m 17.213858,8.3334232 h 65.067213 l 5.218851,9.8385298 -44.69689,56.088003 H 87.163227 V 91.666577 H 17.550592 L 12.500086,81.155337 56.607743,25.992326 H 17.045509 Z"/>
+            `,
+        );
+        addIcon(
+            "zotero-search",
+            `
+            <defs><mask maskUnits="userSpaceOnUse" id="a"><g style="display:inline"><path fill="#fff" d="M0 0h100v100H0z"/><circle cx="64.5" cy="68.25" r="28"/><path stroke="#000" stroke-width="26" stroke-linecap="round" style="stroke-width:40;stroke-dasharray:none" d="m70 70 30 30"/></g></mask></defs><path mask="url(#a)" style="fill:none;stroke:currentColor;stroke-width:8.33331;stroke-linecap:round;stroke-linejoin:round" d="M17.214 8.333H82.28l5.219 9.839L42.803 74.26h44.36v17.407H17.551L12.5 81.155l44.107-55.163H17.046Z"/><g transform="matrix(2.5 0 0 2.5 37 40.75)"><circle cx="11" cy="11" r="8" style="fill:none;stroke:currentColor;stroke-width:3.33;stroke-linecap:round;stroke-linejoin:round"/><path d="m21 21-4.34-4.34" style="fill:none;stroke:currentColor;stroke-width:3.33;stroke-linecap:round;stroke-linejoin:round"/></g>
             `,
         );
     }
@@ -379,7 +402,7 @@ export default class ZotFlow extends Plugin {
             }
 
             if (type === "open-note") {
-                await workerBridge.note.openNote(libID, key);
+                await workerBridge.libraryNote.openNote(libID, key);
             } else if (type === "open-attachment") {
                 await openAttachment(libID, key, this.app, navigation);
             } else {
@@ -407,6 +430,77 @@ export default class ZotFlow extends Plugin {
                 `Protocol Error: ${error.message || "Unknown error"}`,
             );
         }
+    }
+
+    /**
+     * When a supported attachment is renamed/moved, rename/move its
+     * co-located `.zf.json` sidecar file to keep them in sync.
+     */
+    private handleSidecarRename(file: TAbstractFile, oldPath: string) {
+        if (!(file instanceof TFile)) return;
+        if (!SUPPORTED_EXTENSIONS.includes(file.extension.toLowerCase()))
+            return;
+
+        const oldJsonPath = this.getSidecarPath(oldPath);
+        const newJsonPath = this.getSidecarPathFromFile(file);
+        if (oldJsonPath === newJsonPath) return;
+
+        const jsonFile = this.app.vault.getAbstractFileByPath(
+            normalizePath(oldJsonPath),
+        );
+        if (jsonFile instanceof TFile) {
+            this.app.vault.rename(jsonFile, newJsonPath).catch((err) => {
+                services.logService.error(
+                    `Failed to rename sidecar ${oldJsonPath} → ${newJsonPath}`,
+                    "Main",
+                    err,
+                );
+            });
+        }
+    }
+
+    /**
+     * When a supported attachment is deleted, delete its
+     * co-located `.zf.json` sidecar file.
+     */
+    private handleSidecarDelete(file: TAbstractFile) {
+        if (!(file instanceof TFile)) return;
+        if (!SUPPORTED_EXTENSIONS.includes(file.extension.toLowerCase()))
+            return;
+
+        const jsonPath = this.getSidecarPathFromFile(file);
+        const jsonFile = this.app.vault.getAbstractFileByPath(
+            normalizePath(jsonPath),
+        );
+        if (jsonFile instanceof TFile) {
+            this.app.vault.trash(jsonFile, true).catch((err) => {
+                services.logService.error(
+                    `Failed to delete sidecar ${jsonPath}`,
+                    "Main",
+                    err,
+                );
+            });
+        }
+    }
+
+    /**
+     * Derive sidecar `.zf.json` path from a raw file path string.
+     * `Papers/myPaper.pdf` → `Papers/myPaper.zf.json`
+     */
+    private getSidecarPath(filePath: string): string {
+        const lastDot = filePath.lastIndexOf(".");
+        const basePath =
+            lastDot !== -1 ? filePath.substring(0, lastDot) : filePath;
+        return `${basePath}.zf.json`;
+    }
+
+    /**
+     * Derive sidecar `.zf.json` path from a TFile.
+     */
+    private getSidecarPathFromFile(file: TFile): string {
+        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
+        const prefix = dir ? `${dir}/` : "";
+        return `${prefix}${file.basename}.zf.json`;
     }
 
     async handleFileOpen(file: TFile | null) {

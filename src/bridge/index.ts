@@ -12,13 +12,19 @@ import type { SyncService } from "worker/services/sync";
 import type { ZoteroAPIService } from "worker/services/zotero";
 import type { WebDavService } from "worker/services/webdav";
 import type { TreeViewService } from "worker/services/tree-view";
-import type { NoteService, UpdateOptions } from "worker/services/note";
+import type {
+    LibraryNoteService,
+    UpdateOptions,
+} from "worker/services/library-note";
 import type { LocalNoteService } from "worker/services/local-note";
 import type { ConflictService } from "worker/services/conflict";
 import type { AnnotationService } from "worker/services/annotation";
 import type { KeyService } from "worker/services/key";
 import type { DbHelperService } from "worker/services/db-helper";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { LibraryTemplateService } from "worker/services/library-template";
+import type { LocalTemplateService } from "worker/services/local-template";
+import type { NotePathService } from "worker/services/note-path";
 import type { BatchNoteInput } from "worker/tasks/impl/batch-note-task";
 import type {
     BatchExtractImagesInput,
@@ -29,6 +35,8 @@ import type { AttachmentData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
 
 import type { App } from "obsidian";
+import type { AttachmentIdentifier } from "worker/tasks/impl/batch-extract-external-annotations-task";
+
 import { services } from "services/services";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import type { ItemTemplateContext } from "types/template-context";
@@ -44,13 +52,16 @@ export class WorkerBridge {
     private _zotero: ZoteroAPIService;
     private _webdav: WebDavService;
     private _treeView: TreeViewService;
-    private _note: NoteService;
+    private _libraryNote: LibraryNoteService;
     private _localNote: LocalNoteService;
     private _conflict: ConflictService;
     private _annotation: AnnotationService;
     private _key: KeyService;
     private _dbHelper: DbHelperService;
     private _pdfProcessor: PDFProcessWorker;
+    private _libraryTemplate: LibraryTemplateService;
+    private _localTemplate: LocalTemplateService;
+    private _notePath: NotePathService;
     private _tasks: TaskManager;
 
     private _parentHost: ParentHost | undefined;
@@ -81,13 +92,16 @@ export class WorkerBridge {
         this._zotero = await this._api.zotero;
         this._webdav = await this._api.webdav;
         this._treeView = await this._api.treeView;
-        this._note = await this._api.note;
+        this._libraryNote = await this._api.libraryNote;
         this._localNote = await this._api.localNote;
         this._conflict = await this._api.conflict;
         this._annotation = await this._api.annotation;
         this._key = await this._api.key;
         this._dbHelper = await this._api.dbHelper;
         this._pdfProcessor = await this._api.pdfProcessor;
+        this._libraryTemplate = await this._api.libraryTemplate;
+        this._localTemplate = await this._api.localTemplate;
+        this._notePath = await this._api.notePath;
         this._tasks = await this._api.tasks;
 
         this._initialized = true;
@@ -133,9 +147,9 @@ export class WorkerBridge {
         return this._treeView;
     }
 
-    get note() {
+    get libraryNote() {
         this.assertInitialized();
-        return this._note;
+        return this._libraryNote;
     }
 
     get localNote() {
@@ -166,6 +180,21 @@ export class WorkerBridge {
     get pdfProcessWorker() {
         this.assertInitialized();
         return this._pdfProcessor;
+    }
+
+    get libraryTemplate() {
+        this.assertInitialized();
+        return this._libraryTemplate;
+    }
+
+    get localTemplate() {
+        this.assertInitialized();
+        return this._localTemplate;
+    }
+
+    get notePath() {
+        this.assertInitialized();
+        return this._notePath;
     }
 
     get tasks() {
@@ -206,7 +235,7 @@ export class WorkerBridge {
     }
 
     async extractExternalAnnotations(
-        items: ItemIdentifier[],
+        items: AttachmentIdentifier[],
     ): Promise<AnnotationJSON[]> {
         this.assertInitialized();
         return this._api.extractExternalAnnotations(items);

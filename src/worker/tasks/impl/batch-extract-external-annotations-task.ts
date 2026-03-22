@@ -1,7 +1,7 @@
 import { BaseTask } from "../base";
-import { db, getCombinations } from "db/db";
-import { annotationItemFromJSON } from "db/annotation";
+import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import SparkMD5 from "spark-md5";
 
 import type { AttachmentService } from "worker/services/attachment";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
@@ -9,14 +9,19 @@ import type { TaskStatus } from "types/tasks";
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData, AnnotationData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
-import type { ItemIdentifier } from "./batch-extract-images-task";
+
+export interface AttachmentIdentifier {
+    libraryID: number;
+    itemKey: string;
+    precomputedMD5?: string;
+}
 
 /**
  * Input descriptor for batch external annotation extraction.
  */
 export interface BatchExtractExternalAnnotationsInput {
     /** Attachment items to extract from, identified by libraryID + itemKey. */
-    items: ItemIdentifier[];
+    items: AttachmentIdentifier[];
 }
 
 /**
@@ -80,6 +85,17 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
         let successCount = 0;
         let failCount = 0;
 
+        // Build a lookup for precomputed MD5 values
+        const precomputedMD5Map = new Map<string, string>();
+        for (const { libraryID, itemKey, precomputedMD5 } of this.input.items) {
+            if (precomputedMD5) {
+                precomputedMD5Map.set(
+                    `${libraryID}:${itemKey}`,
+                    precomputedMD5,
+                );
+            }
+        }
+
         for (let i = 0; i < items.length; i++) {
             if (signal.aborted) throw new Error("Aborted");
 
@@ -92,7 +108,13 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
             );
 
             try {
-                const annotations = await this.extractForAttachment(item);
+                const preMD5 = precomputedMD5Map.get(
+                    `${item.libraryID}:${item.key}`,
+                );
+                const annotations = await this.extractForAttachment(
+                    item,
+                    preMD5,
+                );
                 this.extractedAnnotations.push(...annotations);
                 successCount++;
             } catch (e) {
@@ -143,22 +165,64 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
      */
     private async extractForAttachment(
         attachment: IDBZoteroItem<AttachmentData>,
+        precomputedMD5?: string,
     ): Promise<AnnotationJSON[]> {
-        const currentMD5 = attachment.raw.data.md5;
+        const serverMD5 = attachment.raw.data.md5;
         const lastExtractionMD5 =
             attachment.externalAnnotationExtractionFileMD5;
 
-        // Skip if MD5 matches (already extracted)
-        if (currentMD5 && currentMD5 === lastExtractionMD5) {
+        // Fast path: server MD5 available and matches last extraction
+        if (serverMD5 && serverMD5 === lastExtractionMD5) {
             this.log(
                 "debug",
-                `Skipping ${attachment.key} — MD5 match`,
+                `Skipping ${attachment.key} — server MD5 match`,
                 "BatchExtractExternalAnnotationsTask",
             );
             return [];
         }
 
-        // Delete existing external annotations for this attachment
+        // Fast path for linked files: use precomputed MD5 from already-loaded
+        // blob (avoids a redundant file read).
+        if (
+            !serverMD5 &&
+            precomputedMD5 &&
+            precomputedMD5 === lastExtractionMD5
+        ) {
+            this.log(
+                "debug",
+                `Skipping ${attachment.key} — precomputed MD5 match`,
+                "BatchExtractExternalAnnotationsTask",
+            );
+            return [];
+        }
+
+        // Download the PDF
+        const fileBlob = await this.attachmentService.getFileBlob(attachment);
+        if (!fileBlob) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "BatchExtractExternalAnnotationsTask",
+                `File blob not available for ${attachment.key}`,
+            );
+        }
+
+        const buffer = await fileBlob.arrayBuffer();
+
+        // Determine effective MD5: prefer precomputed, then server, then compute from content
+        const effectiveMD5 =
+            precomputedMD5 || serverMD5 || SparkMD5.ArrayBuffer.hash(buffer);
+
+        // Slow path: check computed/precomputed MD5 against last extraction
+        if (effectiveMD5 === lastExtractionMD5) {
+            this.log(
+                "debug",
+                `Skipping ${attachment.key} — computed MD5 match`,
+                "BatchExtractExternalAnnotationsTask",
+            );
+            return [];
+        }
+
+        // Delete existing external annotations before re-extraction
         const existingExternal = await db.items
             .where({
                 libraryID: attachment.libraryID,
@@ -175,33 +239,16 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
             await db.items.bulkDelete(existingExternal);
         }
 
-        // Download the PDF
-        const fileBlob = await this.attachmentService.getFileBlob(attachment);
-        if (!fileBlob) {
-            throw new ZotFlowError(
-                ZotFlowErrorCode.RESOURCE_MISSING,
-                "BatchExtractExternalAnnotationsTask",
-                `File blob not available for ${attachment.key}`,
-            );
-        }
-
-        const buffer = await fileBlob.arrayBuffer();
-
         // Extract via PDF worker
         const rawAnnotations = await this.pdfProcessor.import(buffer, true);
 
-        // Build IDB items + AnnotationJSON in one pass
-        const annotationJsonResults: AnnotationJSON[] = [];
-        const library = attachment.raw.library;
-        const now = new Date().toISOString().split(".")[0] + "Z";
-
-        const idbItems: IDBZoteroItem<AnnotationData>[] = rawAnnotations.map(
+        // Build AnnotationJSON for the reader
+        const annotationJsonResults: AnnotationJSON[] = rawAnnotations.map(
             (raw: any) => {
                 const key =
                     raw.key || raw.id || crypto.randomUUID().slice(0, 8);
 
-                // Build AnnotationJSON for the reader
-                annotationJsonResults.push({
+                return {
                     id: key,
                     type: raw.annotationType,
                     isExternal: true,
@@ -216,61 +263,14 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
                     tags: raw.tags || [],
                     dateModified: raw.dateModified,
                     dateAdded: raw.dateAdded,
-                });
-
-                return {
-                    libraryID: attachment.libraryID,
-                    key,
-                    itemType: "annotation",
-                    parentItem: attachment.key,
-                    title: "",
-                    collections: [],
-                    dateAdded: raw.dateAdded || now,
-                    dateModified: raw.dateModified || now,
-                    version: 0,
-                    trashed: 0,
-                    searchCreators: [],
-                    searchTags: [],
-                    syncStatus: "ignore",
-                    syncedAt: now,
-                    syncError: "",
-                    raw: {
-                        key,
-                        version: 0,
-                        library,
-                        links: {},
-                        meta: { numChildren: 0 },
-                        data: {
-                            ...raw,
-                            key,
-                            itemType: "annotation",
-                            parentItem: attachment.key,
-                            annotationIsExternal: true,
-                            relations: {},
-                            dateAdded: raw.dateAdded || now,
-                            dateModified: raw.dateModified || now,
-                            tags: raw.tags || [],
-                            deleted: false,
-                            version: 0,
-                        } as unknown as AnnotationData,
-                    },
-                } as IDBZoteroItem<AnnotationData>;
+                };
             },
         );
 
-        // Store annotations in IDB
-        if (idbItems.length > 0) {
-            await db.transaction("rw", db.items, async () => {
-                await db.items.bulkPut(idbItems);
-            });
-        }
-
         // Update extraction MD5 on the attachment
-        if (currentMD5) {
-            await db.items.update([attachment.libraryID, attachment.key], {
-                externalAnnotationExtractionFileMD5: currentMD5,
-            });
-        }
+        await db.items.update([attachment.libraryID, attachment.key], {
+            externalAnnotationExtractionFileMD5: effectiveMD5,
+        });
 
         this.log(
             "debug",

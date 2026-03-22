@@ -1,4 +1,5 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
+import SparkMD5 from "spark-md5";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
 import { services } from "services/services";
@@ -33,6 +34,8 @@ export class ZoteroReaderView extends ItemView {
     private colorScheme: ColorScheme = "light"; // Default to light
     private unsubscribeTaskMonitor?: () => void;
     private lastSyncTaskStatuses = new Map<string, ITaskInfo["status"]>();
+    /** MD5 of the file blob used to init the reader, for extraction skip check. */
+    private fileBlobMD5?: string;
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -43,7 +46,11 @@ export class ZoteroReaderView extends ItemView {
     }
 
     getDisplayText() {
-        return this.attachmentItem?.raw.data.filename || "Zotero Reader";
+        return (
+            this.attachmentItem?.raw.data.filename ??
+            this.attachmentItem?.raw.data.title ??
+            "Zotero Reader"
+        );
     }
 
     getIcon() {
@@ -87,7 +94,11 @@ export class ZoteroReaderView extends ItemView {
             this.keyInfo = _keyInfo;
             this.containerEl
                 .getElementsByClassName("view-header-title")[0]
-                ?.setText(this.attachmentItem.raw.data.filename);
+                ?.setText(
+                    this.attachmentItem.raw.data.filename ??
+                        this.attachmentItem.raw.data.title ??
+                        "Zotero Reader",
+                );
             this.loadDocument();
         }
 
@@ -102,7 +113,7 @@ export class ZoteroReaderView extends ItemView {
         loadingEl.setText(`Downloading/Loading ${this.attachmentItem.key}...`);
 
         // Try force update the source note
-        workerBridge.note
+        workerBridge.libraryNote
             .triggerUpdate(
                 this.attachmentItem.libraryID,
                 this.attachmentItem.parentItem !== ""
@@ -317,9 +328,12 @@ export class ZoteroReaderView extends ItemView {
                         : "";
 
                 // Initialize Reader Logic
+                const fileBuf = await fileBlob.arrayBuffer();
+                this.fileBlobMD5 = SparkMD5.ArrayBuffer.hash(fileBuf);
+
                 this.bridge.initReader({
                     data: {
-                        buf: new Uint8Array(await fileBlob.arrayBuffer()),
+                        buf: new Uint8Array(fileBuf),
                         url: null,
                     },
                     type: type,
@@ -327,11 +341,11 @@ export class ZoteroReaderView extends ItemView {
                     ...opts,
                 });
 
-                // Extract external annotations
-                this.extractExternalAnnotation();
-
                 // Subscribe to sync events for live annotation updates
                 this.subscribeToSyncEvents();
+
+                // Extract external annotations
+                this.extractExternalAnnotation();
             }
         } catch (e: any) {
             services.logService.error(
@@ -397,6 +411,12 @@ export class ZoteroReaderView extends ItemView {
         // Avoid double-subscribe
         this.unsubscribeTaskMonitor?.();
 
+        // Snapshot current task statuses so the initial callback
+        // (fired immediately by subscribe()) is a no-op.
+        for (const task of services.taskMonitor.getTasks()) {
+            this.lastSyncTaskStatuses.set(task.id, task.status);
+        }
+
         this.unsubscribeTaskMonitor = services.taskMonitor.subscribe(
             (tasks: ITaskInfo[]) => {
                 for (const task of tasks) {
@@ -418,17 +438,25 @@ export class ZoteroReaderView extends ItemView {
                         continue; // Sync was for a different library
                     }
 
-                    // Refresh annotations from IDB without reconnecting
                     services.logService.info(
                         `Sync completed — refreshing reader annotations (task ${task.id})`,
                         "ZoteroReaderView",
                     );
-                    this.refreshAnnotationsFromDB().catch((e) => {
-                        services.logService.error(
-                            "Failed to refresh reader annotations after sync",
-                            "ZoteroReaderView",
-                            e,
-                        );
+
+                    // Refresh the attachment item from IDB to pick up
+                    // any metadata changes from sync (e.g. MD5, filename).
+                    this.refreshAttachmentItem().then(() => {
+                        // Refresh annotations from IDB without reconnecting
+                        this.refreshAnnotationsFromDB().catch((e) => {
+                            services.logService.error(
+                                "Failed to refresh reader annotations after sync",
+                                "ZoteroReaderView",
+                                e,
+                            );
+                        });
+
+                        // Re-extract external annotations in case the file changed
+                        this.extractExternalAnnotation();
                     });
 
                     // One refresh per update batch is enough
@@ -453,15 +481,30 @@ export class ZoteroReaderView extends ItemView {
         this.bridge.refreshAnnotations(annotations);
     }
 
+    /**
+     * Refresh the in-memory attachmentItem from IDB to pick up any
+     * metadata changes (e.g. MD5, filename) after a sync.
+     */
+    private async refreshAttachmentItem() {
+        const freshItem = await workerBridge.dbHelper.getAttachmentItem(
+            this.attachmentItem.libraryID,
+            this.attachmentItem.key,
+        );
+        if (freshItem) {
+            this.attachmentItem = freshItem;
+        }
+    }
+
     private async extractExternalAnnotation() {
         const isPDF =
             this.attachmentItem.raw.data.contentType === "application/pdf";
         if (!isPDF) return;
 
-        const currentMD5 = this.attachmentItem.raw.data.md5;
+        const currentMD5 = this.attachmentItem.raw.data.md5 || this.fileBlobMD5;
         const lastExtractionMD5 =
             this.attachmentItem.externalAnnotationExtractionFileMD5;
 
+        // Fast pre-check: only skip when server MD5 is available and matches.
         if (currentMD5 && currentMD5 === lastExtractionMD5) {
             services.logService.log(
                 "debug",
@@ -476,6 +519,7 @@ export class ZoteroReaderView extends ItemView {
                 {
                     libraryID: this.attachmentItem.libraryID,
                     itemKey: this.attachmentItem.key,
+                    precomputedMD5: this.fileBlobMD5,
                 },
             ]);
 
@@ -484,11 +528,9 @@ export class ZoteroReaderView extends ItemView {
                 this.bridge!.addAnnotation(annotation);
             }
 
-            // Update local cache of the MD5
-            if (currentMD5) {
-                this.attachmentItem.externalAnnotationExtractionFileMD5 =
-                    currentMD5;
-            }
+            // Refresh the in-memory extraction MD5 from IDB so subsequent
+            // calls within the same session can skip via the fast pre-check.
+            await this.refreshAttachmentItem();
 
             services.logService.log(
                 "debug",

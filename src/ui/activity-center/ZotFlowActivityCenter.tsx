@@ -3,14 +3,16 @@ import { ObsidianIcon } from "../ObsidianIcon";
 import { SyncView } from "./SyncView";
 import { TasksView } from "./TasksView";
 import { TelemetryView } from "./TelemetryView";
+import { TemplateTestView } from "./TemplateTestView";
 
-/** Tab container React component with Sync, Tasks, and Telemetry tabs. */
+/** Tab container React component with Sync, Tasks, Telemetry, and Template tabs. */
 export const ZotFlowActivityCenter: React.FC = () => {
     const [activeTab, setActiveTab] = useState("sync");
 
     const tabs = [
         { id: "sync", label: "Sync", icon: "refresh-cw" },
         { id: "tasks", label: "Tasks", icon: "list" },
+        { id: "template", label: "Template", icon: "code" },
         { id: "telemetry", label: "Telemetry", icon: "activity" },
     ];
 
@@ -38,6 +40,7 @@ export const ZotFlowActivityCenter: React.FC = () => {
                 {activeTab === "sync" && <SyncView />}
                 {activeTab === "tasks" && <TasksView />}
                 {activeTab === "telemetry" && <TelemetryView />}
+                {activeTab === "template" && <TemplateTestView />}
             </div>
         </>
     );

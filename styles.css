@@ -842,7 +842,149 @@
     color: var(--text-normal);
 }
 
-/* Notification Styles */
+/* ============================================================
+   Search Suggest Modal
+   ============================================================ */
+
+/* Container for the whole item */
+.zotflow-search-item {
+    display: flex;
+    align-items: center;
+    padding: var(--size-2-2) var(--size-4-3);
+    width: 100%;
+}
+
+/* The Icon */
+.zotflow-item-icon {
+    margin-right: 12px;
+    opacity: 0.7;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: var(--text-accent);
+}
+
+/* The Content Column (Up/Down Wrapper) */
+.zotflow-item-content {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* UP: Title */
+.zotflow-row-top .zotflow-title {
+    font-weight: normal;
+    font-size: var(--font-ui-small);
+    margin-bottom: 2px;
+    color: var(--text-normal);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* DOWN: Meta and Paths */
+.zotflow-row-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    width: 100%;
+    gap: 8px;
+}
+
+/* Down-Left: Meta info (Author • Year) */
+.zotflow-meta {
+    flex-shrink: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Down-Right: Path pills */
+.zotflow-paths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+/* Individual path pill */
+.zotflow-path-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: var(--font-ui-smaller);
+    padding: var(--size-2-1) var(--size-4-1);
+    border-radius: var(--radius-s);
+    white-space: nowrap;
+    background-color: var(--tag-background);
+    border: var(--tag-border-width) solid var(--tag-border-color);
+    color: var(--tag-color);
+}
+
+/* The "/" separator inside a pill */
+/* .zotflow-path-pill .path-sep {
+    opacity: 0.4;
+    font-size: 0.85em;
+    margin: 0 1px;
+} */
+
+/* Suggestion Header */
+.suggestion-item.zotflow-suggestion-header {
+    background-color: transparent !important;
+    padding: var(--size-2-2) var(--size-4-3);
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    pointer-events: none;
+    border-bottom: none;
+}
+
+.prompt-results > .zotflow-suggestion-header:first-child {
+    padding-top: 0;
+}
+
+/* Reset Padding */
+.suggestion-item.zotflow-suggestion-header .zotflow-search-item {
+    padding: 0;
+}
+
+/* Down-Right: Tags (kept for future use) */
+.zotflow-tags {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.zotflow-tags .tag {
+    background-color: var(--tag-background);
+    border: var(--tag-border-width) solid var(--tag-border-color);
+    border-radius: var(--tag-radius);
+    color: var(--tag-color);
+    font-size: 0.9em;
+    font-weight: var(--tag-weight);
+    text-decoration: var(--tag-decoration);
+    padding: var(--tag-padding-y) var(--tag-padding-x);
+    line-height: 1.2;
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+/* ============================================================
+   Notification Styles
+   ============================================================ */
 
 .zotflow-notice-container {
     display: flex;
@@ -863,7 +1005,9 @@
     word-break: break-word;
 }
 
-/* Settings */
+/* ============================================================
+   Settings
+   ============================================================ */
 
 .vertical-tab-content:has(.zotflow-settings-container) {
     padding-bottom: 0 !important;
@@ -1008,6 +1152,10 @@
     }
 } */
 
+/* ============================================================
+   Zotero Tree View
+   ============================================================ */
+
 .zotflow-tree {
     padding: 10px;
     padding-bottom: 0 !important;
@@ -1117,57 +1265,9 @@
     }
 }
 
-/* Search Suggest Modal */
-.zotflow-search-suggest {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    z-index: 1000;
-    max-height: 300px;
-    overflow-y: auto;
-    background-color: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-m);
-    box-shadow: var(--shadow-s);
-    margin-top: 4px;
-    padding: 0;
-    display: none;
-}
-
-.zotflow-search-suggest.visible {
-    display: block;
-}
-
-.zotflow-search-suggest-header {
-    padding: 8px 12px 4px;
-    font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
-    font-weight: 600;
-}
-
-.zotflow-search-suggest-item {
-    padding: 6px 12px;
-    cursor: pointer;
-    font-size: var(--font-ui-small);
-    color: var(--text-normal);
-    display: flex;
-    justify-content: flex-start;
-    gap: 8px;
-}
-
-.zotflow-search-suggest-item:hover {
-    background-color: var(--background-modifier-hover);
-}
-
-.zotflow-search-suggest-key {
-    font-weight: 600;
-    color: var(--text-accent);
-}
-
-.zotflow-search-suggest-desc {
-    color: var(--text-muted);
-}
+/* ============================================================
+   Callouts
+   ============================================================ */
 
 .callout[data-callout^="zotflow"][data-callout$="#ffd400"] {
     --callout-color: var(--color-yellow-rgb);
@@ -1224,6 +1324,10 @@
 .callout[data-callout^="zotflow-ink"] {
     --callout-icon: zotero-ink;
 }
+
+/* ============================================================
+   Activity Center
+   ============================================================ */
 
 .mod-zotflow-ac {
     width: 90vw;
@@ -1286,7 +1390,7 @@
 .zotflow-ac-content {
     flex: 1;
     overflow: auto;
-    padding: var(--size-4-4) 0;
+    padding: var(--size-4-4) var(--size-2-2);
     display: flex;
     flex-direction: column;
     gap: var(--size-4-3);
@@ -3678,4 +3782,136 @@ svg.react-flow__connectionline {
 
 .zotflow-sidebar-item:hover .zotflow-sidebar-item-action {
     opacity: 1;
+}
+
+/* ============================================================
+   Activity Center: Template Test View
+   ============================================================ */
+
+.zotflow-template-test {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    height: 100%;
+}
+
+.zotflow-template-test-section-header {
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--size-4-2);
+    flex-shrink: 0;
+}
+
+.zotflow-template-test-env-section {
+    display: flex;
+    flex-direction: column;
+}
+
+.zotflow-template-test-env {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.zotflow-template-test-selection {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.zotflow-template-test-panels {
+    display: flex;
+    gap: var(--size-4-3);
+    flex: 1;
+    min-height: 0;
+}
+
+.zotflow-template-test-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: var(--size-2-2);
+}
+
+.zotflow-template-test-editor {
+    flex: 1;
+    min-height: 200px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+}
+
+.zotflow-template-test-editor .cm-editor {
+    height: 100%;
+}
+
+.zotflow-template-test-editor .cm-scroller {
+    overflow: auto;
+}
+
+.zotflow-template-test-output {
+    flex: 1;
+    min-height: 200px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    overflow: hidden;
+}
+
+.zotflow-template-test-output .cm-editor {
+    height: 100%;
+}
+
+.zotflow-template-test-output .cm-scroller {
+    overflow: auto;
+}
+
+.zotflow-template-test-preview {
+    overflow: auto;
+    padding: var(--size-4-2);
+}
+
+.zotflow-template-test-placeholder {
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+.zotflow-template-test-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.zotflow-template-test-panel-header .zotflow-template-test-section-header {
+    margin-bottom: 0;
+}
+
+.zotflow-template-test-mode-toggle {
+    display: flex;
+    gap: var(--size-2-2);
+}
+
+.zotflow-template-test-mode-toggle .clickable-icon.is-active {
+    color: var(--text-accent);
+}
+
+.zotflow-template-test-error {
+    font-size: var(--font-ui-small);
+    color: var(--text-error);
+    padding: var(--size-4-2);
+    border: 1px solid var(--text-error);
+    border-radius: var(--radius-s);
+    background: rgba(var(--color-red-rgb), 0.05);
+}
+
+.zotflow-template-test-actions {
+    display: flex;
+    justify-content: flex-end;
 }

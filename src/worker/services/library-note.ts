@@ -1,5 +1,5 @@
 import type { AnyIDBZoteroItem, IDBZoteroItem } from "types/db-schema";
-import { TemplateService } from "./template";
+import { LibraryTemplateService } from "./library-template";
 import { db } from "db/db";
 import type { ZotFlowSettings } from "settings/types";
 import type { AttachmentData } from "types/zotero-item";
@@ -7,7 +7,7 @@ import { getAnnotationJson } from "db/annotation";
 import type { IParentProxy } from "bridge/types";
 import type { AttachmentService } from "./attachment";
 import type { PDFProcessWorker } from "./pdf-processor";
-import { getNotePath } from "utils/utils";
+import type { NotePathService } from "./note-path";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 const DEBOUNCE_DELAY = 2000;
@@ -20,22 +20,24 @@ export interface UpdateOptions {
     forceUpdateImages?: boolean;
 }
 
-/** CRUD service for Zotero item source notes — creates, opens, updates, and manages annotation images. */
-export class NoteService {
+/** CRUD service for library (Zotero) item source notes — creates, opens, updates, and manages annotation images. */
+export class LibraryNoteService {
     // Debounce map for update operations
     private debouncers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
     constructor(
         private settings: ZotFlowSettings,
-        private templateService: TemplateService,
+        private templateService: LibraryTemplateService,
         private parentHost: IParentProxy,
         private attachmentService: AttachmentService,
         private pdfProcessor: PDFProcessWorker,
+        private notePathService: NotePathService,
     ) {}
 
     updateSettings(newSettings: ZotFlowSettings) {
         this.settings = newSettings;
         this.templateService.updateSettings(newSettings);
+        this.notePathService.updateSettings(newSettings);
     }
 
     /**
@@ -72,7 +74,7 @@ export class NoteService {
                 this.parentHost.log(
                     "debug",
                     `Opening note: ${path}`,
-                    "NoteService",
+                    "LibraryNoteService",
                 );
                 await this.parentHost.openFile(path, true);
             }
@@ -80,7 +82,7 @@ export class NoteService {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.FILE_OPEN_FAILED,
-                "NoteService",
+                "LibraryNoteService",
                 "Failed to open note",
             );
         }
@@ -112,7 +114,7 @@ export class NoteService {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.FILE_WRITE_FAILED,
-                    "NoteService",
+                    "LibraryNoteService",
                     "Immediate update failed",
                 );
             }
@@ -129,7 +131,7 @@ export class NoteService {
                 this.parentHost.log(
                     "error",
                     `Debounced update failed for ${key}`,
-                    "NoteService",
+                    "LibraryNoteService",
                     e,
                 );
             }
@@ -168,7 +170,7 @@ export class NoteService {
                 this.parentHost.log(
                     "error",
                     `Failed to create note for ${item.key}`,
-                    "NoteService",
+                    "LibraryNoteService",
                     e,
                 );
                 failCount++;
@@ -213,7 +215,7 @@ export class NoteService {
         if (!item || !library) {
             throw new ZotFlowError(
                 ZotFlowErrorCode.RESOURCE_MISSING,
-                "NoteService",
+                "LibraryNoteService",
                 `Item or Library not found: ${key}`,
             );
         }
@@ -223,15 +225,12 @@ export class NoteService {
             // Ask main thread first: which file does this Key correspond to? (Cache lookup)
             let path = await this.parentHost.getFileByKey(key);
 
-            // If Cache lookup fails, calculate default path
+            // If Cache lookup fails, resolve path from template
             if (!path) {
-                path = getNotePath({
-                    citationKey: item.citationKey,
-                    title: item.title,
-                    key: item.key,
-                    sourceNoteFolder: this.settings.sourceNoteFolder,
-                    libraryName: library.name,
-                });
+                path = await this.notePathService.resolveLibraryNotePath(
+                    item,
+                    library.name,
+                );
             }
 
             // Check physical file status
@@ -261,7 +260,7 @@ export class NoteService {
                         this.parentHost.log(
                             "warn",
                             `Initial image extraction failed for ${key}`,
-                            "NoteService",
+                            "LibraryNoteService",
                             imgErr,
                         );
                     }
@@ -273,7 +272,7 @@ export class NoteService {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.DB_WRITE_FAILED,
-                "NoteService",
+                "LibraryNoteService",
                 `Ensure note failed: ${(e as Error).message}`,
             );
         }
@@ -304,7 +303,7 @@ export class NoteService {
             if (counter >= maxRetries) {
                 throw new ZotFlowError(
                     ZotFlowErrorCode.FILE_WRITE_FAILED,
-                    "NoteService",
+                    "LibraryNoteService",
                     "Could not find a unique filename",
                 );
             }
@@ -316,7 +315,7 @@ export class NoteService {
 
         // Then write content
         const templateContent = await this.parentHost.readTextFile(
-            this.settings.sourceNoteTemplatePath,
+            this.settings.librarySourceNoteTemplatePath,
         );
 
         // Render Item may throw ZotFlowError (Template Error), let it bubble
@@ -346,7 +345,7 @@ export class NoteService {
         // Only update if versions are different, or if forced update is specified
         if (forceUpdate || currentVersion !== newVersion) {
             const templateContent = await this.parentHost.readTextFile(
-                this.settings.sourceNoteTemplatePath,
+                this.settings.librarySourceNoteTemplatePath,
             );
 
             const content = await this.templateService.renderItem(
@@ -360,7 +359,7 @@ export class NoteService {
             this.parentHost.log(
                 "debug",
                 `Updated note: ${fileCheck.path} (v${currentVersion} -> v${newVersion})`,
-                "NoteService",
+                "LibraryNoteService",
             );
 
             // Extract images (if setting is enabled)
@@ -371,7 +370,7 @@ export class NoteService {
                     throw ZotFlowError.wrap(
                         imgErr,
                         ZotFlowErrorCode.FILE_WRITE_FAILED,
-                        "NoteService",
+                        "LibraryNoteService",
                         `Image update failed for ${item.key}`,
                     );
                 }
@@ -444,7 +443,7 @@ export class NoteService {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.FILE_WRITE_FAILED,
-                    "NoteService",
+                    "LibraryNoteService",
                     `Failed to process attachment ${attachment.key}`,
                 );
             }
@@ -472,7 +471,7 @@ export class NoteService {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.FILE_WRITE_FAILED,
-                "NoteService",
+                "LibraryNoteService",
                 `Failed to save image ${annotationKey}`,
             );
         }
@@ -494,7 +493,7 @@ export class NoteService {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.FILE_WRITE_FAILED,
-                "NoteService",
+                "LibraryNoteService",
                 `Failed to delete image ${annotationKey}: ${(e as Error).message}`,
             );
         }

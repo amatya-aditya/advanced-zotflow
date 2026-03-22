@@ -17,6 +17,7 @@ import type { ZotFlowSettings } from "settings/types";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { getAnnotationJson } from "db/annotation";
 import type { AnnotationJSON } from "types/zotero-reader";
+import type { DbHelperService } from "./db-helper";
 
 const DEFAULT_ITEM_TEMPLATE = `---
 citationKey: {{ item.citationKey | json }}
@@ -91,13 +92,14 @@ doi: {{ item.DOI | json }}
 {%- endif -%}
 `;
 
-/** LiquidJS template engine for rendering Zotero item source notes. */
-export class TemplateService {
+/** LiquidJS template engine for rendering library (Zotero) item source notes. */
+export class LibraryTemplateService {
     private engine: Liquid;
 
     constructor(
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
+        private dbHelper: DbHelperService,
     ) {
         this.initialize();
     }
@@ -223,7 +225,7 @@ export class TemplateService {
                     this.parentHost.log(
                         "error",
                         "Failed to parse template frontmatter",
-                        "TemplateService",
+                        "LibraryTemplateService",
                     );
                 }
             }
@@ -253,7 +255,7 @@ export class TemplateService {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.PARSE_ERROR,
-                "TemplateService",
+                "LibraryTemplateService",
                 "Template rendering failed",
             );
         }
@@ -329,11 +331,22 @@ export class TemplateService {
             }));
         }
 
+        const itemPaths = await this.dbHelper
+            .getItemPaths([
+                {
+                    libraryID: item.libraryID,
+                    key: item.key,
+                    collections: item.collections,
+                },
+            ])
+            .then((paths) => paths[`${item.libraryID}:${item.key}`] || []);
+
         return {
             key: item.key,
             version: item.version,
             libraryID: item.libraryID,
             citationKey: item.citationKey || "",
+            itemPaths: itemPaths,
             notes,
             annotations,
             attachmentAnnotations,
@@ -344,6 +357,7 @@ export class TemplateService {
             date: (data as any).date || null,
             dateAdded: item.dateAdded,
             dateModified: item.dateModified,
+            accessDate: (data as any).accessDate || null,
             abstractNote: (data as any).abstractNote,
             publicationTitle: (data as any).publicationTitle,
             publisher: (data as any).publisher,
@@ -420,5 +434,36 @@ export class TemplateService {
 
             annotations,
         };
+    }
+
+    /** Preview-render a library item with the given template content. */
+    async previewItem(
+        libraryID: number,
+        key: string,
+        templateContent: string,
+    ): Promise<string> {
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "LibraryTemplateService",
+                `Item not found: ${libraryID}/${key}`,
+            );
+        }
+        return this.renderItem(item, templateContent, {});
+    }
+
+    /** Return the user-configured template file content, or the built-in default. */
+    async getDefaultTemplate(): Promise<string> {
+        const path = this.settings.librarySourceNoteTemplatePath;
+        if (path) {
+            try {
+                const content = await this.parentHost.readTextFile(path);
+                if (content != null) return content;
+            } catch {
+                // Fall through to default
+            }
+        }
+        return DEFAULT_ITEM_TEMPLATE;
     }
 }

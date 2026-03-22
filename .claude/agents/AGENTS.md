@@ -41,10 +41,10 @@ processing.
 │       │                                                      │
 │       ├── ui/                                                │
 │       │     ├── reader/   (ZoteroReaderView, IframeReaderBridge, │
-│       │     │              LocalReaderView, LocalAnnotationManager) │
+│       │     │              LocalReaderView, LocalDataManager)    │
 │       │     ├── tree-view/ (React: ZotFlowTree, Node)        │
 │       │     ├── activity-center/ (React: ActivityCenterModal) │
-│       │     ├── modals/suggest.ts (currently disabled)        │
+│       │     ├── modals/suggest.ts (BaseItemSearchModal + ZoteroSearchModal) │
 │       │     ├── zotflow-lock-extension.ts (CM6 readonly)      │
 │       │     └── zotflow-comment-extension.ts (CM6 deco)       │
 │       │                                                      │
@@ -64,20 +64,21 @@ processing.
 │       │     ├── sync.ts         (bidirectional sync engine)  │
 │       │     ├── attachment.ts   (download + LRU cache)       │
 │       │     ├── webdav.ts       (WebDAV file download)       │
-│       │     ├── note.ts         (source note CRUD)           │
-│       │     ├── local-note.ts   (local reader note CRUD)     │
-│       │     ├── template.ts     (LiquidJS item templates)    │
+│       │     ├── library-note.ts (library source note CRUD)   │
+│       │     ├── local-note.ts   (local source note CRUD)     │
+│       │     ├── note-path.ts    (LiquidJS note path resolution) │
+│       │     ├── library-template.ts (LiquidJS library templates) │
 │       │     ├── local-template.ts (LiquidJS local templates) │
 │       │     ├── tree-view.ts    (tree topology builder)      │
 │       │     ├── pdf-processor.ts (nested PDF.js Worker)      │
 │       │     ├── annotation.ts   (reader annotation CRUD)     │
 │       │     ├── key.ts          (API key/library metadata)   │
-│       │     └── query.ts        (general-purpose DB queries) │
+│       │     └── db-helper.ts        (general-purpose DB queries) │
 │       │                                                      │
 │       └── tasks/                                             │
 │             ├── base.ts         (BaseTask abstract class)    │
 │             ├── manager.ts      (TaskManager + AbortController) │
-│             └── impl/           (SyncTask, TestTask)         │
+│             └── impl/           (SyncTask, BatchNoteTask, …) │
 │                                                              │
 │  db/  (Dexie.js — IndexedDB, WORKER-ONLY)                    │
 │       ├── db.ts          (schema: keys, groups, items,       │
@@ -119,6 +120,47 @@ The Zotero Reader is embedded as an iframe. All reader assets (PDF.js, viewer HT
 The iframe bridge (`ui/reader/bridge.ts`) is a **state machine**:
 `idle → connecting → bridge-ready → reader-ready → disposing → disposed`
 
+### 2.3.1 Local annotation sidecar (`.zf.json`)
+
+Annotations made on local vault files (PDF/EPUB) are persisted in a **co-located
+sidecar JSON file** next to the attachment:
+
+```
+Papers/myPaper.pdf      → Papers/myPaper.zf.json
+Books/intro.epub        → Books/intro.zf.json
+```
+
+The sidecar format:
+
+```json
+{
+    "version": 1,
+    "annotations": [
+        /* AnnotationJSON[] */
+    ]
+}
+```
+
+**Main-thread** (`LocalDataManager` in `ui/reader/local-data-manager.ts`):
+
+- Reads/writes the `.zf.json` file via Obsidian vault I/O (`utils/file.ts`).
+- Maintains an in-memory annotation cache during a reader session.
+- On save/delete, persists to `.zf.json` then triggers a worker-side note
+  re-render via `workerBridge.localNote.triggerUpdate()`.
+- Falls back to legacy inline-comment parsing (worker-side) and auto-migrates
+  to the `.zf.json` format.
+
+**Worker-thread** (`LocalTemplateService`):
+
+- `previewLocalNote()` reads annotations from the sidecar via
+  `parentHost.checkFile()` / `parentHost.readTextFile()` so template previews
+  include annotation data.
+
+**Lifecycle** (`main.ts`):
+
+- File rename → renames the sidecar (`handleSidecarRename`).
+- File delete → deletes the sidecar (`handleSidecarDelete`).
+
 ### 2.4 Logging
 
 `LogService` (`services/log-service.ts`) is an in-memory ring buffer (max 1 000
@@ -127,7 +169,7 @@ entries, newest first) that also mirrors every entry to the browser console.
 ```ts
 // Main thread — via ServiceLocator
 services.logService.info("Sync started", "SyncService");
-services.logService.error("Write failed", "NoteService", err);
+services.logService.error("Write failed", "LibraryNoteService", err);
 
 services.logService.log("debug", "Fetched items", "ZoteroAPIService", {
     count: items.length,
@@ -228,7 +270,8 @@ src/
 │   ├── index-service.ts            # Maps vault files by zotero-key frontmatter
 │   ├── log-service.ts              # In-memory log buffer (max 1000)
 │   ├── notification-service.ts     # Styled Obsidian Notice wrapper
-│   └── task-monitor.ts             # Pub/sub for task progress updates
+│   ├── task-monitor.ts             # Pub/sub for task progress updates
+│   └── view-state-service.ts       # Reader view state persistence
 │
 ├── settings/
 │   ├── types.ts                    # ZotFlowSettings interface & defaults
@@ -254,13 +297,15 @@ src/
 │   ├── icons.ts                    # Icon name → Obsidian icon mappings
 │   ├── ObsidianIcon.tsx            # React wrapper for Obsidian icons
 │   ├── viewer.ts                   # openAttachment() utility
-│   ├── zotflow-lock-extension.ts   # CM6: readonly when zotflow-locked
-│   ├── zotflow-comment-extension.ts # CM6: annotation marker decorations
+│   ├── editor/
+│   │   ├── markdown-editor.ts      # Markdown editor utilities
+│   │   ├── zotflow-lock-extension.ts   # CM6: readonly when zotflow-locked
+│   │   └── zotflow-comment-extension.ts # CM6: annotation marker decorations
 │   ├── reader/
 │   │   ├── view.ts                 # ZoteroReaderView (remote Zotero items)
 │   │   ├── local-view.ts           # LocalReaderView (vault files)
 │   │   ├── bridge.ts               # IframeReaderBridge (penpal state machine)
-│   │   └── local-anno-manager.ts   # In-memory annotation cache for local reader
+│   │   └── local-data-manager.ts   # Sidecar .zf.json I/O + annotation cache for local reader
 │   ├── tree-view/
 │   │   ├── view.tsx                # ZotFlowTreeView (Obsidian ItemView wrapper)
 │   │   ├── TreeView.tsx            # React: tree component (react-arborist)
@@ -268,9 +313,12 @@ src/
 │   ├── activity-center/
 │   │   ├── modal.tsx               # ActivityCenterModal (Obsidian Modal wrapper)
 │   │   ├── ZotFlowActivityCenter.tsx # Tab container component
-│   │   └── SyncView.tsx            # Sync tab content (stub)
+│   │   ├── SyncView.tsx            # Sync tab content (stub)
+│   │   └── TemplateTestView.tsx    # Template testing tab
 │   └── modals/
-│       └── suggest.ts              # Item search modal (currently disabled)
+│       ├── suggest.ts              # BaseItemSearchModal + ZoteroSearchModal
+│       ├── item-picker.ts          # ItemPickerModal (extends BaseItemSearchModal)
+│       └── file-picker.ts          # FilePickerModal (local vault file picker)
 │
 ├── worker/
 │   ├── worker.ts                   # Worker entry point — exposes WorkerAPI via Comlink
@@ -279,21 +327,26 @@ src/
 │   │   ├── sync.ts                 # SyncService (bidirectional, conflict-aware)
 │   │   ├── attachment.ts           # AttachmentService (download, cache, LRU prune)
 │   │   ├── webdav.ts               # WebDavService (file download, verify)
-│   │   ├── note.ts                 # NoteService (Zotero → Obsidian note CRUD)
-│   │   ├── local-note.ts           # LocalNoteService (vault file notes)
-│   │   ├── template.ts             # TemplateService (LiquidJS for Zotero items)
+│   │   ├── library-note.ts         # LibraryNoteService (library source note CRUD)
+│   │   ├── local-note.ts           # LocalNoteService (local source note CRUD)
+│   │   ├── note-path.ts            # NotePathService (LiquidJS note path resolution)
+│   │   ├── library-template.ts     # LibraryTemplateService (LiquidJS for library items)
 │   │   ├── local-template.ts       # LocalTemplateService (LiquidJS for local files)
 │   │   ├── tree-view.ts            # TreeViewService (builds flattened topology)
 │   │   ├── pdf-processor.ts        # PDFProcessWorker (nested Worker for PDF.js)
 │   │   ├── annotation.ts           # AnnotationService (reader annotation CRUD)
 │   │   ├── key.ts                  # KeyService (API key verify, library metadata)
-│   │   └── query.ts                # QueryService (general-purpose DB lookups)
+│   │   └── db-helper.ts            # DbHelperService (general-purpose DB queries)
 │   └── tasks/
 │       ├── base.ts                 # BaseTask abstract (id, status, progress)
 │       ├── manager.ts              # TaskManager (register, start, cancel)
 │       └── impl/
-│           ├── sync-task.ts        # SyncTask
-│           └── test-task.ts        # TestTask (dev/debug)
+│           ├── sync-task.ts                        # SyncTask
+│           ├── batch-note-task.ts                   # BatchNoteTask
+│           ├── batch-extract-images-task.ts         # BatchExtractImagesTask
+│           ├── batch-extract-external-annotations-task.ts # BatchExtractExternalAnnotationsTask
+│           ├── download-attachment-task.ts          # DownloadAttachmentTask
+│           └── test-task.ts                        # TestTask (dev/debug)
 │
 └── utils/
     ├── error.ts                    # ZotFlowError class (codes, context, wrapping)
@@ -413,7 +466,7 @@ throw ZotFlowError.wrap(
 // Creating new errors
 throw new ZotFlowError(
     ZotFlowErrorCode.FILE_WRITE_FAILED,
-    "NoteService",
+    "LibraryNoteService",
     "Could not write note",
 );
 
@@ -480,7 +533,7 @@ onload()                              onunload()
 
 1. **Every `register*` call** in `onload()` is automatically cleaned up by Obsidian. Use these instead of manual cleanup.
 2. **`onunload()` must terminate the Worker** and revoke all Blob URLs.
-3. **Worker services with timers** (NoteService, LocalNoteService) must implement `dispose()` that clears all debounce timers.
+3. **Worker services with timers** (LibraryNoteService, LocalNoteService) must implement `dispose()` that clears all debounce timers.
 4. **Singletons** (`workerBridge`, `services`) protect their getters with `assertInitialized()` guards.
 5. **Never create dangling Components, DOM elements, or intervals** outside of `register*` helpers.
 

@@ -18,7 +18,7 @@ import { workerBridge } from "bridge";
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
 import type { LocalDataManager } from "./local-data-manager";
-import { getLinkedSourceNote } from "utils/file";
+import { getLinkedLocalSourceNote } from "utils/file";
 import type { TFile } from "obsidian";
 import {
     createEmbeddableMarkdownEditor,
@@ -135,7 +135,7 @@ export class IframeReaderBridge {
 
             getLinkToSelection: (text: string, navigationInfo: any) => {
                 if (this.isLocal && this.localAttachment) {
-                    const note = getLinkedSourceNote(
+                    const note = getLinkedLocalSourceNote(
                         services.app,
                         this.localAttachment,
                     );
@@ -183,7 +183,7 @@ export class IframeReaderBridge {
                     return;
                 } else {
                     if (this.isLocal && this.localAttachment) {
-                        const note = getLinkedSourceNote(
+                        const note = getLinkedLocalSourceNote(
                             services.app,
                             this.localAttachment,
                         );

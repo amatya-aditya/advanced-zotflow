@@ -65,6 +65,21 @@ export class ZotFlowDB extends Dexie {
                 [libraryID+parentCollection]
             `,
         });
+
+        // v3: Add lastAccessedAt index to items
+        this.version(3).stores({
+            items: `
+                &[libraryID+key], 
+                [libraryID+syncStatus],
+                [libraryID+itemType+trashed],
+                [libraryID+parentItem+itemType+trashed],
+                *collections, 
+                *searchCreators, 
+                *searchTags, 
+                dateModified,
+                lastAccessedAt
+            `,
+        });
     }
 }
 

@@ -1,286 +1,263 @@
-// import { App, SuggestModal, setIcon, Notice } from "obsidian";
-// import { db, getCombinations } from "db/db";
-// import type { AnyIDBZoteroItem } from "types/db-schema";
-// import { getItemTypeIcon } from "ui/icons";
-// import { openAttachment } from "ui/viewer";
-// import type { AttachmentData } from "types/zotero-item";
-// import type { IDBZoteroItem } from "types/db-schema";
-// import { Zotero_Item_Types } from "types/zotero-item-const";
-// import type { ZotFlowSettings } from "settings/types";
+import { App, SuggestModal, setIcon } from "obsidian";
+import { workerBridge } from "bridge";
+import type { AnyIDBZoteroItem, IDBZoteroItem } from "types/db-schema";
+import type { AttachmentData } from "types/zotero-item";
+import { getItemTypeIcon } from "ui/icons";
+import { openAttachment } from "utils/viewer";
+import type { ZotFlowSettings } from "settings/types";
+import { services } from "services/services";
+import { AttachmentSelectModal } from "./attachment-suggest";
 
-// interface SearchHeader {
-//     isHeader: true;
-//     label: string;
-// }
-// type SuggestionItem = AnyIDBZoteroItem | SearchHeader;
+interface SearchHeader {
+    isHeader: true;
+    label: string;
+}
+export type SuggestionItem = AnyIDBZoteroItem | SearchHeader;
 
-// export class ZoteroSearchModal extends SuggestModal<SuggestionItem> {
-//     private settings: ZotFlowSettings;
+/**
+ * Abstract base class for Zotero item search modals.
+ * Provides shared query logic, rendering, and highlight helpers.
+ * Subclasses implement `handleItemSelected()` to define the action.
+ */
+export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
+    protected itemPaths: Record<string, string[]> = {};
 
-//     constructor(app: App, settings: ZotFlowSettings) {
-//         super(app);
-//         this.settings = settings;
-//         this.setPlaceholder("Search Zotero Library...");
-//         this.modalEl.addClass("zotflow-search-modal");
-//         this.limit = 20; // Limit for suggestions
-//     }
+    constructor(app: App, placeholder = "Search Zotero Library...") {
+        super(app);
+        this.setPlaceholder(placeholder);
+        this.modalEl.addClass("zotflow-search-modal");
+        this.limit = 20;
+    }
 
-//     // Get suggestions based on query
-//     async getSuggestions(query: string): Promise<SuggestionItem[]> {
-//         const isValidTopLevel = (type: string) =>
-//             !["note", "annotation"].includes(type);
-//         const keyInfo = await db.keys.get(this.settings.zoteroapikey);
+    protected abstract handleItemSelected(
+        item: AnyIDBZoteroItem,
+        evt: MouseEvent | KeyboardEvent,
+    ): void;
 
-//         if (!keyInfo) {
-//             new Notice("ZotFlow: Invalid Zotero API key.");
-//             return [];
-//         }
+    async getSuggestions(query: string): Promise<SuggestionItem[]> {
+        try {
+            let items: SuggestionItem[] = [];
 
-//         const filteredLibraryIDs = keyInfo.joinedGroups
-//             .concat([keyInfo.userID])
-//             .filter((id) => {
-//                 const mode = this.settings.librariesConfig[id]?.mode;
-//                 if (mode && mode !== "ignored") {
-//                     return true;
-//                 }
-//                 return false;
-//             });
+            if (!query) {
+                const recentItems =
+                    await workerBridge.dbHelper.getRecentItems(20);
 
-//         // No input -> Show Recent Access
-//         if (!query) {
-//             // Try to get recently accessed items (using lastAccessedAt index)
-//             const recentItems = await db.items
-//                 .orderBy("lastAccessedAt")
-//                 .reverse() // Latest first
-//                 .filter(
-//                     (item) =>
-//                         filteredLibraryIDs.includes(item.libraryID) &&
-//                         !item.parentItem &&
-//                         isValidTopLevel(item.itemType) &&
-//                         !item.trashed,
-//                 )
-//                 .limit(20)
-//                 .toArray();
+                if (recentItems.length > 0) {
+                    items = [
+                        { isHeader: true, label: "Recent Viewed" },
+                        ...recentItems,
+                    ];
+                } else {
+                    const fallbackItems =
+                        await workerBridge.dbHelper.getRecentlyAddedItems(20);
 
-//             // If there are recent items, insert "Recent Viewed" header
-//             if (recentItems.length > 0) {
-//                 return [
-//                     { isHeader: true, label: "Recent Viewed" },
-//                     ...recentItems,
-//                 ];
-//             }
+                    if (fallbackItems.length > 0) {
+                        items = [
+                            { isHeader: true, label: "Recently Added" },
+                            ...fallbackItems,
+                        ];
+                    }
+                }
+            } else {
+                const searchResults = await workerBridge.dbHelper.searchItems(
+                    query,
+                    50,
+                );
 
-//             // Fallback: If no recent items, show "Recently Added"
-//             const fallbackItems = await db.items
-//                 .orderBy("dateModified")
-//                 .reverse()
-//                 .filter(
-//                     (item) =>
-//                         filteredLibraryIDs.includes(item.libraryID) &&
-//                         !item.parentItem &&
-//                         isValidTopLevel(item.itemType) &&
-//                         !item.trashed,
-//                 )
-//                 .limit(20)
-//                 .toArray();
+                if (searchResults.length > 0) {
+                    items = [
+                        { isHeader: true, label: "Best Match" },
+                        ...searchResults,
+                    ];
+                }
+            }
 
-//             if (fallbackItems.length > 0) {
-//                 return [
-//                     { isHeader: true, label: "Recently Added" },
-//                     ...fallbackItems,
-//                 ];
-//             }
+            const zItems = items.filter(
+                (i) => !("isHeader" in i),
+            ) as AnyIDBZoteroItem[];
 
-//             return [];
-//         }
+            if (zItems.length > 0) {
+                try {
+                    this.itemPaths = await workerBridge.dbHelper.getItemPaths(
+                        zItems.map((i) => ({
+                            libraryID: i.libraryID,
+                            key: i.key,
+                            collections: i.collections,
+                        })),
+                    );
+                } catch (pathErr) {
+                    services.logService.error(
+                        "Failed to fetch item paths",
+                        "BaseItemSearchModal",
+                        pathErr,
+                    );
+                }
+            }
 
-//         // With input -> Show Best Match
-//         const lowerQuery = query.toLowerCase();
-//         const validTopLevelTypeList = Zotero_Item_Types.filter((type) =>
-//             isValidTopLevel(type),
-//         );
-//         // Use Dexie's Collection to filter (in memory, for multi-field fuzzy search)
-//         const searchResults = await db.items
-//             .where(["libraryID", "itemType", "trashed"])
-//             .anyOf(
-//                 getCombinations([
-//                     filteredLibraryIDs,
-//                     validTopLevelTypeList,
-//                     [0],
-//                 ]),
-//             )
-//             .filter((item) => {
-//                 if (item.parentItem) return false;
-//                 const titleMatch = (item.title || "")
-//                     .toLowerCase()
-//                     .includes(lowerQuery);
-//                 const creatorMatch = (item.searchCreators || []).some((c) =>
-//                     c.toLowerCase().includes(lowerQuery),
-//                 );
-//                 const tagMatch = (item.searchTags || []).some((t) =>
-//                     t.toLowerCase().includes(lowerQuery),
-//                 );
+            return items;
+        } catch (e) {
+            services.logService.error(
+                "Search failed",
+                "BaseItemSearchModal",
+                e,
+            );
+            return [];
+        }
+    }
 
-//                 return titleMatch || creatorMatch || tagMatch;
-//             })
-//             .limit(50)
-//             .toArray();
+    renderSuggestion(item: SuggestionItem, el: HTMLElement) {
+        // Header
+        if ("isHeader" in item && item.isHeader) {
+            el.addClass("zotflow-suggestion-header");
+            el.setText(item.label);
+            return;
+        }
 
-//         // If there are search results, insert "Best Match" header
-//         if (searchResults.length > 0) {
-//             return [{ isHeader: true, label: "Best Match" }, ...searchResults];
-//         }
+        // Zotero Item
+        const zItem = item as AnyIDBZoteroItem;
+        const query = this.inputEl.value;
 
-//         return [];
-//     }
+        el.addClass("zotflow-search-item");
 
-//     // Render each suggestion item
-//     renderSuggestion(item: SuggestionItem, el: HTMLElement) {
-//         // Header
-//         if ("isHeader" in item && item.isHeader) {
-//             el.addClass("zotflow-suggestion-header");
-//             el.setText(item.label);
-//             return; // Render complete, exit
-//         }
+        // Main Content Container
+        const contentContainer = el.createDiv({ cls: "zotflow-item-content" });
 
-//         // Zotero Item
-//         const zItem = item as AnyIDBZoteroItem;
-//         const query = this.inputEl.value;
+        // Title Row
+        const titleRow = contentContainer.createDiv({ cls: "zotflow-row-top" });
+        const titleEl = titleRow.createDiv({ cls: "zotflow-title" });
+        this.renderHighlight(titleEl, zItem.title || "Untitled", query);
 
-//         el.addClass("zotflow-search-item");
+        // Meta + Path Row
+        const bottomRow = contentContainer.createDiv({
+            cls: "zotflow-row-bottom",
+        });
 
-//         // Icon
-//         const iconContainer = el.createDiv({ cls: "zotflow-item-icon" });
-//         setIcon(iconContainer, getItemTypeIcon(zItem.itemType));
+        // Author • Year
+        const metaEl = bottomRow.createDiv({ cls: "zotflow-meta" });
+        const authors = this.formatCreators(zItem.searchCreators);
+        const year = this.extractYear((zItem.raw.data as any).date);
 
-//         // Main Content Container
-//         const contentContainer = el.createDiv({ cls: "zotflow-item-content" });
+        let metaText = "";
+        if (authors && year !== "n.d.") metaText = `${authors} (${year}).`;
+        else if (authors) metaText = authors;
+        else metaText = year;
 
-//         // Title Row
-//         const titleRow = contentContainer.createDiv({ cls: "zotflow-row-top" });
-//         const titleEl = titleRow.createDiv({ cls: "zotflow-title" });
-//         this.renderHighlight(titleEl, zItem.title || "Untitled", query);
+        this.renderHighlight(metaEl, metaText, query);
 
-//         // Meta + Tags Row
-//         const bottomRow = contentContainer.createDiv({
-//             cls: "zotflow-row-bottom",
-//         });
+        // Path pills
+        const paths = this.itemPaths[`${zItem.libraryID}:${zItem.key}`];
+        if (paths && paths.length > 0) {
+            const pathsEl = bottomRow.createDiv({ cls: "zotflow-paths" });
 
-//         // Author • Year
-//         const metaEl = bottomRow.createDiv({ cls: "zotflow-meta" });
-//         const authors = this.formatCreators(zItem.searchCreators);
-//         const year = this.extractYear((zItem.raw.data as any).date);
+            paths.forEach((path) => {
+                const pill = pathsEl.createSpan({ cls: "zotflow-path-pill" });
 
-//         let metaText = "";
-//         if (authors && year !== "n.d.") metaText = `${authors} • ${year}`;
-//         else if (authors) metaText = authors;
-//         else metaText = year;
+                const segments = path.split("/");
+                segments.forEach((seg, i) => {
+                    pill.createSpan({ text: seg.trim() });
+                    if (i < segments.length - 2) {
+                        pill.createSpan({ cls: "path-sep", text: "/" });
+                    }
+                });
+            });
+        }
+    }
 
-//         this.renderHighlight(metaEl, metaText, query);
+    async onChooseSuggestion(
+        item: SuggestionItem,
+        evt: MouseEvent | KeyboardEvent,
+    ) {}
 
-//         // Down-Right: Tags
-//         if (zItem.searchTags && zItem.searchTags.length > 0) {
-//             const tagsEl = bottomRow.createDiv({ cls: "zotflow-tags" });
+    selectSuggestion(
+        item: SuggestionItem,
+        evt: MouseEvent | KeyboardEvent,
+    ): void {
+        if ("isHeader" in item) return;
 
-//             // Limit to 3 tags
-//             const visibleTags = zItem.searchTags.slice(0, 3);
-//             visibleTags.forEach((tagText) => {
-//                 const tagSpan = tagsEl.createSpan({ cls: "tag" });
-//                 this.renderHighlight(tagSpan, `#${tagText}`, query);
-//             });
-//         }
-//     }
+        const zItem = item as AnyIDBZoteroItem;
+        this.handleItemSelected(zItem, evt);
+    }
 
-//     async onChooseSuggestion(
-//         item: SuggestionItem,
-//         evt: MouseEvent | KeyboardEvent,
-//     ) {}
+    protected formatCreators(creators: string[]): string | null {
+        if (!creators || creators.length === 0) return null;
+        if (creators.length === 1) return creators[0]!;
+        if (creators.length === 2) return `${creators[0]} & ${creators[1]}`;
+        return `${creators[0]} et al.`;
+    }
 
-//     selectSuggestion(
-//         item: SuggestionItem,
-//         evt: MouseEvent | KeyboardEvent,
-//     ): void {
-//         if ("isHeader" in item) return; // Skip headers
+    protected extractYear(dateString: string): string {
+        if (!dateString) return "n.d.";
+        const match = dateString.match(/\d{4}/);
+        return match ? match[0] : "n.d.";
+    }
 
-//         const zItem = item as AnyIDBZoteroItem;
+    protected renderHighlight(el: HTMLElement, text: string, query: string) {
+        if (!query) {
+            el.setText(text);
+            return;
+        }
+        const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`(${escapedQuery})`, "gi");
 
-//         // A trick to prevent await in sync method
-//         this.handleSelection(zItem, evt);
-//     }
+        text.split(regex).forEach((part) => {
+            if (part.toLowerCase() === query.toLowerCase()) {
+                el.createSpan({ cls: "suggestion-highlight", text: part });
+            } else {
+                el.createSpan({ text: part });
+            }
+        });
+    }
+}
 
-//     // Actual logic for selection
-//     private async handleSelection(
-//         item: AnyIDBZoteroItem,
-//         evt: MouseEvent | KeyboardEvent,
-//     ) {
-//         const zItem = item as AnyIDBZoteroItem;
+export class ZoteroSearchModal extends BaseItemSearchModal {
+    private settings: ZotFlowSettings;
 
-//         // Update Timestamp
-//         db.items
-//             .update(zItem, { lastAccessedAt: new Date().toISOString() })
-//             .catch(console.error);
+    constructor(app: App, settings: ZotFlowSettings) {
+        super(app);
+        this.settings = settings;
+    }
 
-//         // Logic for Top Level Item
-//         // If this item is an attachment (despite being filtered out), open it directly
-//         if (zItem.itemType === "attachment") {
-//             openAttachment(zItem.libraryID, zItem.key, this.app);
-//             this.close();
-//             return;
-//         }
+    protected handleItemSelected(
+        item: AnyIDBZoteroItem,
+        evt: MouseEvent | KeyboardEvent,
+    ): void {
+        this.handleSelection(item, evt);
+    }
 
-//         // Fetch Children (Second Level Items)
-//         const attachments = (await db.items
-//             .where(["libraryID", "parentItem", "itemType", "trashed"])
-//             .equals([zItem.libraryID, zItem.key, "attachment", 0])
-//             .toArray()) as IDBZoteroItem<AttachmentData>[];
+    private async handleSelection(
+        item: AnyIDBZoteroItem,
+        evt: MouseEvent | KeyboardEvent,
+    ) {
+        if (item.itemType === "attachment") {
+            openAttachment(item.libraryID, item.key, this.app);
+            this.close();
+            return;
+        }
 
-//         if (attachments.length === 0) {
-//             new Notice(`No attachments found for item: ${item.title}`);
-//         }
-//         // If there is only one attachment, open it directly
-//         else if (attachments.length === 1) {
-//             openAttachment(
-//                 attachments[0]!.libraryID,
-//                 attachments[0]!.key,
-//                 this.app,
-//             );
-//             this.close();
-//         }
-//     }
+        const attachments = await workerBridge.dbHelper.getAttachments(
+            item.libraryID,
+            item.key,
+        );
 
-//     // --- Helpers ---
-
-//     // Format creators for display
-//     private formatCreators(creators: string[]): string | null {
-//         if (!creators || creators.length === 0) return null;
-//         if (creators.length === 1) return creators[0]!;
-//         if (creators.length === 2) return `${creators[0]} & ${creators[1]}`;
-//         return `${creators[0]} et al.`;
-//     }
-
-//     // Extract year from date string
-//     private extractYear(dateString: string): string {
-//         if (!dateString) return "n.d.";
-//         const match = dateString.match(/\d{4}/);
-//         return match ? match[0] : "n.d.";
-//     }
-
-//     // Render highlight for search results
-//     private renderHighlight(el: HTMLElement, text: string, query: string) {
-//         if (!query) {
-//             el.setText(text);
-//             return;
-//         }
-//         // Escape regex special characters
-//         const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-//         const regex = new RegExp(`(${escapedQuery})`, "gi");
-
-//         text.split(regex).forEach((part) => {
-//             if (part.toLowerCase() === query.toLowerCase()) {
-//                 el.createSpan({ cls: "suggestion-highlight", text: part });
-//             } else {
-//                 el.createSpan({ text: part });
-//             }
-//         });
-//     }
-// }
+        if (attachments.length === 0) {
+            services.notificationService.notify(
+                "warning",
+                `No attachments found for item: ${item.title}`,
+            );
+        } else if (attachments.length === 1) {
+            openAttachment(
+                attachments[0]!.libraryID,
+                attachments[0]!.key,
+                this.app,
+            );
+            this.close();
+        } else {
+            new AttachmentSelectModal(
+                this.app,
+                item,
+                attachments as IDBZoteroItem<AttachmentData>[],
+                this,
+            ).open();
+        }
+    }
+}

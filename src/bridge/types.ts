@@ -33,6 +33,7 @@ export interface IParentProxy {
         frontmatter?: Record<string, any>;
     }>;
     deleteFile(path: string): Promise<void>;
+    readExternalBinaryFile(absolutePath: string): Promise<ArrayBuffer>;
     openFile(path: string, newLeaf: boolean): Promise<void>;
 
     // Index
@@ -42,7 +43,8 @@ export interface IParentProxy {
     // Utils
     parseYaml(text: string): Promise<any>;
     stringifyYaml(obj: any): Promise<string>;
-    getLinkedSourceNote(
+    joinPath(...segments: string[]): Promise<string>;
+    getLinkedLocalSourceNote(
         file: TFileWithoutParentAndVault,
     ): Promise<TFileWithoutParentAndVault | null>;
 

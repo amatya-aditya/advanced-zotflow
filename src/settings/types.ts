@@ -62,10 +62,12 @@ export interface ZotFlowSettings {
     webdavpassword?: string;
     useCache: boolean;
     maxCacheSizeMB: number;
-    sourceNoteTemplatePath: string;
+    librarySourceNoteTemplatePath: string;
     localSourceNoteTemplatePath: string;
     localSourceNoteFolder: string;
     sourceNoteFolder: string;
+    librarySourceNotePathTemplate: string;
+    localSourceNotePathTemplate: string;
     autoImportAnnotationImages: boolean;
     annotationImageFolder: string;
     overwriteViewer: boolean;
@@ -77,6 +79,7 @@ export interface ZotFlowSettings {
     bookmarkedItems: BookmarkedItem[];
     recentItems: RecentItem[];
     maxRecentItems: number;
+    linkedAttachmentBaseDir: string;
 }
 
 /** Persisted reader view state for a single attachment (local or zotero). */
@@ -108,10 +111,13 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     useWebDav: false,
     useCache: true,
     maxCacheSizeMB: 500,
-    sourceNoteTemplatePath: "",
+    librarySourceNoteTemplatePath: "",
     sourceNoteFolder: "",
+    librarySourceNotePathTemplate:
+        "Source/{{libraryName}}/@{{citationKey | default: title | default: key}}",
     localSourceNoteTemplatePath: "",
     localSourceNoteFolder: "",
+    localSourceNotePathTemplate: "Source/Local/@{{basename}}",
     autoImportAnnotationImages: false,
     annotationImageFolder: "",
     overwriteViewer: true,
@@ -123,6 +129,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     bookmarkedItems: [],
     recentItems: [],
     maxRecentItems: 10,
+    linkedAttachmentBaseDir: "",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

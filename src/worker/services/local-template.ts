@@ -7,8 +7,8 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import type { AnnotationTemplateContext } from "types/template-context";
 
 /** Default LiquidJS template string for local vault file source notes. */
-export const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
-zotflow-locked: true
+const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
+zotflow-locked: {{true}}
 zotflow-local-attachment: [[{{ path }}]]
 ---
 {%- capture quote_string %}{{ newline }}> {% endcapture -%}
@@ -17,7 +17,7 @@ zotflow-local-attachment: [[{{ path }}]]
 {%- if item.annotations.length > 0 -%}
 ## Annotations
 {%- for annotation in item.annotations -%}
-%% ZOTFLOW_ANNO_{{ annotation.key }}_BEG {{ annotation.raw | process_raw_anno_json }} %%
+
 > [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [[{{item.path}}#page={{ annotation.pageLabel }}#annotation={{ annotation.key | process_nav_info }}|{{ item.name }}, p.{{ annotation.pageLabel }}]]
 {%- if annotation.type == "ink" or annotation.type == "image"-%}
 > > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
@@ -29,8 +29,6 @@ zotflow-local-attachment: [[{{ path }}]]
 > {{ annotation.comment | replace: newline, quote_string }}
 {%- endif -%}
 ^{{ annotation.key }}
-
-%% ZOTFLOW_ANNO_{{ annotation.key }}_END %%
 
 {%- endfor -%}
 {%- endif -%}
@@ -61,17 +59,6 @@ export class LocalTemplateService {
                 annotationID: input,
             };
             return encodeURIComponent(JSON.stringify(navInfo));
-        });
-
-        this.engine.registerFilter("process_raw_anno_json", (input: string) => {
-            try {
-                const anno =
-                    typeof input === "string" ? JSON.parse(input) : input;
-                if (anno.image) anno.image = "";
-                return encodeURIComponent(JSON.stringify(anno));
-            } catch (e) {
-                return "";
-            }
         });
     }
 
@@ -218,5 +205,53 @@ export class LocalTemplateService {
                     this.settings.annotationImageFolder.replace(/\/$/, ""),
             },
         };
+    }
+
+    /** Preview-render a local vault file with the given template content. */
+    async previewLocalNote(
+        file: TFileWithoutParentAndVault,
+        templateContent: string,
+    ): Promise<string> {
+        const annotations = await this.loadSidecarAnnotations(file);
+        return this.renderLocalNote(file, annotations, templateContent, {});
+    }
+
+    /** Load annotations from the co-located `.zf.json` sidecar file, if it exists. */
+    private async loadSidecarAnnotations(
+        file: TFileWithoutParentAndVault,
+    ): Promise<AnnotationJSON[]> {
+        const lastDot = file.path.lastIndexOf(".");
+        const basePath =
+            lastDot !== -1 ? file.path.substring(0, lastDot) : file.path;
+        const jsonPath = `${basePath}.zf.json`;
+
+        try {
+            const result = await this.parentHost.checkFile(jsonPath);
+            if (!result.exists) return [];
+
+            const content = await this.parentHost.readTextFile(jsonPath);
+            if (!content) return [];
+
+            const parsed = JSON.parse(content) as {
+                annotations?: AnnotationJSON[];
+            };
+            return Array.isArray(parsed.annotations) ? parsed.annotations : [];
+        } catch {
+            return [];
+        }
+    }
+
+    /** Return the user-configured template file content, or the built-in default. */
+    async getDefaultTemplate(): Promise<string> {
+        const path = this.settings.localSourceNoteTemplatePath;
+        if (path) {
+            try {
+                const content = await this.parentHost.readTextFile(path);
+                if (content != null) return content;
+            } catch {
+                // Fall through to default
+            }
+        }
+        return DEFAULT_LOCAL_NOTE_TEMPLATE;
     }
 }
