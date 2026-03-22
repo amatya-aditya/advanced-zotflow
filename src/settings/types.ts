@@ -1,6 +1,31 @@
+import type { CustomReaderTheme } from "types/zotero-reader";
+
+/** Per-library sync mode. */
 export type LibrarySyncMode = "bidirectional" | "readonly" | "ignored";
+
+/** Reader color scheme mode. */
+export type ReaderColorScheme =
+    | "light"
+    | "dark"
+    | "obsidian"
+    | "obsidian-theme";
+
+/** Settings tab identifier. */
 export type TabSection = "sync" | "webdav" | "cache" | "general";
 
+/** Sort order for collections in the tree view. */
+export type CollectionSortOrder = "name-asc" | "name-desc";
+
+/** Sort order for items in the tree view. */
+export type ItemSortOrder =
+    | "title-asc"
+    | "title-desc"
+    | "modified-new"
+    | "modified-old"
+    | "added-new"
+    | "added-old";
+
+/** Per-library sync configuration. */
 export interface LibraryConfig {
     mode: LibrarySyncMode;
 }
@@ -25,6 +50,7 @@ export interface RecentItem {
     openedAt: number; // timestamp
 }
 
+/** Full plugin settings shape persisted to `data.json`. */
 export interface ZotFlowSettings {
     zoteroapikey: string;
     librariesConfig: Record<string, LibraryConfig>;
@@ -43,15 +69,41 @@ export interface ZotFlowSettings {
     autoImportAnnotationImages: boolean;
     annotationImageFolder: string;
     overwriteViewer: boolean;
+    readerColorScheme: ReaderColorScheme;
+    defaultLightTheme: string;
+    defaultDarkTheme: string;
+    treeCollectionSort: CollectionSortOrder;
+    treeItemSort: ItemSortOrder;
     bookmarkedItems: BookmarkedItem[];
     recentItems: RecentItem[];
     maxRecentItems: number;
 }
 
+/** Persisted reader view state for a single attachment (local or zotero). */
+export interface ViewStateEntry {
+    primaryViewState?: Record<string, unknown>;
+    secondaryViewState?: Record<string, unknown>;
+    lightTheme?: string;
+    darkTheme?: string;
+}
+
+/**
+ * Full shape of data.json.
+ * Settings and non-settings data are stored as separate top-level keys.
+ *
+ * `viewStates` is keyed by file path (local) or `"libraryID:itemKey"` (zotero).
+ */
+export interface ZotFlowPluginData {
+    settings: ZotFlowSettings;
+    customThemes: CustomReaderTheme[];
+    viewStates: Record<string, ViewStateEntry>;
+}
+
+/** Default values for all `ZotFlowSettings` fields. */
 export const DEFAULT_SETTINGS: ZotFlowSettings = {
     zoteroapikey: "",
     librariesConfig: {},
-    syncInterval: 30, // Default 30 minutes
+    syncInterval: 30,
     autoSync: false,
     useWebDav: false,
     useCache: true,
@@ -62,8 +114,20 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     localSourceNoteFolder: "",
     autoImportAnnotationImages: false,
     annotationImageFolder: "",
-    overwriteViewer: false,
+    overwriteViewer: true,
+    readerColorScheme: "obsidian-theme",
+    defaultLightTheme: "obsidian",
+    defaultDarkTheme: "obsidian",
+    treeCollectionSort: "name-asc",
+    treeItemSort: "title-asc",
     bookmarkedItems: [],
     recentItems: [],
     maxRecentItems: 10,
+};
+
+/** Default shape of the full `data.json` blob (settings + view states). */
+export const DEFAULT_PLUGIN_DATA: ZotFlowPluginData = {
+    settings: { ...DEFAULT_SETTINGS },
+    customThemes: [],
+    viewStates: {},
 };

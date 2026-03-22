@@ -4,7 +4,9 @@ import type { ZotFlowSettings } from "settings/types";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { IParentProxy } from "bridge/types";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import type { AnnotationTemplateContext } from "types/template-context";
 
+/** Default LiquidJS template string for local vault file source notes. */
 export const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
 zotflow-locked: true
 zotflow-local-attachment: [[{{ path }}]]
@@ -34,6 +36,7 @@ zotflow-local-attachment: [[{{ path }}]]
 {%- endif -%}
 `;
 
+/** LiquidJS template engine for rendering local vault file (PDF/EPUB) source notes. */
 export class LocalTemplateService {
     private engine: Liquid;
 
@@ -174,27 +177,30 @@ export class LocalTemplateService {
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
     ): Promise<any> {
-        const processedAnnotations = annotations.map((annotation) => {
-            return {
-                key: annotation.id,
-                libraryID: 0, // Local files imply simplified library context
-                type: annotation.type,
-                authorName: annotation.authorName,
-                text: this.sanitizeQuotesString(annotation.text),
-                comment: annotation.comment,
-                color: annotation.color,
-                pageLabel: annotation.pageLabel,
-                tags:
-                    annotation.tags?.map((tag: any) => ({
-                        tag: tag.tag,
-                        type: tag.type,
-                    })) || [],
-                dateCreated: annotation.dateCreated,
-                dateModified: annotation.dateModified,
-                // Provide raw object for filter usage, ensuring it's an object, not string
-                raw: annotation,
-            };
-        });
+        const processedAnnotations: AnnotationTemplateContext[] = annotations
+            .sort((a, b) =>
+                (a.sortIndex ?? "").localeCompare(b.sortIndex ?? ""),
+            )
+            .map((annotation) => {
+                return {
+                    key: annotation.id,
+                    libraryID: 0, // Local files imply simplified library context
+                    type: annotation.type,
+                    authorName: annotation.authorName,
+                    text: this.sanitizeQuotesString(annotation.text),
+                    comment: this.sanitizeQuotesString(annotation.comment),
+                    color: annotation.color,
+                    pageLabel: annotation.pageLabel,
+                    tags:
+                        annotation.tags?.map((t) => ({
+                            tag: t.name,
+                        })) || [],
+                    dateAdded: annotation.dateAdded,
+                    dateModified: annotation.dateModified,
+                    // Provide raw object for filter usage, ensuring it's an object, not string
+                    raw: annotation,
+                };
+            });
 
         const item = {
             name: localAttachment.name,

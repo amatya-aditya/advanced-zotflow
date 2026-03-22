@@ -1,0 +1,32 @@
+@top Template { element* }
+
+element {
+  Variable |
+  EscapedBrace |
+  Text
+}
+
+@skip { space } {
+  Variable { "{{" Path "}}" }
+  Path { identifier ("." identifier)* }
+}
+
+Text { 
+  TextChunk | 
+  identifier | 
+  "." | 
+  space | 
+  "}" | 
+  "{" 
+}
+
+@tokens {
+  "{{" "}}"
+  EscapedBrace { "\\{{" }
+  identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+  space { $[\t\n\r ]+ }
+  "."
+  TextChunk { ![a-zA-Z_.\t\n\r {}\\]+ }
+  
+  @precedence { "{{" "}}" EscapedBrace space identifier "." TextChunk }
+}

@@ -1,3 +1,4 @@
+/** Maps string IDs to entity metadata (name, itemType, libraryID, etc.). */
 export type EntityMap = Record<
     string,
     {
@@ -7,9 +8,12 @@ export type EntityMap = Record<
         libraryName: string;
         citationKey?: string;
         contentType?: string;
+        dateAdded?: string;
+        dateModified?: string;
     }
 >;
 
+/** A node in the flattened tree topology (library, collection, or item). */
 export type TopologyNode = {
     id: string; // UI Unique ID
     key: string; // Zotero Key (used to query entities)
@@ -17,6 +21,7 @@ export type TopologyNode = {
     nodeType: "library" | "collection" | "item";
 };
 
+/** Wire payload sent from the worker to the main thread for rendering the tree view. */
 export type TreeTransferPayload = {
     entities: EntityMap;
     topology: TopologyNode[];
@@ -29,6 +34,7 @@ import type { IParentProxy } from "bridge/types";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
+/** Builds the flattened tree topology (libraries → collections → items) for the sidebar tree view. */
 export class TreeViewService {
     private treeTransferPayload: TreeTransferPayload | null;
 
@@ -177,6 +183,8 @@ export class TreeViewService {
                 libraryName: string,
                 citationKey?: string,
                 contentType?: string,
+                dateAdded?: string,
+                dateModified?: string,
             ) => {
                 // Only register when the key is not registered
                 if (!entities[key]) {
@@ -187,6 +195,8 @@ export class TreeViewService {
                         libraryName,
                         citationKey,
                         contentType,
+                        dateAdded,
+                        dateModified,
                     };
                 }
             };
@@ -210,6 +220,9 @@ export class TreeViewService {
                         item.libraryID,
                         libName,
                         item.raw.data.contentType,
+                        undefined,
+                        item.dateAdded,
+                        item.dateModified,
                     );
                 } else {
                     registerEntity(
@@ -219,6 +232,9 @@ export class TreeViewService {
                         item.libraryID,
                         libName,
                         item.citationKey,
+                        undefined,
+                        item.dateAdded,
+                        item.dateModified,
                     );
                 }
 

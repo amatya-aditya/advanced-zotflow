@@ -1,8 +1,13 @@
-// import { EmbeddableMarkdownEditor, MarkdownEditorProps } from "src/editor/markdown-editor";
 import { ZotFlowSettings } from "settings/types";
+import type {
+    MarkdownEditorProps,
+    EmbeddableMarkdownEditor,
+} from "ui/editor/markdown-editor";
 
+/** Reader color scheme. */
 export type ColorScheme = "light" | "dark";
 
+/** Configuration object for initializing the embedded Zotero reader iframe. */
 export interface CreateReaderOptions {
     data: { buf: Uint8Array; url: null } | { buf: null; url: string };
     type: string;
@@ -23,6 +28,7 @@ export interface CreateReaderOptions {
     secondaryViewState?: Record<string, unknown>;
 }
 
+/** Discriminated union of all events the reader iframe can emit to the parent. */
 export type ChildEvents =
     | { type: "error"; code: string; message: string }
     | { type: "addToNote" }
@@ -59,8 +65,8 @@ export type ChildEvents =
     | { type: "setLightTheme"; theme: unknown }
     | { type: "setDarkTheme"; theme: unknown };
 
+/** Penpal API exposed by the parent (Obsidian) to the reader iframe. */
 export type ParentAPI = {
-    // child → parent
     getBlobUrlMap: () => Record<string, string>;
     handleEvent: (evt: ChildEvents) => void;
     isAndroidApp: () => boolean;
@@ -69,19 +75,24 @@ export type ParentAPI = {
     getStyleSheets: () => StyleSheetList;
     getColorScheme: () => ColorScheme;
     getPluginSettings: () => ZotFlowSettings;
+    getLinkToSelection: (text: string, navigationInfo: any) => string;
     handleSetDataTransferAnnotations: (
         dataTransfer: DataTransfer,
         annotations: AnnotationJSON[],
-        fromText: boolean,
+        fromText?: boolean,
     ) => void;
-    // createAnnotationEditor: (
-    // 	container: HTMLElement,
-    // 	options: Partial<MarkdownEditorProps>
-    // ) => EmbeddableMarkdownEditor;
+    createAnnotationEditor: (
+        container: HTMLElement,
+        options: Partial<MarkdownEditorProps>,
+    ) => EmbeddableMarkdownEditor;
+    renderMarkdownToContainer: (
+        container: HTMLElement,
+        text: string,
+    ) => { unload: () => void };
 };
 
+/** Penpal API exposed by the reader iframe to the parent — init, navigate, annotate, destroy. */
 export type ChildAPI = {
-    // parent → child
     initReader: (opts: CreateReaderOptions) => Promise<boolean>;
     setColorScheme: (colorScheme: ColorScheme) => Promise<boolean>;
     addAnnotation: (annotation: AnnotationJSON) => Promise<boolean>;
@@ -90,11 +101,13 @@ export type ChildAPI = {
     destroy: () => Promise<boolean>;
 };
 
+/** Annotation position in a PDF page. */
 export interface ZoteroPosition {
     pageIndex: number;
     rects: number[][];
 }
 
+/** Union of Zotero annotation kinds. */
 export type AnnotationType =
     | "highlight"
     | "underline"
@@ -104,6 +117,7 @@ export type AnnotationType =
     | "ink"
     | "eraser";
 
+/** Serialized annotation object exchanged between the reader iframe and the plugin. */
 export interface AnnotationJSON {
     libraryID?: number;
     id: string;
@@ -126,9 +140,10 @@ export interface AnnotationJSON {
         position?: number;
     }>;
     dateModified: string;
-    dateCreated: string;
+    dateAdded: string;
 }
 
+/** User-defined reader color theme. */
 export interface CustomReaderTheme {
     id: string;
     label: string;

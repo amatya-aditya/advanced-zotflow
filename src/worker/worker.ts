@@ -10,8 +10,12 @@ import { PDFProcessWorker } from "./services/pdf-processor";
 import { LocalNoteService } from "./services/local-note";
 import { LocalTemplateService } from "./services/local-template";
 import { ConflictService } from "./services/conflict";
+import { AnnotationService } from "./services/annotation";
+import { KeyService } from "./services/key";
+import { DbHelperService } from "./services/db-helper";
 import { TaskManager } from "./tasks/manager";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { db } from "db/db";
 
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
@@ -24,6 +28,10 @@ import type {
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
+import type { SaveAnnotationsResult } from "./services/annotation";
+import type { LibraryRow } from "./services/key";
+import type { DbHelperService as DbHelperServiceType } from "./services/db-helper";
+import type { ItemTemplateContext } from "types/template-context";
 
 /**
  * Worker API definition
@@ -45,6 +53,9 @@ export interface WorkerAPI {
 
     localNote: LocalNoteService;
     conflict: ConflictService;
+    annotation: AnnotationService;
+    key: KeyService;
+    dbHelper: DbHelperServiceType;
     pdfProcessor: PDFProcessWorker;
     tasks: TaskManager;
     updateSettings(settings: ZotFlowSettings): void;
@@ -66,6 +77,22 @@ export interface WorkerAPI {
         items: ItemIdentifier[],
     ): Promise<AnnotationJSON[]>;
     cancelTask(taskId: string): void;
+
+    // Workflow-specific methods
+    getItemContext(
+        libraryID: number,
+        key: string,
+    ): Promise<ItemTemplateContext & { libraryName: string }>;
+    renderNoteFromContext(
+        itemContext: ItemTemplateContext,
+        templateContent: string | null,
+        existingFrontmatter: Record<string, any>,
+    ): Promise<string>;
+    extractAnnotationImagesForItem(
+        libraryID: number,
+        key: string,
+        force: boolean,
+    ): Promise<void>;
 }
 
 // Service instances (Lazy initialized)
@@ -80,6 +107,9 @@ let _note: NoteService | undefined;
 let _localNote: LocalNoteService | undefined;
 let _localTemplate: LocalTemplateService | undefined;
 let _conflict: ConflictService | undefined;
+let _annotation: AnnotationService | undefined;
+let _key: KeyService | undefined;
+let _dbHelper: DbHelperService | undefined;
 let _pdfProcessor: PDFProcessWorker | undefined;
 let _taskManager: TaskManager | undefined;
 let _currentSettings: ZotFlowSettings | undefined;
@@ -97,6 +127,9 @@ function assertInitialized() {
         !_localNote ||
         !_localTemplate ||
         !_conflict ||
+        !_annotation ||
+        !_key ||
+        !_dbHelper ||
         !_taskManager ||
         !_currentSettings
     ) {
@@ -185,6 +218,10 @@ const exposedApi: WorkerAPI = {
             );
 
             _conflict = new ConflictService(parentHost);
+
+            _annotation = new AnnotationService(_note, parentHost);
+            _key = new KeyService(_zotero, parentHost);
+            _dbHelper = new DbHelperService(parentHost);
 
             _taskManager = new TaskManager(parentHost);
 
@@ -286,6 +323,36 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_conflict);
     },
 
+    get annotation() {
+        if (!_annotation)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_annotation);
+    },
+
+    get key() {
+        if (!_key)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_key);
+    },
+
+    get dbHelper() {
+        if (!_dbHelper)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_dbHelper);
+    },
+
     get pdfProcessor() {
         if (!_pdfProcessor)
             throw new ZotFlowError(
@@ -311,9 +378,9 @@ const exposedApi: WorkerAPI = {
         _localNote?.dispose();
     },
 
-    // ================================================================
-    // Task factory methods
-    // ================================================================
+    /* ================================================================ */
+    /*  Task factory methods                                           */
+    /* ================================================================ */
 
     createSyncTask: async (libraryId?: number) => {
         assertInitialized();
@@ -366,6 +433,55 @@ const exposedApi: WorkerAPI = {
     cancelTask: (taskId: string) => {
         assertInitialized();
         _taskManager!.cancelTask(taskId);
+    },
+
+    /* ================================================================ */
+    /*  Workflow-specific methods                                       */
+    /* ================================================================ */
+
+    getItemContext: async (libraryID: number, key: string) => {
+        assertInitialized();
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "Worker",
+                `Item not found: libraryID=${libraryID}, key=${key}`,
+            );
+        }
+        const library = await db.libraries.get({ id: libraryID });
+        const itemContext = await _template!.mapToItemContext(item);
+        return { ...itemContext, libraryName: library?.name ?? "Unknown" };
+    },
+
+    renderNoteFromContext: async (
+        itemContext: ItemTemplateContext,
+        templateContent: string | null,
+        existingFrontmatter: Record<string, any>,
+    ) => {
+        assertInitialized();
+        return _template!.renderWithContext(
+            itemContext,
+            templateContent,
+            existingFrontmatter,
+        );
+    },
+
+    extractAnnotationImagesForItem: async (
+        libraryID: number,
+        key: string,
+        force: boolean,
+    ) => {
+        assertInitialized();
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "Worker",
+                `Item not found: libraryID=${libraryID}, key=${key}`,
+            );
+        }
+        await _note!.extractAnnotationImages(item, force);
     },
 
     updateSettings: (settings: ZotFlowSettings) => {

@@ -6,6 +6,7 @@ import React, {
     useMemo,
     useCallback,
 } from "react";
+import { Menu } from "obsidian";
 import { NodeApi, Tree } from "react-arborist";
 import { workerBridge } from "bridge";
 import { ObsidianIcon } from "../ObsidianIcon";
@@ -15,13 +16,20 @@ import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
 import { openAttachment } from "ui/viewer";
 
 import type { TreeTransferPayload } from "worker/services/tree-view";
-import type { BookmarkedItem, RecentItem } from "settings/types";
+import type {
+    BookmarkedItem,
+    RecentItem,
+    CollectionSortOrder,
+    ItemSortOrder,
+} from "settings/types";
 
-// --- TYPES ---
+/* ================================================================ */
+/*  Types                                                          */
+/* ================================================================ */
 
 type ViewMode = "library" | "bookmarks" | "recent";
-type SortMode = "name-asc" | "name-desc" | "date-asc" | "date-desc";
 
+/** Tree node representing a library, collection, item, or spacer in the tree view. */
 export type ViewNode = {
     id: string;
     parent?: string | null;
@@ -34,6 +42,8 @@ export type ViewNode = {
     citationKey?: string;
     key: string;
     nodeType: "library" | "collection" | "item" | "spacer";
+    dateAdded?: string;
+    dateModified?: string;
 };
 
 function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
@@ -69,6 +79,8 @@ function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
             libraryName: entity.libraryName,
             citationKey: entity.citationKey,
             contentType: entity.contentType,
+            dateAdded: entity.dateAdded,
+            dateModified: entity.dateModified,
 
             // Initialize Children
             children: [],
@@ -109,7 +121,9 @@ function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
     return roots;
 }
 
-// --- Sidebar Item (for bookmarks & recents) ---
+/* ================================================================ */
+/*  Sidebar Item (for bookmarks & recents)                         */
+/* ================================================================ */
 
 const SidebarItem = ({
     name,
@@ -175,22 +189,110 @@ const SidebarItem = ({
     );
 };
 
-// --- Sort Menu Labels ---
-const SORT_LABELS: Record<SortMode, string> = {
-    "name-asc": "Name (A-Z)",
-    "name-desc": "Name (Z-A)",
-    "date-asc": "Date (Oldest)",
-    "date-desc": "Date (Newest)",
-};
+/* ================================================================ */
+/*  Sorting                                                        */
+/* ================================================================ */
 
-const SORT_CYCLE: SortMode[] = [
-    "name-asc",
-    "name-desc",
-    "date-asc",
-    "date-desc",
+const COLLECTION_SORT_OPTIONS: {
+    label: string;
+    value: CollectionSortOrder;
+}[] = [
+    { label: "Name (A to Z)", value: "name-asc" },
+    { label: "Name (Z to A)", value: "name-desc" },
 ];
 
-// --- Toolbar Icon Button ---
+const ITEM_SORT_OPTIONS: { label: string; value: ItemSortOrder }[] = [
+    { label: "Title (A to Z)", value: "title-asc" },
+    { label: "Title (Z to A)", value: "title-desc" },
+    { label: "Modified time (new to old)", value: "modified-new" },
+    { label: "Modified time (old to new)", value: "modified-old" },
+    { label: "Created time (new to old)", value: "added-new" },
+    { label: "Created time (old to new)", value: "added-old" },
+];
+
+/** Compare two strings using natural sort (numeric-aware, case-insensitive). */
+function cmpStr(a: string, b: string): number {
+    return a.localeCompare(b, undefined, {
+        sensitivity: "base",
+        numeric: true,
+    });
+}
+
+/** Compare two ISO date strings. Missing dates sort last. */
+function cmpDate(a: string | undefined, b: string | undefined): number {
+    if (!a && !b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Recursively sort every `children` array in-place-free (returns new arrays).
+ * Libraries (roots) keep their original order.
+ * Within a parent: collections always appear before items, then each group is
+ * sorted independently by the matching sort order.
+ * Spacers always stay at the end.
+ */
+function sortTree(
+    roots: ViewNode[],
+    collectionSort: CollectionSortOrder,
+    itemSort: ItemSortOrder,
+): ViewNode[] {
+    const sortChildren = (nodes: ViewNode[]): ViewNode[] => {
+        // Partition into collections, items, and spacers
+        const collections: ViewNode[] = [];
+        const items: ViewNode[] = [];
+        const spacers: ViewNode[] = [];
+
+        for (const n of nodes) {
+            if (n.nodeType === "spacer") spacers.push(n);
+            else if (n.nodeType === "collection") collections.push(n);
+            else items.push(n);
+        }
+
+        // Sort collections by name
+        const colDir = collectionSort === "name-asc" ? 1 : -1;
+        collections.sort((a, b) => colDir * cmpStr(a.name, b.name));
+
+        // Sort items
+        items.sort((a, b) => {
+            switch (itemSort) {
+                case "title-asc":
+                    return cmpStr(a.name, b.name);
+                case "title-desc":
+                    return -cmpStr(a.name, b.name);
+                case "modified-new":
+                    return -cmpDate(a.dateModified, b.dateModified);
+                case "modified-old":
+                    return cmpDate(a.dateModified, b.dateModified);
+                case "added-new":
+                    return -cmpDate(a.dateAdded, b.dateAdded);
+                case "added-old":
+                    return cmpDate(a.dateAdded, b.dateAdded);
+                default:
+                    return 0;
+            }
+        });
+
+        // Recurse into children (collections have child collections + items)
+        const sorted = [...collections, ...items, ...spacers];
+        return sorted.map((node) => {
+            if (node.children.length === 0) return node;
+            return { ...node, children: sortChildren(node.children) };
+        });
+    };
+
+    // For root level: keep library order, but sort each library's children
+    return roots.map((root) => {
+        if (root.nodeType === "spacer" || root.children.length === 0)
+            return root;
+        return { ...root, children: sortChildren(root.children) };
+    });
+}
+
+/* ================================================================ */
+/*  Toolbar Icon Button                                            */
+/* ================================================================ */
 
 const ToolbarButton = ({
     icon,
@@ -201,7 +303,7 @@ const ToolbarButton = ({
     icon: string;
     label: string;
     active?: boolean;
-    onClick: () => void;
+    onClick: (e: React.MouseEvent) => void;
 }) => (
     <div
         className={`clickable-icon zotflow-toolbar-btn ${active ? "is-active" : ""}`}
@@ -212,6 +314,11 @@ const ToolbarButton = ({
     </div>
 );
 
+/* ================================================================ */
+/*  Main Tree Component                                            */
+/* ================================================================ */
+
+/** Root React component for the Zotero library tree with search, refresh, and virtual scrolling. */
 export const ZotFlowTree = () => {
     const [rawData, setRawData] = useState<TreeTransferPayload | null>(null);
     const [term, setTerm] = useState("");
@@ -226,8 +333,15 @@ export const ZotFlowTree = () => {
     );
     const [viewMode, setViewMode] = useState<ViewMode>("library");
     const [searchOpen, setSearchOpen] = useState(false);
-    const [sortMode, setSortMode] = useState<SortMode>("name-asc");
     const searchInputRef = useRef<HTMLInputElement>(null);
+
+    // Sort state — initialised from persisted settings
+    const [collectionSort, setCollectionSort] = useState<CollectionSortOrder>(
+        () => services.settings.treeCollectionSort,
+    );
+    const [itemSort, setItemSort] = useState<ItemSortOrder>(
+        () => services.settings.treeItemSort,
+    );
 
     // Subscribe to bookmark/recent changes
     useEffect(() => {
@@ -320,43 +434,79 @@ export const ZotFlowTree = () => {
         setSearchOpen((prev) => !prev);
     };
 
-    const handleCycleSort = () => {
-        setSortMode((prev) => {
-            const idx = SORT_CYCLE.indexOf(prev);
-            return SORT_CYCLE[(idx + 1) % SORT_CYCLE.length]!;
-        });
-    };
+    /** Open the Obsidian-native sort menu with collection and item sort options. */
+    const handleSortMenu = useCallback(
+        (e: React.MouseEvent) => {
+            const menu = new Menu();
+
+            for (const opt of COLLECTION_SORT_OPTIONS) {
+                menu.addItem((item) =>
+                    item
+                        .setTitle(`Collection: ${opt.label}`)
+                        .setChecked(collectionSort === opt.value)
+                        .setSection("collections")
+                        .onClick(() => {
+                            setCollectionSort(opt.value);
+                            services.settings.treeCollectionSort = opt.value;
+                            services.saveSettings();
+                        }),
+                );
+            }
+
+            for (const opt of ITEM_SORT_OPTIONS) {
+                menu.addItem((item) =>
+                    item
+                        .setTitle(`Item: ${opt.label}`)
+                        .setChecked(itemSort === opt.value)
+                        .setSection("items")
+                        .onClick(() => {
+                            setItemSort(opt.value);
+                            services.settings.treeItemSort = opt.value;
+                            services.saveSettings();
+                        }),
+                );
+            }
+
+            menu.showAtMouseEvent(e.nativeEvent);
+        },
+        [collectionSort, itemSort],
+    );
 
     const treeData = useMemo(() => {
         if (!rawData) return [];
-        return rebuildTreeFromWorker(rawData);
-    }, [rawData]);
+        const tree = rebuildTreeFromWorker(rawData);
+        return sortTree(tree, collectionSort, itemSort);
+    }, [rawData, collectionSort, itemSort]);
 
     // Sort helper for bookmark/recent lists
-    const sortList = <T extends { name: string; addedAt?: number; openedAt?: number }>(
+    const sortBookmarkRecent = <
+        T extends { name: string; addedAt?: number; openedAt?: number },
+    >(
         items: T[],
-        mode: SortMode,
     ): T[] => {
         const sorted = [...items];
-        switch (mode) {
-            case "name-asc":
-                sorted.sort((a, b) => a.name.localeCompare(b.name));
+        // Use the same item sort for bookmarks/recents
+        switch (itemSort) {
+            case "title-asc":
+                sorted.sort((a, b) => cmpStr(a.name, b.name));
                 break;
-            case "name-desc":
-                sorted.sort((a, b) => b.name.localeCompare(a.name));
+            case "title-desc":
+                sorted.sort((a, b) => -cmpStr(a.name, b.name));
                 break;
-            case "date-asc":
-                sorted.sort(
-                    (a, b) =>
-                        (a.addedAt ?? a.openedAt ?? 0) -
-                        (b.addedAt ?? b.openedAt ?? 0),
-                );
-                break;
-            case "date-desc":
+            case "added-new":
+            case "modified-new":
                 sorted.sort(
                     (a, b) =>
                         (b.addedAt ?? b.openedAt ?? 0) -
                         (a.addedAt ?? a.openedAt ?? 0),
+                );
+                break;
+            case "added-old":
+            case "modified-old":
+                sorted.sort(
+                    (a, b) =>
+                        (a.addedAt ?? a.openedAt ?? 0) -
+                        (b.addedAt ?? b.openedAt ?? 0),
                 );
                 break;
         }
@@ -373,9 +523,9 @@ export const ZotFlowTree = () => {
     const handleSearch = (node: NodeApi<ViewNode>, term: string) => {
         const lowerTerm = term.toLowerCase();
 
-        // ==================================================
-        // Case A: Item (Parent Node)
-        // ==================================================
+        /* ================================================================ */
+        /*  Case A: Item (Parent Node)                                     */
+        /* ================================================================ */
         if (node.data.nodeType === "item") {
             // Does it match itself?
             if (node.data.name.toLowerCase().includes(lowerTerm)) return true;
@@ -391,9 +541,9 @@ export const ZotFlowTree = () => {
             return false;
         }
 
-        // ==================================================
-        // Case B: Child Node (Source Note or PDF)
-        // ==================================================
+        /* ================================================================ */
+        /*  Case B: Child Node (Source Note or PDF)                        */
+        /* ================================================================ */
         if (node.parent && node.parent.data.nodeType === "item") {
             const parent = node.parent;
 
@@ -414,9 +564,9 @@ export const ZotFlowTree = () => {
             return false;
         }
 
-        // ==================================================
-        // Case C: Standalone Attachment
-        // ==================================================
+        /* ================================================================ */
+        /*  Case C: Standalone Attachment                                  */
+        /* ================================================================ */
         return node.data.name.toLowerCase().includes(lowerTerm);
     };
 
@@ -460,7 +610,7 @@ export const ZotFlowTree = () => {
         }
 
         if (viewMode === "bookmarks") {
-            const items = filterByTerm(sortList(bookmarks, sortMode));
+            const items = filterByTerm(sortBookmarkRecent(bookmarks));
             return (
                 <div className="zotflow-sidebar-list">
                     {items.length === 0 && (
@@ -488,11 +638,7 @@ export const ZotFlowTree = () => {
         }
 
         if (viewMode === "recent") {
-            const items = filterByTerm(
-                sortMode === "name-asc" || sortMode === "name-desc"
-                    ? sortList(recents, sortMode)
-                    : recents,
-            );
+            const items = filterByTerm(sortBookmarkRecent(recents));
             return (
                 <div className="zotflow-sidebar-list">
                     {items.length === 0 && (
@@ -554,9 +700,9 @@ export const ZotFlowTree = () => {
                         onClick={handleToggleSearch}
                     />
                     <ToolbarButton
-                        icon="arrow-up-down"
-                        label={`Sort: ${SORT_LABELS[sortMode]}`}
-                        onClick={handleCycleSort}
+                        icon="arrow-up-narrow-wide"
+                        label="Change sort order"
+                        onClick={handleSortMenu}
                     />
                     <ToolbarButton
                         icon="rotate-cw"

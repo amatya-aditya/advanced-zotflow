@@ -8,8 +8,10 @@ import type {
 import type { AnnotationJSON } from "types/zotero-reader";
 
 /**
- * @param {Object} json reader compatible annotation data
- * @return {Object} Annotation item
+ * Convert reader-compatible annotation JSON into a Zotero annotation item.
+ *
+ * @param json The reader annotation data
+ * @returns A partial Zotero annotation item
  */
 export function annotationItemFromJSON(
     json: AnnotationJSON,
@@ -50,6 +52,10 @@ export async function getAnnotationJson(
 ): Promise<AnnotationJSON[]> {
     // Get current user from settings/DB
 
+    if (item.itemType !== "attachment") {
+        return [];
+    }
+
     const currentUserKey = await db.keys.get(apiKey);
     const currentUser = currentUserKey
         ? {
@@ -69,11 +75,6 @@ export async function getAnnotationJson(
 
     // Tag Colors from Settings
     const tagColors = new Map();
-    // if (client.settings.tagColors && client.settings.tagColors.value) {
-    //     client.settings.tagColors.value.forEach((tc: any) => {
-    //         tagColors.set(tc.name, { color: tc.color, position: 0 }); // Position logic might need refinement if present in settings
-    //     });
-    // }
 
     // Zotero Annotations
     let annotations = (await db.items
@@ -164,8 +165,15 @@ export async function getAnnotationJson(
         processedTags.forEach((t) => delete t.position);
         o.tags = processedTags;
 
+        o.dateAdded = annotation.dateAdded;
         o.dateModified = annotation.dateModified;
         annotationJson.push(o);
     }
+
+    // Sort by document position (sortIndex is zero-padded: pageIndex|yOffset|xOffset)
+    annotationJson.sort((a, b) =>
+        (a.sortIndex ?? "").localeCompare(b.sortIndex ?? ""),
+    );
+
     return annotationJson;
 }

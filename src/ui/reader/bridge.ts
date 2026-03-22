@@ -1,17 +1,3 @@
-/**
- * 1. Parent creates Iframe and sets up Penpal listener.
- * 2. Iframe loads JS, sets up Penpal, and calls connect().
- * 3. Penpal connection established.
- * 4. Iframe calls parent.shakehand().
- * 5. Parent (in shakehand) generates token, defines OBSIDIAN_BRIDGE on iframe window.
- * 6. Parent returns (promise resolves in child).
- * 7. Iframe calls initBridge(), which calls window.OBSIDIAN_BRIDGE().
- * 8. Iframe gets ParentAPI & RegisterFn synchronously.
- * 9. Iframe inits ZoteroReaderAdapter.
- * 10. Iframe calls registerChildAPI(childAPI).
- * 11. Parent (in register) stores childAPI, sets state=ready, processes queue.
- * 12. Parent connection promise resolves. System Ready.
- */
 import type {
     ChildAPI,
     ParentAPI,
@@ -21,26 +7,24 @@ import type {
     AnnotationJSON,
 } from "types/zotero-reader";
 
-// import {
-// 	createEmbeddableMarkdownEditor,
-// 	EmbeddableMarkdownEditor,
-// 	MarkdownEditorProps,
-// } from "../editor/markdown-editor";
-
 import { EditorView } from "@codemirror/view";
-import { Platform } from "obsidian";
+import { Component, MarkdownRenderer, Platform } from "obsidian";
 import { v4 as uuidv4 } from "uuid";
 import { connect, WindowMessenger } from "penpal";
 import { getBlobUrls } from "bundle-assets/inline-assets";
 import { services } from "services/services";
+import { workerBridge } from "bridge";
 
-import type { ZotFlowSettings } from "settings/types";
-import { getAnnotationJson } from "db/annotation";
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
-import type { LocalAnnotationManager } from "./local-anno-manager";
+import type { LocalDataManager } from "./local-data-manager";
 import { getLinkedSourceNote } from "utils/file";
 import type { TFile } from "obsidian";
+import {
+    createEmbeddableMarkdownEditor,
+    EmbeddableMarkdownEditor,
+    type MarkdownEditorProps,
+} from "ui/editor/markdown-editor";
 
 type BridgeState =
     | "idle"
@@ -57,6 +41,7 @@ type DirectBridgeBootstrap = () => {
     register: (childAPI: ChildAPI, token: string) => Promise<{ ok: boolean }>;
 };
 
+/** Penpal-based state machine managing the reader iframe lifecycle and bidirectional RPC. */
 export class IframeReaderBridge {
     private iframe: HTMLIFrameElement | null = null;
     private child?: ChildAPI; // Direct reference to Child API (replaces RemoteProxy<ChildAPI>)
@@ -71,7 +56,8 @@ export class IframeReaderBridge {
     private readyPromiseResolver: (() => void) | null = null;
     private readyPromiseRejecter: ((err: Error) => void) | null = null;
 
-    // private editorList: EmbeddableMarkdownEditor[] = [];
+    private editorList: EmbeddableMarkdownEditor[] = [];
+    private rendererList: Component[] = [];
     private _readerOpts: CreateReaderOptions | undefined;
 
     private token: string | null = null;
@@ -81,7 +67,7 @@ export class IframeReaderBridge {
         private isLocal: boolean,
         private attachmentItem?: IDBZoteroItem<AttachmentData>,
         private localAttachment?: TFile,
-        private localAnnoManager?: LocalAnnotationManager,
+        private localDataManager?: LocalDataManager,
     ) {}
 
     /**
@@ -147,70 +133,142 @@ export class IframeReaderBridge {
                 return services.settings;
             },
 
-            handleSetDataTransferAnnotations: (
-                dataTransfer: DataTransfer,
-                annotations: AnnotationJSON[],
-                fromText: boolean,
-            ) => {
+            getLinkToSelection: (text: string, navigationInfo: any) => {
                 if (this.isLocal && this.localAttachment) {
-                    services.logService.debug(
-                        "Handling setDataTransfer for local attachment",
-                        "IframeReaderBridge",
-                    );
                     const note = getLinkedSourceNote(
                         services.app,
                         this.localAttachment,
                     );
 
                     if (note) {
-                        const content = annotations.reduce((acc, anno) => {
-                            return acc + `![[${note.path}#^${anno.id}]]\n\n`;
-                        }, "");
-                        dataTransfer.setData("text/plain", content);
-                        return;
+                        const filePath = this.localAttachment.path;
+                        const encodedNavigationInfo = encodeURIComponent(
+                            JSON.stringify(navigationInfo),
+                        );
+
+                        return `[[${filePath}${navigationInfo.pageLabel ? `#page=${navigationInfo.pageLabel}` : ""}#annotation=${encodedNavigationInfo})|${text}]]`;
                     }
+
+                    return "";
                 } else if (!this.isLocal && this.attachmentItem) {
-                    services.logService.debug(
-                        "Handling setDataTransfer for remote attachment",
-                        "IframeReaderBridge",
-                    );
                     const note = services.indexService.getFileByKey(
                         this.attachmentItem.parentItem === ""
                             ? this.attachmentItem.key
                             : this.attachmentItem.parentItem,
                     );
                     if (note) {
-                        const content = annotations.reduce((acc, anno) => {
-                            return acc + `![[${note.path}#^${anno.id}]]\n\n`;
-                        }, "");
-                        dataTransfer.setData("text/plain", content);
-                        return;
+                        const libraryID = this.attachmentItem.libraryID;
+                        const itemKey = this.attachmentItem.key;
+                        const encodedNavigationInfo = encodeURIComponent(
+                            JSON.stringify(navigationInfo),
+                        );
+
+                        return `[${text}](obsidian://zotflow?type=open-attachment&libraryID=${libraryID}&key=${itemKey}&navigation=${encodedNavigationInfo})`;
+                    }
+                    return "";
+                }
+                return "";
+            },
+
+            handleSetDataTransferAnnotations: (
+                dataTransfer: DataTransfer,
+                annotations: AnnotationJSON[],
+                fromText?: boolean,
+            ) => {
+                if (fromText) {
+                    dataTransfer.setData(
+                        "text/plain",
+                        annotations.map((a) => a.text).join("\n"),
+                    );
+                    return;
+                } else {
+                    if (this.isLocal && this.localAttachment) {
+                        const note = getLinkedSourceNote(
+                            services.app,
+                            this.localAttachment,
+                        );
+
+                        if (note) {
+                            const content = annotations.reduce((acc, anno) => {
+                                return (
+                                    acc + `![[${note.path}#^${anno.id}]]\n\n`
+                                );
+                            }, "");
+                            dataTransfer.setData("text/plain", content);
+                            return;
+                        }
+                    } else if (!this.isLocal && this.attachmentItem) {
+                        const note = services.indexService.getFileByKey(
+                            this.attachmentItem.parentItem === ""
+                                ? this.attachmentItem.key
+                                : this.attachmentItem.parentItem,
+                        );
+                        if (note) {
+                            const content = annotations.reduce((acc, anno) => {
+                                return (
+                                    acc + `![[${note.path}#^${anno.id}]]\n\n`
+                                );
+                            }, "");
+                            dataTransfer.setData("text/plain", content);
+                            return;
+                        }
                     }
                 }
                 dataTransfer.setData("text/plain", " ");
             },
 
-            // createAnnotationEditor: (
-            // 	container: HTMLElement,
-            // 	options: Partial<MarkdownEditorProps>
-            // ) => {
-            // 	const editor = createEmbeddableMarkdownEditor(
-            // 		(window as any).app,
-            // 		container as HTMLElement,
-            // 		{
-            // 			...options,
-            // 			onBlur: (editor) => {
-            // 				editor.activeCM.dispatch({
-            // 					effects: EditorView.scrollIntoView(0, {
-            // 						y: "start",
-            // 					}),
-            // 				});
-            // 			},
-            // 		}
-            // 	);
-            // 	this.editorList.push(editor);
-            // 	return editor;
-            // },
+            createAnnotationEditor: (
+                container: HTMLElement,
+                options: Partial<MarkdownEditorProps>,
+            ) => {
+                const editor = createEmbeddableMarkdownEditor(
+                    (window as any).app,
+                    container as HTMLElement,
+                    {
+                        ...options,
+                        onBlur: (editor) => {
+                            editor.activeCM.dispatch({
+                                effects: EditorView.scrollIntoView(0, {
+                                    y: "start",
+                                }),
+                            });
+                        },
+                    },
+                );
+                this.editorList.push(editor);
+                const originalOnunload = editor.onunload.bind(editor);
+                editor.onunload = () => {
+                    originalOnunload();
+                    const idx = this.editorList.indexOf(editor);
+                    if (idx !== -1) this.editorList.splice(idx, 1);
+                };
+                return editor;
+            },
+
+            renderMarkdownToContainer: (
+                container: HTMLElement,
+                text: string,
+            ) => {
+                const comp = new Component();
+                comp.load();
+                container.empty();
+                container.addClass("content");
+                MarkdownRenderer.render(
+                    services.app,
+                    text,
+                    container,
+                    "",
+                    comp,
+                );
+                this.rendererList.push(comp);
+                return {
+                    unload: () => {
+                        comp.unload();
+                        const idx = this.rendererList.indexOf(comp);
+                        if (idx !== -1) this.rendererList.splice(idx, 1);
+                    },
+                };
+            },
         };
     }
 
@@ -243,6 +301,40 @@ export class IframeReaderBridge {
         this.iframe.sandbox.add("allow-forms");
 
         this.iframe.onload = () => {
+            // Apply Obsidian color-scheme classes based on setting
+            const scheme = services.settings.readerColorScheme;
+            const iframeDoc = this.iframe?.contentDocument;
+            if (iframeDoc) {
+                let isDark = false;
+                if (scheme === "light") {
+                    isDark = false;
+                } else if (scheme === "dark") {
+                    isDark = true;
+                } else {
+                    // "obsidian" or "obsidian-theme", detect from parent
+                    const parentBody =
+                        this.iframe?.contentWindow?.parent?.document.body;
+                    if (parentBody) {
+                        isDark =
+                            getComputedStyle(parentBody).colorScheme === "dark";
+                    }
+                }
+                iframeDoc.documentElement.classList.toggle(
+                    "obsidian-theme-dark",
+                    isDark,
+                );
+                iframeDoc.documentElement.classList.toggle(
+                    "obsidian-theme-light",
+                    !isDark,
+                );
+                if (scheme === "obsidian-theme") {
+                    iframeDoc.documentElement.setAttribute(
+                        "data-obsidian-theme",
+                        "",
+                    );
+                }
+            }
+
             // Only handle unexpected reloads when we're in a stable state
             if (
                 (this._state === "reader-ready" ||
@@ -343,13 +435,13 @@ export class IframeReaderBridge {
             let newAnnotationJson: AnnotationJSON[] = [];
 
             if (!this.isLocal && this.attachmentItem) {
-                newAnnotationJson = await getAnnotationJson(
-                    this.attachmentItem,
-                    services.settings.zoteroapikey,
-                    (item) => item.syncStatus !== "deleted",
-                );
-            } else if (this.isLocal && this.localAnnoManager) {
-                newAnnotationJson = this.localAnnoManager.getAll();
+                newAnnotationJson =
+                    await workerBridge.annotation.getAnnotations(
+                        this.attachmentItem,
+                        services.settings.zoteroapikey,
+                    );
+            } else if (this.isLocal && this.localDataManager) {
+                newAnnotationJson = this.localDataManager.getAllAnnotations();
             }
 
             const newReaderOpts: CreateReaderOptions = {
@@ -423,7 +515,10 @@ export class IframeReaderBridge {
 
     async dispose(clearListeners = true) {
         if (this._state === "disposed") return;
-        // this.editorList.forEach((editor) => editor.onunload());
+        this.editorList.forEach((editor) => editor.onunload());
+        this.editorList.length = 0;
+        this.rendererList.forEach((comp) => comp.unload());
+        this.rendererList.length = 0;
         this._state = "disposing";
         try {
             if (this.iframe?.contentWindow) {

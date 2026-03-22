@@ -1,8 +1,7 @@
 import * as Comlink from "comlink";
-// @ts-ignore
+// @ts-expect-error esbuild virtual module "virtual:worker"
 import workerCode from "virtual:worker";
 import { ParentHost } from "./parent-host";
-import { PDFProcessWorker } from "worker/services/pdf-processor";
 import { getBlobUrls } from "bundle-assets/inline-assets";
 
 import type { WorkerAPI } from "worker/worker";
@@ -16,6 +15,10 @@ import type { TreeViewService } from "worker/services/tree-view";
 import type { NoteService, UpdateOptions } from "worker/services/note";
 import type { LocalNoteService } from "worker/services/local-note";
 import type { ConflictService } from "worker/services/conflict";
+import type { AnnotationService } from "worker/services/annotation";
+import type { KeyService } from "worker/services/key";
+import type { DbHelperService } from "worker/services/db-helper";
+import type { PDFProcessWorker } from "worker/services/pdf-processor";
 import type { BatchNoteInput } from "worker/tasks/impl/batch-note-task";
 import type {
     BatchExtractImagesInput,
@@ -28,7 +31,9 @@ import type { AnnotationJSON } from "types/zotero-reader";
 import type { App } from "obsidian";
 import { services } from "services/services";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import type { ItemTemplateContext } from "types/template-context";
 
+/** Comlink-based RPC wrapper managing the Web Worker lifecycle and exposing all worker service proxies. */
 export class WorkerBridge {
     private _worker: Worker;
 
@@ -42,9 +47,13 @@ export class WorkerBridge {
     private _note: NoteService;
     private _localNote: LocalNoteService;
     private _conflict: ConflictService;
+    private _annotation: AnnotationService;
+    private _key: KeyService;
+    private _dbHelper: DbHelperService;
     private _pdfProcessor: PDFProcessWorker;
     private _tasks: TaskManager;
 
+    private _parentHost: ParentHost | undefined;
     private _workerBlobUrl: string;
     private _initialized = false;
 
@@ -60,9 +69,10 @@ export class WorkerBridge {
     async initialize(settings: ZotFlowSettings, app: App) {
         // Worker settings update / initialization
         const blobUrls = getBlobUrls();
+        this._parentHost = new ParentHost(app);
         await this._api.init(
             settings,
-            Comlink.proxy(new ParentHost(app)),
+            Comlink.proxy(this._parentHost),
             blobUrls,
         );
 
@@ -74,6 +84,9 @@ export class WorkerBridge {
         this._note = await this._api.note;
         this._localNote = await this._api.localNote;
         this._conflict = await this._api.conflict;
+        this._annotation = await this._api.annotation;
+        this._key = await this._api.key;
+        this._dbHelper = await this._api.dbHelper;
         this._pdfProcessor = await this._api.pdfProcessor;
         this._tasks = await this._api.tasks;
 
@@ -135,6 +148,21 @@ export class WorkerBridge {
         return this._conflict;
     }
 
+    get annotation() {
+        this.assertInitialized();
+        return this._annotation;
+    }
+
+    get key() {
+        this.assertInitialized();
+        return this._key;
+    }
+
+    get dbHelper() {
+        this.assertInitialized();
+        return this._dbHelper;
+    }
+
     get pdfProcessWorker() {
         this.assertInitialized();
         return this._pdfProcessor;
@@ -145,9 +173,9 @@ export class WorkerBridge {
         return this._tasks;
     }
 
-    // ================================================================
-    // Task factory methods (delegates to top-level WorkerAPI methods)
-    // ================================================================
+    /* ================================================================ */
+    /*  Task factory methods (delegates to top-level WorkerAPI methods) */
+    /* ================================================================ */
 
     async createSyncTask(libraryId?: number): Promise<string> {
         this.assertInitialized();
@@ -189,6 +217,68 @@ export class WorkerBridge {
         this._api.cancelTask(taskId);
     }
 
+    /* ================================================================ */
+    /*  Workflow-specific methods                                       */
+    /* ================================================================ */
+
+    async getItemContext(
+        libraryID: number,
+        key: string,
+    ): Promise<ItemTemplateContext & { libraryName: string }> {
+        this.assertInitialized();
+        return this._api.getItemContext(libraryID, key);
+    }
+
+    async renderNoteFromContext(
+        itemContext: ItemTemplateContext,
+        templateContent: string | null,
+        existingFrontmatter: Record<string, any>,
+    ): Promise<string> {
+        this.assertInitialized();
+        return this._api.renderNoteFromContext(
+            itemContext,
+            templateContent,
+            existingFrontmatter,
+        );
+    }
+
+    async extractAnnotationImagesForItem(
+        libraryID: number,
+        key: string,
+        force: boolean,
+    ): Promise<void> {
+        this.assertInitialized();
+        return this._api.extractAnnotationImagesForItem(libraryID, key, force);
+    }
+
+    /* ================================================================ */
+    /*  Main-thread file operations (no worker roundtrip)               */
+    /* ================================================================ */
+
+    async readTextFile(path: string): Promise<string | null> {
+        this.assertInitialized();
+        return this._parentHost!.readTextFile(path);
+    }
+
+    async writeTextFile(path: string, content: string): Promise<void> {
+        this.assertInitialized();
+        return this._parentHost!.writeTextFile(path, content);
+    }
+
+    async checkFile(path: string): Promise<{
+        exists: boolean;
+        path: string;
+        frontmatter?: Record<string, any>;
+    }> {
+        this.assertInitialized();
+        return this._parentHost!.checkFile(path);
+    }
+
+    async indexFile(path: string): Promise<void> {
+        this.assertInitialized();
+        return this._parentHost!.indexFile(path);
+    }
+
     updateSettings(newSettings: ZotFlowSettings) {
         this._api.updateSettings(newSettings);
     }
@@ -200,4 +290,5 @@ export class WorkerBridge {
     }
 }
 
+/** Singleton `WorkerBridge` instance used throughout the main thread. */
 export const workerBridge = new WorkerBridge();

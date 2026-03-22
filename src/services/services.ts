@@ -1,41 +1,52 @@
-import { App } from "obsidian";
+import { IndexService } from "./index-service";
+import { LogService } from "./log-service";
+import { NotificationService } from "./notification-service";
+import { ViewStateService } from "./view-state-service";
+import { TaskMonitor } from "./task-monitor";
+import { WorkflowService } from "./workflow-service";
+import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
+import type { App } from "obsidian";
 import type {
     ZotFlowSettings,
     BookmarkedItem,
     RecentItem,
 } from "settings/types";
-import { IndexService } from "./index-service";
-import { LogService } from "./log-service";
-import { NotificationService } from "./notification-service";
-import { TaskMonitor } from "./task-monitor";
-import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import type ZotFlow from "main";
 
 class ServiceLocator {
     private _app: App;
+    private _plugin: ZotFlow;
     private _settings: ZotFlowSettings;
     private _initialized = false;
 
     private _indexService: IndexService;
     private _logService: LogService;
     private _notificationService: NotificationService;
+    private _viewStateService: ViewStateService;
     private _taskMonitor: TaskMonitor;
+    private _workflowService: WorkflowService;
 
-    private _saveSettingsCallback: (() => Promise<void>) | null = null;
     private _onBookmarksChanged: Set<() => void> = new Set();
     private _onRecentsChanged: Set<() => void> = new Set();
 
-    initialize(app: App, settings: ZotFlowSettings) {
-        this._app = app;
+    initialize(plugin: ZotFlow, settings: ZotFlowSettings) {
+        this._plugin = plugin;
+        this._app = plugin.app;
         this._settings = settings;
 
         this._logService = new LogService();
         this._notificationService = new NotificationService();
-
-        this._indexService = new IndexService(app, this._logService);
+        this._viewStateService = new ViewStateService(
+            this._plugin,
+            this._logService,
+            () => this._settings,
+        );
+        this._indexService = new IndexService(this._app, this._logService);
         this._indexService.load();
 
-        this._taskMonitor = new TaskMonitor(app);
+        this._taskMonitor = new TaskMonitor(this._app);
+        this._workflowService = new WorkflowService(this._logService);
 
         this._initialized = true;
         this._logService.info("Services initialized.", "LocalServiceLocator");
@@ -51,12 +62,14 @@ class ServiceLocator {
         }
     }
 
-    setSaveSettingsCallback(cb: () => Promise<void>) {
-        this._saveSettingsCallback = cb;
+    updateSettings(newSettings: ZotFlowSettings) {
+        this.assertInitialized();
+        this._settings = newSettings;
     }
 
-    updateSettings(newSettings: ZotFlowSettings) {
-        this._settings = newSettings;
+    saveSettings() {
+        this.assertInitialized();
+        return this._plugin.saveSettings();
     }
 
     // --- Bookmark Management ---
@@ -89,7 +102,7 @@ class ServiceLocator {
         );
         if (idx >= 0) {
             this._settings.bookmarkedItems.splice(idx, 1);
-            await this._saveSettingsCallback?.();
+            await this.saveSettings();
             this._onBookmarksChanged.forEach((cb) => cb());
             return false; // removed
         } else {
@@ -102,7 +115,7 @@ class ServiceLocator {
                 contentType: item.contentType,
                 addedAt: Date.now(),
             });
-            await this._saveSettingsCallback?.();
+            await this.saveSettings();
             this._onBookmarksChanged.forEach((cb) => cb());
             return true; // added
         }
@@ -144,12 +157,17 @@ class ServiceLocator {
                 max,
             );
         }
-        await this._saveSettingsCallback?.();
+        await this.saveSettings();
         this._onRecentsChanged.forEach((cb) => cb());
     }
 
     getRecentItems(): RecentItem[] {
         return [...this._settings.recentItems];
+    }
+
+    get plugin() {
+        this.assertInitialized();
+        return this._plugin;
     }
 
     get app() {
@@ -177,11 +195,21 @@ class ServiceLocator {
         return this._notificationService;
     }
 
+    get viewStateService() {
+        this.assertInitialized();
+        return this._viewStateService;
+    }
+
     get taskMonitor() {
         this.assertInitialized();
         return this._taskMonitor;
     }
+
+    get workflowService() {
+        this.assertInitialized();
+        return this._workflowService;
+    }
 }
 
-// Export singleton
+/** Singleton `ServiceLocator` instance providing access to all main-thread services. */
 export const services = new ServiceLocator();

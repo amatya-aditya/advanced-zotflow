@@ -1,11 +1,12 @@
 import { Setting, SettingGroup } from "obsidian";
 
-import { db } from "db/db";
+import { workerBridge } from "bridge";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { services } from "services/services";
 
 import type ZotFlow from "main";
 
+/** Settings section for attachment cache toggle, size limit, usage bar, and purge. */
 export class CacheSection {
     constructor(
         private plugin: ZotFlow,
@@ -64,11 +65,8 @@ export class CacheSection {
                 setting.settingEl.parentElement?.createDiv();
             let totalSizeBytes = 0;
             try {
-                const allFiles = await db.files.toArray();
-                totalSizeBytes = allFiles.reduce(
-                    (acc, file) => acc + (file.size || 0),
-                    0,
-                );
+                totalSizeBytes =
+                    await workerBridge.attachment.getCacheTotalSizeBytes();
             } catch (e) {
                 console.error("Cache stats error", e);
             }
@@ -126,7 +124,7 @@ export class CacheSection {
                     .setWarning()
                     .onClick(async () => {
                         try {
-                            await db.files.clear();
+                            await workerBridge.attachment.purgeCache();
                             services.notificationService.notify(
                                 "success",
                                 "Cache purged successfully.",

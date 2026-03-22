@@ -1,24 +1,26 @@
 import { FileView, WorkspaceLeaf, TFile, ItemView } from "obsidian";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
-import { LocalAnnotationManager } from "./local-anno-manager";
+import { LocalDataManager } from "./local-data-manager";
 
 import type {
     CreateReaderOptions,
     ColorScheme,
     AnnotationJSON,
+    CustomReaderTheme,
 } from "types/zotero-reader";
 import { services } from "services/services";
 
+/** View type identifier for the local vault file reader view. */
 export const LOCAL_ZOTERO_READER_VIEW_TYPE = "zotflow-local-zotero-reader-view";
 
+/** Obsidian `ItemView` that embeds the Zotero reader iframe for local PDF/EPUB/HTML vault files. */
 export class LocalReaderView extends ItemView {
     private file: TFile | null = null;
     private bridge?: IframeReaderBridge;
-    private colorSchemeObserver?: MutationObserver;
     private colorScheme: ColorScheme = "light"; // Default to light
     private readerOptions: Partial<CreateReaderOptions> = {};
-    private annotationManager?: LocalAnnotationManager;
+    private dataManager?: LocalDataManager;
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -46,6 +48,7 @@ export class LocalReaderView extends ItemView {
                 this.containerEl
                     .getElementsByClassName("view-header-title")[0]
                     ?.setText(this.file.name);
+
                 this.loadDocument(this.file);
             }
         }
@@ -83,21 +86,28 @@ export class LocalReaderView extends ItemView {
     private async renderReader(file: TFile) {
         const container = this.contentEl;
 
-        // Ensure color scheme is set initially
-        this.colorScheme = getComputedStyle(document.body)
-            .colorScheme as ColorScheme;
+        // Resolve initial color scheme based on setting
+        const schemeSetting = services.settings.readerColorScheme;
+        if (schemeSetting === "light") {
+            this.colorScheme = "light";
+        } else if (schemeSetting === "dark") {
+            this.colorScheme = "dark";
+        } else {
+            this.colorScheme = getComputedStyle(document.body)
+                .colorScheme as ColorScheme;
+        }
 
         try {
             // Create bridge once
             if (!this.bridge) {
-                // Initialize annotation manager
-                this.annotationManager = new LocalAnnotationManager(file);
+                // Initialize data manager
+                this.dataManager = new LocalDataManager(file);
                 this.bridge = new IframeReaderBridge(
                     container,
                     true,
                     undefined,
                     file,
-                    this.annotationManager,
+                    this.dataManager,
                 );
 
                 // Register event listeners
@@ -126,34 +136,45 @@ export class LocalReaderView extends ItemView {
                 });
 
                 this.bridge.onEventType("viewStateChanged", (evt) => {
-                    console.log("View state changed:", evt.primary, evt.state);
+                    this.handleViewStateChanged(evt.state, evt.primary);
                 });
 
                 this.bridge.onEventType("saveCustomThemes", (evt) => {
-                    console.log("Custom themes saved:", evt.customThemes);
+                    services.viewStateService.saveCustomThemes(
+                        evt.customThemes as CustomReaderTheme[],
+                    );
                 });
 
                 this.bridge.onEventType("setLightTheme", (evt) => {
-                    console.log("Set light theme:", evt.theme);
+                    this.handleSetTheme("light", evt.theme);
                 });
 
                 this.bridge.onEventType("setDarkTheme", (evt) => {
-                    console.log("Set dark theme:", evt.theme);
+                    this.handleSetTheme("dark", evt.theme);
                 });
 
-                // Observe color scheme changes once and delegate to bridge
-                this.colorSchemeObserver = new MutationObserver(() => {
-                    const newColorScheme = getComputedStyle(document.body)
-                        .colorScheme as ColorScheme;
-                    if (newColorScheme && newColorScheme !== this.colorScheme) {
-                        this.bridge!.setColorScheme(newColorScheme);
-                        this.colorScheme = newColorScheme;
-                    }
-                });
-                this.colorSchemeObserver.observe(document.body, {
-                    attributes: true,
-                    attributeFilter: ["class"],
-                });
+                // Observe color scheme changes via Obsidian's css-change event
+                // Only monitor when following Obsidian scheme
+
+                this.registerEvent(
+                    this.app.workspace.on("css-change", () => {
+                        if (
+                            schemeSetting === "obsidian" ||
+                            schemeSetting === "obsidian-theme"
+                        ) {
+                            const newColorScheme = getComputedStyle(
+                                document.body,
+                            ).colorScheme as ColorScheme;
+                            if (
+                                newColorScheme &&
+                                newColorScheme !== this.colorScheme
+                            ) {
+                                this.bridge!.setColorScheme(newColorScheme);
+                                this.colorScheme = newColorScheme;
+                            }
+                        }
+                    }),
+                );
             }
 
             // Connect Bridge & Get File concurrently
@@ -161,18 +182,36 @@ export class LocalReaderView extends ItemView {
                 this.bridge.connect(),
                 this.app.vault.readBinary(file),
                 (async () => {
-                    return await this.annotationManager?.load();
+                    return await this.dataManager?.loadAnnotations();
                 })(),
             ]);
 
-            console.log(this.bridge);
-
             // Initialize Reader if ready
             if (this.bridge.state === "bridge-ready") {
-                const opts = {
+                // Read persisted view state (including saved themes)
+                const viewState = services.viewStateService.getViewState(
+                    file.path,
+                );
+
+                const themeDefaults = {
+                    lightTheme: services.settings.defaultLightTheme,
+                    darkTheme: services.settings.defaultDarkTheme,
+                };
+
+                // User's saved theme takes top priority
+                const themeOverrides = {
+                    lightTheme:
+                        viewState?.lightTheme ?? themeDefaults.lightTheme,
+                    darkTheme: viewState?.darkTheme ?? themeDefaults.darkTheme,
+                };
+
+                const opts: Partial<CreateReaderOptions> = {
                     ...this.readerOptions,
-                    colorScheme: this.colorScheme,
                     annotations: loadedAnnotations,
+                    colorScheme: this.colorScheme,
+                    primaryViewState: viewState?.primaryViewState,
+                    customThemes: services.viewStateService.getCustomThemes(),
+                    ...themeOverrides,
                 };
 
                 const type = this.getReaderType(file.extension);
@@ -243,19 +282,39 @@ export class LocalReaderView extends ItemView {
     }
 
     async onClose() {
-        if (this.colorSchemeObserver) {
-            this.colorSchemeObserver.disconnect();
-        }
         if (this.bridge) {
             await this.bridge.dispose();
         }
+
+        // Flush view state on close to ensure latest state is saved
+        services.viewStateService.flushViewStateSave();
+    }
+
+    /**
+     * Persist the reader's view state to data.json.
+     */
+    private handleViewStateChanged(state: unknown, primary: boolean) {
+        if (!this.file) return;
+        services.viewStateService.saveViewState(
+            this.file.path,
+            primary,
+            state as Record<string, unknown>,
+        );
+    }
+
+    /**
+     * Persist a theme choice to the view state.
+     */
+    private handleSetTheme(kind: "light" | "dark", theme: unknown) {
+        if (!this.file) return;
+        services.viewStateService.saveTheme(this.file.path, kind, theme);
     }
 
     /**
      * Handle saved/updated annotations
      */
     private async handleAnnotationsSaved(annotations: any[]) {
-        if (this.annotationManager) {
+        if (this.dataManager) {
             for (const annotation of annotations) {
                 const isVisual =
                     annotation.type === "image" || annotation.type === "ink";
@@ -270,7 +329,7 @@ export class LocalReaderView extends ItemView {
                             ),
                         );
                 }
-                await this.annotationManager.save(annotation);
+                await this.dataManager.saveAnnotation(annotation);
             }
         }
     }
@@ -280,9 +339,9 @@ export class LocalReaderView extends ItemView {
      * Optimization: Batch processing
      */
     private async handleAnnotationsDeleted(ids: string[]) {
-        if (this.annotationManager) {
+        if (this.dataManager) {
             for (const id of ids) {
-                const annotation = this.annotationManager.get(id);
+                const annotation = this.dataManager.getAnnotation(id);
                 if (annotation) {
                     const isVisual =
                         annotation.type === "image" ||
@@ -299,7 +358,7 @@ export class LocalReaderView extends ItemView {
                             );
                     }
                 }
-                await this.annotationManager.delete(id);
+                await this.dataManager.deleteAnnotation(id);
             }
         }
     }

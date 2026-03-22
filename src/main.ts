@@ -25,30 +25,57 @@ import {
 import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./ui/reader/view";
 import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
 import { services } from "./services/services";
-import { ZotFlowLockExtension } from "ui/zotflow-lock-extension";
+import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
 
 import { openAttachment } from "ui/viewer";
 import { ActivityCenterModal } from "ui/activity-center/modal";
 
-import type { ZotFlowSettings } from "./settings/types";
+import type {
+    ZotFlowSettings,
+    ZotFlowPluginData,
+    ViewStateEntry,
+} from "./settings/types";
+import type { CustomReaderTheme } from "types/zotero-reader";
+
 import {
     LOCAL_ZOTERO_READER_VIEW_TYPE,
     LocalReaderView,
 } from "ui/reader/local-view";
-import { ZotFlowCommentExtension } from "ui/zotflow-comment-extension";
+import { ZotFlowCommentExtension } from "ui/editor/zotflow-comment-extension";
+import {
+    WORKFLOW_VIEW_TYPE,
+    WORKFLOW_EXTENSION,
+    ZotFlowWorkflowView,
+} from "ui/workflow/view";
+import { conditionNode } from "ui/workflow/nodes/controls/ConditionNode";
+import { setVariableNode } from "ui/workflow/nodes/controls/SetVariableNode";
+import { terminateNode } from "ui/workflow/nodes/controls/TerminateNode";
+import { switchNode } from "ui/workflow/nodes/controls/SwitchNode";
+import { applyToEachNode } from "ui/workflow/nodes/controls/ApplyToEachNode";
+import { registerNodeType } from "ui/workflow/node-registry";
+import { exampleAction } from "ui/workflow/nodes/actions/ExampleActionNode";
+import { fetchItemNode } from "ui/workflow/nodes/actions/FetchItemNode";
+import { saveAnnotationImagesNode } from "ui/workflow/nodes/actions/SaveAnnotationImagesNode";
+import { renderTemplateNode } from "ui/workflow/nodes/actions/RenderTemplateNode";
+import { writeNoteNode } from "ui/workflow/nodes/actions/WriteNoteNode";
+import { manualTrigger } from "ui/workflow/nodes/triggers/ManualTriggerNode";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "epub", "html"];
 
+/** Plugin entry point managing lifecycle, commands, views, settings, and protocol handlers. */
 export default class ZotFlow extends Plugin {
     settings: ZotFlowSettings;
+    viewStates: Record<string, ViewStateEntry>;
+    customThemes: CustomReaderTheme[] = [];
 
     async onload() {
         // Load settings
         await this.loadSettings();
 
         // Initialize local services
-        services.initialize(this.app, this.settings);
-        services.setSaveSettingsCallback(() => this.saveSettings());
+        services.initialize(this, this.settings);
+        services.viewStateService.setViewStates(this.viewStates);
+        services.viewStateService.setCustomThemes(this.customThemes);
 
         // Initialize worker bridge
         try {
@@ -78,6 +105,13 @@ export default class ZotFlow extends Plugin {
             LOCAL_ZOTERO_READER_VIEW_TYPE,
             (leaf) => new LocalReaderView(leaf),
         );
+        this.registerView(
+            WORKFLOW_VIEW_TYPE,
+            (leaf) => new ZotFlowWorkflowView(leaf),
+        );
+
+        // Register .zotflow extension
+        this.registerExtensions([WORKFLOW_EXTENSION], WORKFLOW_VIEW_TYPE);
 
         // Add tree view to left
         this.app.workspace.onLayoutReady(async () => {
@@ -101,7 +135,7 @@ export default class ZotFlow extends Plugin {
 
         if (this.settings.overwriteViewer) {
             try {
-                /**@ts-expect-error */
+                // @ts-expect-error Undocumented Obsidian API: unregisterExtensions()
                 this.app.viewRegistry.unregisterExtensions(
                     SUPPORTED_EXTENSIONS,
                 );
@@ -112,7 +146,7 @@ export default class ZotFlow extends Plugin {
             } catch {
                 const message = `Could not unregister extension: '${SUPPORTED_EXTENSIONS}'`;
                 services.logService.error(message, "Main");
-                services.notificationService.notify("error", message);
+                // services.notificationService.notify("error", message);
             }
         } else {
             for (const extension of SUPPORTED_EXTENSIONS) {
@@ -137,6 +171,19 @@ export default class ZotFlow extends Plugin {
             "",
             new Component(),
         );
+
+        // Register all built-in node types
+        registerNodeType(manualTrigger);
+        registerNodeType(exampleAction);
+        registerNodeType(conditionNode);
+        registerNodeType(setVariableNode);
+        registerNodeType(terminateNode);
+        registerNodeType(switchNode);
+        registerNodeType(applyToEachNode);
+        registerNodeType(fetchItemNode);
+        registerNodeType(saveAnnotationImagesNode);
+        registerNodeType(renderTemplateNode);
+        registerNodeType(writeNoteNode);
 
         this.addRibbonIcon(
             "zotero-icon",
@@ -180,9 +227,24 @@ export default class ZotFlow extends Plugin {
         });
 
         this.addSettingTab(new ZotFlowSettingTab(this.app, this));
+
+        // Track file renames to keep viewStates keys in sync
+        this.registerEvent(
+            this.app.vault.on("rename", (file, oldPath) => {
+                services.viewStateService.renameViewState(oldPath, file.path);
+            }),
+        );
+
+        // Clean up view state when an attachment is deleted
+        this.registerEvent(
+            this.app.vault.on("delete", (file) => {
+                services.viewStateService.deleteViewState(file.path);
+            }),
+        );
     }
 
     onunload() {
+        services.viewStateService.flushViewStateSave();
         workerBridge.terminate();
         revokeBlobUrls();
     }
@@ -251,11 +313,21 @@ export default class ZotFlow extends Plugin {
     }
 
     async loadSettings() {
-        this.settings = Object.assign(
-            {},
-            DEFAULT_SETTINGS,
-            (await this.loadData()) as Partial<ZotFlowSettings>,
-        );
+        const raw = (await this.loadData()) as Record<string, unknown> | null;
+
+        if (raw && "settings" in raw) {
+            // New nested format: { settings, viewStates }
+            const data = raw as Partial<ZotFlowPluginData>;
+            this.settings = { ...DEFAULT_SETTINGS, ...data.settings };
+            this.viewStates = { ...(data.viewStates ?? {}) };
+            this.customThemes = data.customThemes ?? [];
+        } else {
+            // Legacy flat format
+            this.settings = { ...DEFAULT_SETTINGS, ...raw };
+            this.viewStates = {};
+            this.customThemes = [];
+        }
+
         // Load sensitive credentials from SecretStorage (cross-platform safe)
         loadCredentials(this.settings, this.app.secretStorage);
     }
@@ -263,8 +335,13 @@ export default class ZotFlow extends Plugin {
     async saveSettings() {
         // Store sensitive credentials in SecretStorage (cross-platform safe)
         saveCredentials(this.settings, this.app.secretStorage);
-        // Persist settings without sensitive fields to data.json
-        await this.saveData(stripCredentials(this.settings));
+        // Persist nested data.json (without sensitive fields)
+        const data: ZotFlowPluginData = {
+            settings: stripCredentials(this.settings),
+            customThemes: services.viewStateService.getCustomThemes(),
+            viewStates: services.viewStateService.getViewStatesMap(),
+        };
+        await this.saveData(data);
         workerBridge.updateSettings(this.settings);
         services.updateSettings(this.settings);
     }

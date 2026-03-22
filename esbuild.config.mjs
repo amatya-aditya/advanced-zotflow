@@ -174,10 +174,12 @@ const context = await esbuild.context({
     outfile: "main.js",
     minify: prod,
     plugins: [inlineResourcePlugin, copyLicensePlugin, inlineWorkerPlugin],
+    metafile: true,
 });
 
 if (prod) {
-    await context.rebuild();
+    const result = await context.rebuild();
+    fs.writeFileSync("meta.json", JSON.stringify(result.metafile));
     process.exit(0);
 } else {
     await context.watch();
