@@ -48,6 +48,7 @@ export default class ZotFlow extends Plugin {
 
         // Initialize local services
         services.initialize(this.app, this.settings);
+        services.setSaveSettingsCallback(() => this.saveSettings());
 
         // Initialize worker bridge
         try {

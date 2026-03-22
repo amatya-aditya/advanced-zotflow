@@ -5,6 +5,26 @@ export interface LibraryConfig {
     mode: LibrarySyncMode;
 }
 
+export interface BookmarkedItem {
+    id: string; // "libraryID:key"
+    libraryID: number;
+    key: string;
+    name: string;
+    itemType: string;
+    contentType?: string;
+    addedAt: number; // timestamp
+}
+
+export interface RecentItem {
+    id: string; // "libraryID:key"
+    libraryID: number;
+    key: string;
+    name: string;
+    itemType: string;
+    contentType?: string;
+    openedAt: number; // timestamp
+}
+
 export interface ZotFlowSettings {
     zoteroapikey: string;
     librariesConfig: Record<string, LibraryConfig>;
@@ -23,6 +43,9 @@ export interface ZotFlowSettings {
     autoImportAnnotationImages: boolean;
     annotationImageFolder: string;
     overwriteViewer: boolean;
+    bookmarkedItems: BookmarkedItem[];
+    recentItems: RecentItem[];
+    maxRecentItems: number;
 }
 
 export const DEFAULT_SETTINGS: ZotFlowSettings = {
@@ -40,4 +63,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     autoImportAnnotationImages: false,
     annotationImageFolder: "",
     overwriteViewer: false,
+    bookmarkedItems: [],
+    recentItems: [],
+    maxRecentItems: 10,
 };

@@ -38,7 +38,7 @@ doi: {{ item.DOI | json }}
 {%- if item.attachments.length > 0 -%}
 ## Attachments
 {%- for attachment in item.attachments -%}
-- [{{ attachment.filename }}](obsidian://zotflow?type=open-attachment&libraryID={{ attachment.libraryID }}&key={{ attachment.key }})
+- [{{ attachment.filename | truncate_words: 4 }}](obsidian://zotflow?type=open-attachment&libraryID={{ attachment.libraryID }}&key={{ attachment.key }})
 {%- endfor -%}
 
 {%- endif -%}
@@ -54,9 +54,9 @@ doi: {{ item.DOI | json }}
 ## Annotations
 {%- for attachment in item.attachments -%}
 {%- if attachment.annotations.length > 0 -%}
-### {{ attachment.filename }}
+### {{ attachment.filename | truncate_words: 4 }}
 {%- for annotation in attachment.annotations -%}
-> [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [{{ attachment.filename }}, p.{{ annotation.pageLabel }}](obsidian://zotflow?type=open-attachment&libraryID={{ attachment.libraryID }}&key={{ attachment.key }}&navigation={{ annotation.key | process_nav_info}})
+> [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [{{ attachment.filename | truncate_words: 4 }}, p.{{ annotation.pageLabel }}](obsidian://zotflow?type=open-attachment&libraryID={{ attachment.libraryID }}&key={{ attachment.key }}&navigation={{ annotation.key | process_nav_info}})
 {%- if annotation.type == "ink" or annotation.type == "image"-%}
 > > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
 {%- else -%}
@@ -74,7 +74,7 @@ doi: {{ item.DOI | json }}
 {%- if item.attachments.length == 0 and item.itemType == "attachment" and item.annotations.length > 0 -%}
 ## Annotations
 {%- for annotation in item.annotations -%}
-> [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [{{ item.title }}, p.{{ annotation.pageLabel }}](obsidian://zotflow?type=open-attachment&libraryID={{ item.libraryID }}&key={{ item.key }}&navigation={{ annotation.key | process_nav_info}})
+> [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [{{ item.title | truncate_words: 4 }}, p.{{ annotation.pageLabel }}](obsidian://zotflow?type=open-attachment&libraryID={{ item.libraryID }}&key={{ item.key }}&navigation={{ annotation.key | process_nav_info}})
 {%- if annotation.type == "ink" or annotation.type == "image"-%}
 > > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
 {%- else -%}
@@ -113,6 +113,27 @@ export class TemplateService {
             };
             return encodeURIComponent(JSON.stringify(navInfo));
         });
+
+        // Truncate a filename to the first N words (default 4), preserving extension
+        this.engine.registerFilter(
+            "truncate_words",
+            (input: string, maxWords?: number) => {
+                if (!input) return input;
+                const max = maxWords ?? 4;
+                // Remove file extension
+                const extMatch = input.match(/(\.[a-zA-Z0-9]+)$/);
+                const ext = extMatch ? extMatch[1] : "";
+                const nameWithoutExt = ext
+                    ? input.slice(0, -ext.length)
+                    : input;
+                // Split into words (by spaces, hyphens, underscores)
+                const words = nameWithoutExt
+                    .split(/[\s_-]+/)
+                    .filter((w) => w.length > 0);
+                if (words.length <= max) return input;
+                return words.slice(0, max).join(" ") + "..." + ext;
+            },
+        );
     }
 
     updateSettings(newSettings: ZotFlowSettings) {

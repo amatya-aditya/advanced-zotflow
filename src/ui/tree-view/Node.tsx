@@ -72,6 +72,14 @@ export const NodeItem = ({
         node.toggle();
 
         if (nodeType === "item" && node.data.itemType === "attachment") {
+            // Track recent item
+            services.addRecentItem({
+                libraryID: node.data.libraryID,
+                key: node.data.key,
+                name: node.data.name,
+                itemType: node.data.itemType,
+                contentType: node.data.contentType,
+            });
             // Attachment: Open PDF
             await openAttachment(
                 node.data.libraryID,
@@ -195,10 +203,37 @@ export const NodeItem = ({
             });
         } else if (isTopLevelItem && node.data.itemType !== "note") {
             menu.addItem((item) => {
+                const isBookmarked = services.isBookmarked(
+                    node.data.libraryID,
+                    node.data.key,
+                );
+                item.setTitle(
+                    isBookmarked ? "Remove bookmark" : "Bookmark item",
+                )
+                    .setIcon(isBookmarked ? "bookmark-minus" : "bookmark-plus")
+                    .onClick(async () => {
+                        await services.toggleBookmark({
+                            libraryID: node.data.libraryID,
+                            key: node.data.key,
+                            name: node.data.name,
+                            itemType: node.data.itemType,
+                            contentType: node.data.contentType,
+                        });
+                    });
+            });
+            menu.addItem((item) => {
                 item.setTitle("Open source note")
                     .setIcon("file-badge")
                     .onClick(async () => {
                         try {
+                            // Track recent item
+                            services.addRecentItem({
+                                libraryID: node.data.libraryID,
+                                key: node.data.key,
+                                name: node.data.name,
+                                itemType: node.data.itemType,
+                                contentType: node.data.contentType,
+                            });
                             await workerBridge.note.openNote(
                                 node.data.libraryID,
                                 node.data.key,
