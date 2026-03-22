@@ -17,7 +17,8 @@ export const zoteroBlockField = StateField.define<DecorationSet>({
         if (tr.docChanged) return buildDecorations(tr.newDoc);
         return decorations.map(tr.changes);
     },
-    provide: (field) => EditorView.decorations.from(field),
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    provide: (field) => EditorView.decorations.from(field as any),
 });
 
 function buildDecorations(doc: any): DecorationSet {
@@ -88,7 +89,7 @@ function buildDecorations(doc: any): DecorationSet {
         builder.add(item.from, item.to, item.deco);
     }
 
-    return builder.finish();
+    return builder.finish() as DecorationSet;
 }
 
 /** Returns a CM6 extension combining the annotation block field with collapse base-theme styles. */
