@@ -40,6 +40,7 @@ import type { AttachmentIdentifier } from "worker/tasks/impl/batch-extract-exter
 import { services } from "services/services";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import type { ItemTemplateContext } from "types/template-context";
+import type { BaseViewItemMetadata } from "worker/worker";
 
 /** Comlink-based RPC wrapper managing the Web Worker lifecycle and exposing all worker service proxies. */
 export class WorkerBridge {
@@ -278,6 +279,14 @@ export class WorkerBridge {
     ): Promise<void> {
         this.assertInitialized();
         return this._api.extractAnnotationImagesForItem(libraryID, key, force);
+    }
+
+    async getCollectionItemsMetadata(
+        libraryID: number,
+        collectionKey: string | null,
+    ): Promise<BaseViewItemMetadata[]> {
+        this.assertInitialized();
+        return this._api.getCollectionItemsMetadata(libraryID, collectionKey);
     }
 
     /* ================================================================ */

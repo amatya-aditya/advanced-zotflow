@@ -8,6 +8,7 @@ import { workerBridge } from "bridge";
 
 import { openAttachment } from "utils/viewer";
 import { getNotePath } from "utils/utils";
+import { generateBaseView } from "utils/base-generator";
 
 /** Pixel indentation per tree depth level. */
 export const INDENT_SIZE = 20;
@@ -199,6 +200,56 @@ export const NodeItem = ({
                             services.notificationService.notify(
                                 "error",
                                 "Failed to start batch image extraction.",
+                            );
+                        }
+                    });
+            });
+
+            menu.addSeparator();
+
+            menu.addItem((item) => {
+                item.setTitle("Create Base View")
+                    .setIcon("table")
+                    .onClick(async () => {
+                        try {
+                            services.notificationService.notify(
+                                "info",
+                                "Fetching items from Zotero database...",
+                            );
+
+                            // Fetch actual Zotero items from the database
+                            const collectionKey =
+                                nodeType === "collection"
+                                    ? node.data.key
+                                    : null;
+                            const items =
+                                await workerBridge.getCollectionItemsMetadata(
+                                    node.data.libraryID,
+                                    collectionKey,
+                                );
+
+                            const path = await generateBaseView(
+                                services.app,
+                                {
+                                    name: node.data.name,
+                                    baseViewFolder:
+                                        services.settings.baseViewFolder,
+                                    items,
+                                },
+                            );
+                            services.notificationService.notify(
+                                "success",
+                                `Base view created with ${items.length} items: ${path}`,
+                            );
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to create base view",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to create base view.",
                             );
                         }
                     });

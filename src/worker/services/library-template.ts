@@ -29,6 +29,40 @@ date: {{ item.date | json }}
 year: {{ item.date | slice: 0, 4 }}
 url: {{ item.url | json }}
 doi: {{ item.DOI | json }}
+{%- if item.pages %}
+pages: {{ item.pages | json }}
+{%- endif %}
+{%- if item.volume %}
+volume: {{ item.volume | json }}
+{%- endif %}
+{%- if item.issue %}
+issue: {{ item.issue | json }}
+{%- endif %}
+{%- if item.ISBN %}
+isbn: {{ item.ISBN | json }}
+{%- endif %}
+{%- if item.ISSN %}
+issn: {{ item.ISSN | json }}
+{%- endif %}
+{%- if item.publisher %}
+publisher: {{ item.publisher | json }}
+{%- endif %}
+{%- if item.place %}
+place: {{ item.place | json }}
+{%- endif %}
+{%- if item.series %}
+series: {{ item.series | json }}
+{%- endif %}
+{%- if item.edition %}
+edition: {{ item.edition | json }}
+{%- endif %}
+{%- if item.abstractNote %}
+abstract: {{ item.abstractNote | json }}
+{%- endif %}
+{%- if item.tags.length > 0 %}
+tags: [{% for t in item.tags %}"{{ t.tag }}"{% unless forloop.last %}, {% endunless %}{% endfor %}]
+{%- endif %}
+dateAdded: {{ item.dateAdded | json }}
 ---
 {%- capture quote_string %}{{ newline }}> {% endcapture -%}
 {%- capture quote_string_2 %}{{ newline }}> >{% endcapture -%}

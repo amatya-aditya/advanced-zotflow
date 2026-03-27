@@ -130,6 +130,26 @@ export class GeneralSection {
                 });
         });
 
+        const baseViewGroup = new SettingGroup(containerEl);
+        baseViewGroup.setHeading("Base Views");
+
+        baseViewGroup.addSetting((setting) => {
+            setting
+                .setName("Base View Folder")
+                .setDesc(
+                    "Folder where generated collection Base views are stored (relative to vault root).",
+                )
+                .addText((text) => {
+                    text.setPlaceholder("e.g. ZotFlow/Bases")
+                        .setValue(this.plugin.settings.baseViewFolder)
+                        .onChange(async (value) => {
+                            this.plugin.settings.baseViewFolder = value;
+                            await this.plugin.saveSettings();
+                        });
+                    text.inputEl.size = 40;
+                });
+        });
+
         const zoteroReaderSettingGroup = new SettingGroup(containerEl);
         zoteroReaderSettingGroup.setHeading("Zotero Reader");
 

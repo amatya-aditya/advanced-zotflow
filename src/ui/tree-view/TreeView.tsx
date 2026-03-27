@@ -22,13 +22,14 @@ import type {
     CollectionSortOrder,
     ItemSortOrder,
 } from "settings/types";
-import type { TFile } from "obsidian";
+import type { TFile, TAbstractFile } from "obsidian";
+import { normalizePath } from "obsidian";
 
 /* ================================================================ */
 /*  Types                                                          */
 /* ================================================================ */
 
-type ViewMode = "library" | "bookmarks" | "recent" | "notes";
+type ViewMode = "library" | "bookmarks" | "recent" | "notes" | "bases";
 
 /** Tree node representing a library, collection, item, or spacer in the tree view. */
 export type ViewNode = {
@@ -476,6 +477,7 @@ export const ZotFlowTree = () => {
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     const [noteFiles, setNoteFiles] = useState<TFile[]>([]);
+    const [baseFiles, setBaseFiles] = useState<TFile[]>([]);
 
     // Sort state — initialised from persisted settings
     const [collectionSort, setCollectionSort] = useState<CollectionSortOrder>(
@@ -504,6 +506,52 @@ export const ZotFlowTree = () => {
         if (viewMode === "notes") {
             setNoteFiles(services.indexService.getAllIndexedFiles());
         }
+    }, [viewMode]);
+
+    // Load base files when switching to bases view
+    useEffect(() => {
+        if (viewMode !== "bases") return;
+
+        const loadBases = () => {
+            const folder = normalizePath(
+                services.settings.baseViewFolder || "ZotFlow/Bases",
+            );
+            const abstractFolder =
+                services.app.vault.getFolderByPath(folder);
+            if (!abstractFolder) {
+                setBaseFiles([]);
+                return;
+            }
+            const files: TFile[] = [];
+            const collectFiles = (f: TAbstractFile) => {
+                if ("extension" in f && (f as TFile).extension === "base") {
+                    files.push(f as TFile);
+                }
+                if ("children" in f) {
+                    (f as any).children.forEach(collectFiles);
+                }
+            };
+            collectFiles(abstractFolder);
+            files.sort((a, b) =>
+                a.basename.localeCompare(b.basename, undefined, {
+                    sensitivity: "base",
+                    numeric: true,
+                }),
+            );
+            setBaseFiles(files);
+        };
+
+        loadBases();
+
+        // Re-scan when vault changes
+        const ref = services.app.vault.on("create", loadBases);
+        const ref2 = services.app.vault.on("delete", loadBases);
+        const ref3 = services.app.vault.on("rename", loadBases);
+        return () => {
+            services.app.vault.offref(ref);
+            services.app.vault.offref(ref2);
+            services.app.vault.offref(ref3);
+        };
     }, [viewMode]);
 
     // Auto-focus search input when opened
@@ -875,6 +923,79 @@ export const ZotFlowTree = () => {
             );
         }
 
+        if (viewMode === "bases") {
+            const lower = term.toLowerCase();
+            const filtered = term
+                ? baseFiles.filter((f) =>
+                      f.basename.toLowerCase().includes(lower),
+                  )
+                : baseFiles;
+
+            const handleBaseContextMenu = (
+                e: React.MouseEvent,
+                file: TFile,
+            ) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const menu = new Menu();
+
+                menu.addItem((item) => {
+                    item.setTitle("Open in new tab")
+                        .setIcon("external-link")
+                        .onClick(() => {
+                            services.app.workspace
+                                .getLeaf("tab")
+                                .openFile(file);
+                        });
+                });
+
+                menu.addItem((item) => {
+                    item.setTitle("Delete base")
+                        .setIcon("trash")
+                        .onClick(async () => {
+                            await services.app.vault.trash(file, true);
+                        });
+                });
+
+                menu.showAtMouseEvent(e.nativeEvent);
+            };
+
+            return (
+                <div className="zotflow-sidebar-list">
+                    {filtered.length === 0 && (
+                        <div className="zotflow-sidebar-empty">
+                            {baseFiles.length === 0
+                                ? "No base views yet. Right-click a collection to create one."
+                                : "No matching bases."}
+                        </div>
+                    )}
+                    {filtered.map((f) => (
+                        <div
+                            key={f.path}
+                            className="zotflow-sidebar-item"
+                            onClick={() => {
+                                services.app.workspace
+                                    .getLeaf(false)
+                                    .openFile(f);
+                            }}
+                            onContextMenu={(e) =>
+                                handleBaseContextMenu(e, f)
+                            }
+                        >
+                            <ObsidianIcon
+                                icon="table"
+                                className="zotflow-file-icon"
+                            />
+                            <span className="zotflow-sidebar-item-name">
+                                {f.basename}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
         return null;
     };
 
@@ -906,6 +1027,12 @@ export const ZotFlowTree = () => {
                         label="Source Notes"
                         active={viewMode === "notes"}
                         onClick={() => setViewMode("notes")}
+                    />
+                    <ToolbarButton
+                        icon="table"
+                        label="Base Views"
+                        active={viewMode === "bases"}
+                        onClick={() => setViewMode("bases")}
                     />
                 </div>
                 <div className="zotflow-toolbar-separator" />

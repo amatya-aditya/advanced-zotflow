@@ -80,6 +80,7 @@ export interface ZotFlowSettings {
     recentItems: RecentItem[];
     maxRecentItems: number;
     linkedAttachmentBaseDir: string;
+    baseViewFolder: string;
 }
 
 /** Persisted reader view state for a single attachment (local or zotero). */
@@ -130,6 +131,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     recentItems: [],
     maxRecentItems: 10,
     linkedAttachmentBaseDir: "",
+    baseViewFolder: "ZotFlow/Bases",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

@@ -34,6 +34,34 @@ import type { LibraryRow } from "./services/key";
 import type { DbHelperService as DbHelperServiceType } from "./services/db-helper";
 import type { ItemTemplateContext } from "types/template-context";
 
+/** Lightweight item metadata for Base view generation (no children/annotations). */
+export interface BaseViewItemMetadata {
+    key: string;
+    libraryID: number;
+    citationKey: string;
+    itemType: string;
+    title: string;
+    creators: string[];
+    date: string | null;
+    dateAdded: string;
+    dateModified: string;
+    publicationTitle?: string;
+    publisher?: string;
+    place?: string;
+    volume?: string;
+    issue?: string;
+    pages?: string;
+    series?: string;
+    seriesNumber?: string;
+    edition?: string;
+    url?: string;
+    DOI?: string;
+    ISBN?: string;
+    ISSN?: string;
+    abstractNote?: string;
+    tags: string[];
+}
+
 /**
  * Worker API definition
  * This interface defines the methods exposed by the worker
@@ -97,6 +125,11 @@ export interface WorkerAPI {
         key: string,
         force: boolean,
     ): Promise<void>;
+
+    getCollectionItemsMetadata(
+        libraryID: number,
+        collectionKey: string | null,
+    ): Promise<BaseViewItemMetadata[]>;
 }
 
 // Service instances (Lazy initialized)
@@ -525,6 +558,61 @@ const exposedApi: WorkerAPI = {
             );
         }
         await _libraryNote!.extractAnnotationImages(item, force);
+    },
+
+    getCollectionItemsMetadata: async (
+        libraryID: number,
+        collectionKey: string | null,
+    ): Promise<BaseViewItemMetadata[]> => {
+        assertInitialized();
+
+        const items = collectionKey
+            ? await _dbHelper!.getCollectionItems(libraryID, collectionKey)
+            : await _dbHelper!.getLibraryItems(libraryID);
+
+        return items.map((item) => {
+            const data = (item.raw?.data || {}) as any;
+            const meta = item.raw?.meta as any;
+
+            // Build creators list
+            let creators: string[] = [];
+            if (meta?.creatorsSummary) {
+                creators = [meta.creatorsSummary];
+            } else if (data.creators) {
+                creators = data.creators.map(
+                    (c: any) =>
+                        c.name ||
+                        `${c.firstName || ""} ${c.lastName || ""}`.trim(),
+                );
+            }
+
+            return {
+                key: item.key,
+                libraryID: item.libraryID,
+                citationKey: item.citationKey || "",
+                itemType: item.itemType,
+                title: item.title || "",
+                creators,
+                date: data.date || null,
+                dateAdded: item.dateAdded,
+                dateModified: item.dateModified,
+                publicationTitle: data.publicationTitle,
+                publisher: data.publisher,
+                place: data.place,
+                volume: data.volume,
+                issue: data.issue,
+                pages: data.pages,
+                series: data.series,
+                seriesNumber: data.seriesNumber,
+                edition: data.edition,
+                url: data.url,
+                DOI: data.DOI,
+                ISBN: data.ISBN,
+                ISSN: data.ISSN,
+                abstractNote: data.abstractNote,
+                tags: (data.tags || []).map((t: any) => t.tag),
+            };
+        });
     },
 
     updateSettings: (settings: ZotFlowSettings) => {

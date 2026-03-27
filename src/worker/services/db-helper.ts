@@ -333,6 +333,41 @@ export class DbHelperService {
     }
 
     /**
+     * Get all top-level items belonging to a specific collection.
+     * Uses the multi-entry `*collections` index for efficient lookup.
+     */
+    async getCollectionItems(
+        libraryID: number,
+        collectionKey: string,
+    ): Promise<AnyIDBZoteroItem[]> {
+        return await db.items
+            .where("collections")
+            .equals(collectionKey)
+            .filter(
+                (item: AnyIDBZoteroItem) =>
+                    item.libraryID === libraryID &&
+                    item.trashed === 0 &&
+                    !item.parentItem &&
+                    !["note", "annotation"].includes(item.itemType),
+            )
+            .toArray();
+    }
+
+    /**
+     * Get all top-level items belonging to a library (including unfiled).
+     */
+    async getLibraryItems(libraryID: number): Promise<AnyIDBZoteroItem[]> {
+        const validTypes = Zotero_Item_Types.filter(
+            (t) => !["note", "annotation"].includes(t),
+        );
+        return await db.items
+            .where(["libraryID", "itemType", "trashed"])
+            .anyOf(getCombinations([[libraryID], validTypes, [0]]))
+            .filter((item: AnyIDBZoteroItem) => !item.parentItem)
+            .toArray();
+    }
+
+    /**
      * Get attachments for a parent item.
      */
     async getAttachments(
