@@ -73,6 +73,29 @@ export class CitationSection {
 
         citationGroup.addSetting((setting) => {
             setting
+                .setName("Footnote Reference Template")
+                .setDesc(
+                    "LiquidJS template for the inline footnote reference (e.g. [^item.citationKey]). " +
+                        "Annotation data is available here for page-specific citations. " +
+                        "Leave empty for default [^item.citationKey].",
+                )
+                .addTextArea((ta) => {
+                    ta.setPlaceholder("e.g. [^{{item.citationKey}}]")
+                        .setValue(
+                            this.plugin.settings.citationFootnoteRefTemplate,
+                        )
+                        .onChange(async (value) => {
+                            this.plugin.settings.citationFootnoteRefTemplate =
+                                value;
+                            await this.plugin.saveSettings();
+                        });
+                    ta.inputEl.rows = 5;
+                    ta.inputEl.cols = 60;
+                });
+        });
+
+        citationGroup.addSetting((setting) => {
+            setting
                 .setName("Footnote Definition Template")
                 .setDesc(
                     "LiquidJS template for footnote definition text appended at the end of the note. " +

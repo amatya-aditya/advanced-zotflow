@@ -150,14 +150,27 @@ export class CitationService {
         return { citation: `[[@${citekey}]]`, citekey };
     }
 
-    /** `[^citekey]` reference + footnote definition. */
+    /** `[^citekey]` reference (annotation-aware) + footnote definition (item-only). */
     private async footnote(
         input: CitationTemplateInput,
         notePath: string,
     ): Promise<CitationResult> {
         const citekey = input.item.citationKey || input.item.key;
-        const citation = `[^${citekey}]`;
-        const footnoteDef = await this.footnoteDef(input, notePath);
+
+        // Inline reference — rendered with annotation context (e.g. page number)
+        const rendered =
+            await workerBridge.libraryTemplate.renderCitationTemplate(
+                input,
+                notePath,
+                "footnote-ref",
+            );
+        const citation = rendered || `[^${citekey}]`;
+
+        // Definition — item-only, no annotation (one def per item)
+        const footnoteDef = await this.footnoteDef(
+            { item: input.item },
+            notePath,
+        );
         return { citation, citekey, footnoteDef };
     }
 

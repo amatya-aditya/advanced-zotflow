@@ -101,10 +101,13 @@ const FALLBACK_WIKILINK_TEMPLATE = `{%- if annotation -%}
 const FALLBACK_PANDOC_TEMPLATE =
     "[@{{ item.citationKey | default: item.key }}{% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}]";
 
+const FALLBACK_FOOTNOTE_REF_TEMPLATE =
+    "[^{{ item.citationKey | default: item.key }}]{% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}";
+
 const FALLBACK_FOOTNOTE_TEMPLATE = `{%- if item.creators.length > 1 -%}
 {{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}
 {{ item.creators[0].name }} {%- else -%}
-Unknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}){% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}.`;
+Unknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}).`;
 
 /** LiquidJS template engine for rendering library (Zotero) item source notes. */
 export class LibraryTemplateService {
@@ -255,7 +258,7 @@ export class LibraryTemplateService {
     async renderCitationTemplate(
         input: CitationTemplateInput,
         notePath: string,
-        format: "pandoc" | "wikilink" | "footnote",
+        format: "pandoc" | "wikilink" | "footnote" | "footnote-ref",
     ): Promise<string> {
         let template: string;
         if (format === "pandoc") {
@@ -264,6 +267,10 @@ export class LibraryTemplateService {
                 FALLBACK_PANDOC_TEMPLATE;
         } else if (format === "wikilink") {
             template = this.settings.citationWikilinkTemplate.trim();
+        } else if (format === "footnote-ref") {
+            template =
+                this.settings.citationFootnoteRefTemplate.trim() ||
+                FALLBACK_FOOTNOTE_REF_TEMPLATE;
         } else {
             template =
                 this.settings.citationFootnoteTemplate.trim() ||
@@ -317,7 +324,7 @@ export class LibraryTemplateService {
 
     /** Return the current citation template from settings. */
     getDefaultCitationTemplate(
-        format: "pandoc" | "wikilink" | "footnote",
+        format: "pandoc" | "wikilink" | "footnote" | "footnote-ref",
     ): string {
         if (format === "pandoc") {
             return (
@@ -328,6 +335,12 @@ export class LibraryTemplateService {
             return (
                 this.settings.citationWikilinkTemplate ||
                 FALLBACK_WIKILINK_TEMPLATE
+            );
+        }
+        if (format === "footnote-ref") {
+            return (
+                this.settings.citationFootnoteRefTemplate ||
+                FALLBACK_FOOTNOTE_REF_TEMPLATE
             );
         }
         return (

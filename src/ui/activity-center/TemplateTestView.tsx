@@ -20,6 +20,7 @@ type TemplateContext =
     | "local-path"
     | "citation-pandoc"
     | "citation-wikilink"
+    | "citation-footnote-ref"
     | "citation-footnote";
 type OutputMode = "preview" | "source";
 
@@ -30,7 +31,8 @@ const CONTEXT_LABELS: Record<TemplateContext, string> = {
     "local-path": "Local Source Note Path",
     "citation-pandoc": "Citation Pandoc",
     "citation-wikilink": "Citation Wikilink",
-    "citation-footnote": "Citation Footnote",
+    "citation-footnote-ref": "Citation Footnote Reference",
+    "citation-footnote": "Citation Footnote Definition",
 };
 
 function needsLibraryItem(ctx: TemplateContext): boolean {
@@ -39,6 +41,7 @@ function needsLibraryItem(ctx: TemplateContext): boolean {
         ctx === "library-path" ||
         ctx === "citation-pandoc" ||
         ctx === "citation-wikilink" ||
+        ctx === "citation-footnote-ref" ||
         ctx === "citation-footnote"
     );
 }
@@ -47,6 +50,7 @@ function isCitationContext(ctx: TemplateContext): boolean {
     return (
         ctx === "citation-pandoc" ||
         ctx === "citation-wikilink" ||
+        ctx === "citation-footnote-ref" ||
         ctx === "citation-footnote"
     );
 }
@@ -222,6 +226,12 @@ export const TemplateTestView: React.FC = () => {
                         defaultTpl =
                             workerBridge.libraryTemplate.getDefaultCitationTemplate(
                                 "wikilink",
+                            );
+                        break;
+                    case "citation-footnote-ref":
+                        defaultTpl =
+                            workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                                "footnote-ref",
                             );
                         break;
                     case "citation-footnote":

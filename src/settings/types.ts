@@ -63,6 +63,7 @@ export interface ZotFlowSettings {
     defaultCitationFormat: CitationFormat;
     citationTrigger: string;
     citationPandocTemplate: string;
+    citationFootnoteRefTemplate: string;
     citationFootnoteTemplate: string;
     citationWikilinkTemplate: string;
 }
@@ -112,12 +113,14 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     treeCollectionSort: "name-asc",
     treeItemSort: "title-asc",
     linkedAttachmentBaseDir: "",
-    defaultCitationFormat: "pandoc",
+    defaultCitationFormat: "footnote",
     citationTrigger: "@@",
     citationPandocTemplate:
         "[@{{ item.citationKey | default: item.key }}{% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}]",
+    citationFootnoteRefTemplate:
+        "[^{{ item.citationKey | default: item.key }}]{% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}",
     citationFootnoteTemplate:
-        "{%- if item.creators.length > 1 -%}\n{{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}\n{{ item.creators[0].name }} {%- else -%}\nUnknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}){% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}.",
+        "{%- if item.creators.length > 1 -%}\n{{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}\n{{ item.creators[0].name }} {%- else -%}\nUnknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}).",
     citationWikilinkTemplate:
         '{%- if annotation -%}\n[[{{ notePath }}#^{{ annotation.key }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }}), p. {{ annotation.pageLabel }}]] {%- else -%}\n[[{{ notePath }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }})]] {%- endif -%}',
 };
