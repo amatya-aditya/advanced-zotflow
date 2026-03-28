@@ -69,6 +69,17 @@ export class DbHelperService {
     }
 
     /**
+     * Look up any item by library + key.
+     * Returns `undefined` if the item doesn't exist.
+     */
+    async getItem(
+        libraryID: number,
+        itemKey: string,
+    ): Promise<AnyIDBZoteroItem | undefined> {
+        return await db.items.get([libraryID, itemKey]);
+    }
+
+    /**
      * Look up an attachment item by library + key.
      * Returns `undefined` if the item doesn't exist or isn't an attachment.
      */

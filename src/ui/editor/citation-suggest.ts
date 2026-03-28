@@ -15,6 +15,7 @@ import {
     ZoteroItemSuggest,
     type SuggestionItem,
 } from "ui/modals/zotero-item-suggest";
+import { insertCitationResult } from "ui/editor/citation-helper";
 
 const DEFAULT_TRIGGER = "@@";
 
@@ -181,43 +182,11 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
             .updateLastAccessed(item.libraryID, item.key)
             .catch(() => {});
 
-        if (format === "citekey") {
-            const citekey = item.citationKey || item.key;
-            this.replaceWithCitation(`@${citekey}`);
-            this.manualTriggerStart = null;
-            this.close();
-            return;
-        }
-
-        this.insertWithTemplate(item, format);
-    }
-
-    /** Replace the `@@query` with the final citation text. */
-    private replaceWithCitation(text: string): void {
         if (!this.context) return;
 
         const { start, end, editor } = this.context;
 
-        // start.ch points after the trigger, so go back to include it
-        const replaceStart: EditorPosition = {
-            line: start.line,
-            ch: start.ch - this.triggerPrefix.length,
-        };
-
-        editor.replaceRange(text, replaceStart, end);
-    }
-
-    /** Ensure the Zotero note exists and insert a templated citation (pandoc, wikilink, or footnote). */
-    private async insertWithTemplate(
-        item: AnyIDBZoteroItem,
-        format: "pandoc" | "wikilink" | "footnote",
-    ): Promise<void> {
-        if (!this.context) return;
-
-        const { start, end, editor } = this.context;
-        const citekey = item.citationKey || item.key;
-
-        // Compute replacement range before closing
+        // Compute replacement range before closing (start.ch points after the trigger)
         const replaceStart: EditorPosition = {
             line: start.line,
             ch: start.ch - this.triggerPrefix.length,
@@ -227,34 +196,26 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
         this.manualTriggerStart = null;
         this.close();
 
-        const [result] = await services.citationService.generate(format, [
-            { item },
-        ]);
-        if (!result) return;
+        // Clear the trigger text immediately, then async-resolve the citation
+        editor.replaceRange("", replaceStart, end);
 
-        if (format === "pandoc" || format === "wikilink") {
-            editor.replaceRange(result.citation, replaceStart, end);
-        } else {
-            // Footnote: insert the reference
-            editor.replaceRange(result.citation, replaceStart, end);
-
-            // Append definition if available and not a duplicate
-            if (result.footnoteDef) {
-                const defPrefix = `[^${citekey}]:`;
-                const editorContent = editor.getValue();
-                if (
-                    !editorContent.includes(`\n${defPrefix}`) &&
-                    !editorContent.startsWith(defPrefix)
-                ) {
-                    const lastLine = editor.lastLine();
-                    const lastLineText = editor.getLine(lastLine);
-                    const prefix = lastLineText.length > 0 ? "\n" : "";
-                    editor.replaceRange(`${prefix}${result.footnoteDef}\n`, {
-                        line: lastLine,
-                        ch: lastLineText.length,
-                    });
+        services.citationService
+            .resolve({ libraryID: item.libraryID, key: item.key }, format)
+            .then((result) => {
+                if (result) {
+                    insertCitationResult(editor, replaceStart, result);
                 }
-            }
-        }
+            })
+            .catch((error) => {
+                services.logService.error(
+                    "Failed to resolve citation",
+                    "CitationSuggest",
+                    error,
+                );
+                services.notificationService.notify(
+                    "error",
+                    "Failed to insert citation.",
+                );
+            });
     }
 }

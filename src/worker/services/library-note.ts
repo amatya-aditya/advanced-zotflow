@@ -198,7 +198,8 @@ export class LibraryNoteService {
 
     /**
      * Core logic: Ensure note is ready
-     * Responsible for routing logic: Index lookup -> Default path fallback -> Existence check -> Create/Update
+     * Responsible for routing logic:
+     * Index lookup -> Default path fallback -> Existence check -> Create/Update
      */
     async ensureNote(
         libraryID: number,
@@ -276,35 +277,103 @@ export class LibraryNoteService {
     }
 
     /**
+     * Fast path: guarantee a note file exists and return its path.
+     * If the note doesn't exist yet, creates a minimal stub (mandatory frontmatter only)
+     * and schedules a debounced background update to render the full content.
+     * Use this when only the path is needed (e.g. citation generation).
+     */
+    async ensureNotePath(libraryID: number, key: string): Promise<string> {
+        // Cache hit — file already indexed
+        const cached = await this.parentHost.getFileByKey(key);
+        if (cached) return cached;
+
+        // Fetch item from DB
+        const item = await db.items.get({ libraryID, key });
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "LibraryNoteService",
+                `Item not found: ${key}`,
+            );
+        }
+
+        // Resolve target path
+        const targetPath =
+            await this.notePathService.resolveLibraryNotePath(item);
+
+        // Check if file already exists
+        const fileCheck = await this.parentHost.checkFile(targetPath);
+        if (fileCheck.exists && fileCheck.frontmatter?.["zotero-key"] === key) {
+            return targetPath;
+        }
+
+        // Resolve unique path (handle collision with unrelated files)
+        const notePath = fileCheck.exists
+            ? await this.resolveUniquePath(targetPath)
+            : targetPath;
+
+        // Write stub with mandatory frontmatter only
+        const stub = [
+            "---",
+            "zotflow-locked: true",
+            `zotero-key: \"${key}\"`,
+            "item-version: 0",
+            "---",
+            "",
+        ].join("\n");
+        await this.parentHost.writeTextFile(notePath, stub);
+        await this.parentHost.indexFile(notePath);
+
+        // Schedule background full render (debounced)
+        this.triggerUpdate(libraryID, key, {}, true).catch((e) =>
+            this.parentHost.log(
+                "error",
+                `Background note render failed for ${key}`,
+                "LibraryNoteService",
+                e,
+            ),
+        );
+
+        return notePath;
+    }
+
+    /**
      * ============================================================
      * Execution Helpers (The Workers)
      * ============================================================
      */
 
     /**
+     * Find a unique file path by appending `(N)` suffixes when the target is already taken.
+     */
+    private async resolveUniquePath(path: string): Promise<string> {
+        let fileCheck = await this.parentHost.checkFile(path);
+        if (!fileCheck.exists) return path;
+
+        let notePath = path;
+        let counter = 1;
+        const maxRetries = 100;
+        while (fileCheck.exists && counter < maxRetries) {
+            notePath = path.replace(/\.md$/, ` (${counter}).md`);
+            fileCheck = await this.parentHost.checkFile(notePath);
+            counter++;
+        }
+        if (counter >= maxRetries) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.FILE_WRITE_FAILED,
+                "LibraryNoteService",
+                "Could not find a unique filename",
+            );
+        }
+        return notePath;
+    }
+
+    /**
      * Perform file creation
      */
     private async performCreate(item: AnyIDBZoteroItem, path: string) {
         // If file exists but is not our note (collision), create a file with different name
-        let fileCheck = await this.parentHost.checkFile(path);
-        let notePath = path;
-
-        if (fileCheck.exists) {
-            let counter = 1;
-            const maxRetries = 100;
-            while (fileCheck.exists && counter < maxRetries) {
-                notePath = path.replace(/\.md$/, ` (${counter}).md`);
-                fileCheck = await this.parentHost.checkFile(notePath);
-                counter++;
-            }
-            if (counter >= maxRetries) {
-                throw new ZotFlowError(
-                    ZotFlowErrorCode.FILE_WRITE_FAILED,
-                    "LibraryNoteService",
-                    "Could not find a unique filename",
-                );
-            }
-        }
+        const notePath = await this.resolveUniquePath(path);
 
         // Create empty file first
         await this.parentHost.writeTextFile(notePath, "");

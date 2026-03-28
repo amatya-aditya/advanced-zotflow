@@ -6,7 +6,7 @@ import type { CitationFormat } from "settings/types";
 import type { AnnotationJSON } from "types/zotero-reader";
 
 /** A Zotero item bundled with its optional annotation for citation. */
-export interface CitationInput {
+export interface CitationTemplateInput {
     item: AnyIDBZoteroItem;
     annotation?: AnnotationJSON;
 }
@@ -15,72 +15,88 @@ export interface CitationInput {
 export interface CitationResult {
     /** Inline citation text (e.g., `[@key]`, `[^key]`, `[[note]]`). */
     citation: string;
+    /** Citation key (e.g., `smith2024` or item key). */
+    citekey: string;
     /** Footnote definition line (only for footnote format). */
     footnoteDef?: string;
+}
+
+/** Minimal reference to a Zotero item for citation resolution. */
+export interface CitationRef {
+    libraryID: number;
+    key: string;
+    annotation?: AnnotationJSON;
 }
 
 /** Generates citation strings for Zotero items. */
 export class CitationService {
     /**
-     * Generate citation strings for one or more items.
-     * @param format   Citation format to use.
-     * @param inputs   Items (with optional annotations) to cite.
+     * Resolve a citation from a minimal item reference.
+     * Fetches the item from DB, ensures a source note exists, and generates
+     * the citation string. This is the single entry point for all citation
+     * generation — used by CitationSuggest, drop handler, and future copy handler.
      */
-    async generate(
+    async resolve(
+        ref: CitationRef,
         format: CitationFormat,
-        inputs: CitationInput[],
-    ): Promise<CitationResult[]> {
-        const results: CitationResult[] = await Promise.all(
-            inputs.map(async (input) => {
-                let notePath: string | undefined;
-
-                notePath = services.indexService.getFileByKey(
-                    input.item.key,
-                )?.path;
-
-                if (!notePath) {
-                    notePath = await workerBridge.libraryNote.ensureNote(
-                        input.item.libraryID,
-                        input.item.key,
-                        {},
-                    );
-                }
-
-                if (!notePath) {
-                    services.logService.error(
-                        `Unable to resolve or create source note for item ${input.item.libraryID}/${input.item.key}`,
-                        "CitationService",
-                    );
-                    return { citation: "" };
-                }
-
-                try {
-                    switch (format) {
-                        case "pandoc":
-                            return await this.pandoc(input, notePath);
-                        case "wikilink":
-                            return await this.wikilink(input, notePath);
-                        case "footnote":
-                            return await this.footnote(input, notePath);
-                        case "citekey":
-                            return this.citekey(input);
-                    }
-                } catch (error) {
-                    services.logService.error(
-                        `Error generating citation for item ${input.item.libraryID}/${input.item.key}: ${error}`,
-                        "CitationService",
-                        error,
-                    );
-                    return { citation: "" };
-                }
-            }),
+    ): Promise<CitationResult | null> {
+        const item = await workerBridge.dbHelper.getItem(
+            ref.libraryID,
+            ref.key,
         );
-        return results;
+        if (!item) {
+            services.logService.error(
+                `Item not found: ${ref.libraryID}/${ref.key}`,
+                "CitationService",
+            );
+            return null;
+        }
+
+        const input: CitationTemplateInput = {
+            item,
+            annotation: ref.annotation,
+        };
+
+        // Resolve note path (cache hit → instant, miss → quick-create stub)
+        const notePath =
+            services.indexService.getFileByKey(item.key)?.path ??
+            (await workerBridge.libraryNote.ensureNotePath(
+                item.libraryID,
+                item.key,
+            ));
+
+        if (!notePath) {
+            services.logService.error(
+                `Unable to resolve or create source note for item ${item.libraryID}/${item.key}`,
+                "CitationService",
+            );
+            return null;
+        }
+
+        try {
+            switch (format) {
+                case "pandoc":
+                    return await this.pandoc(input, notePath);
+                case "wikilink":
+                    return await this.wikilink(input, notePath);
+                case "footnote":
+                    return await this.footnote(input, notePath);
+                case "citekey":
+                    return this.citekey(input);
+            }
+        } catch (error) {
+            services.logService.error(
+                `Error generating citation for item ${item.libraryID}/${item.key}: ${error}`,
+                "CitationService",
+                error,
+            );
+            return null;
+        }
     }
 
     /** `[@citekey]` — template-rendered or hardcoded fallback. */
     private async pandoc(
-        input: CitationInput,
+        input: CitationTemplateInput,
         notePath: string,
     ): Promise<CitationResult> {
         const citekey = input.item.citationKey || input.item.key;
@@ -91,22 +107,22 @@ export class CitationService {
                 "pandoc",
             );
         if (rendered) {
-            return { citation: rendered };
+            return { citation: rendered, citekey };
         }
 
         // Fallback: simple `[@citekey]`
-        return { citation: `[@${citekey}]` };
+        return { citation: `[@${citekey}]`, citekey };
     }
 
     /** `@citekey` — raw citation key only. */
-    private citekey(input: CitationInput): CitationResult {
+    private citekey(input: CitationTemplateInput): CitationResult {
         const citekey = input.item.citationKey || input.item.key;
-        return { citation: `@${citekey}` };
+        return { citation: `@${citekey}`, citekey };
     }
 
     /** Wikilink: template-rendered or `generateMarkdownLink` fallback. */
     private async wikilink(
-        input: CitationInput,
+        input: CitationTemplateInput,
         notePath: string,
     ): Promise<CitationResult> {
         const citekey = input.item.citationKey || input.item.key;
@@ -118,7 +134,7 @@ export class CitationService {
                 "wikilink",
             );
         if (rendered) {
-            return { citation: rendered };
+            return { citation: rendered, citekey };
         }
         // Fallback: generateMarkdownLink
         const file = services.app.vault.getAbstractFileByPath(notePath);
@@ -129,25 +145,25 @@ export class CitationService {
                 "",
                 file.name.split(".").shift(),
             );
-            return { citation: link };
+            return { citation: link, citekey };
         }
-        return { citation: `[[@${citekey}]]` };
+        return { citation: `[[@${citekey}]]`, citekey };
     }
 
     /** `[^citekey]` reference + footnote definition. */
     private async footnote(
-        input: CitationInput,
+        input: CitationTemplateInput,
         notePath: string,
     ): Promise<CitationResult> {
         const citekey = input.item.citationKey || input.item.key;
         const citation = `[^${citekey}]`;
         const footnoteDef = await this.footnoteDef(input, notePath);
-        return { citation, footnoteDef };
+        return { citation, citekey, footnoteDef };
     }
 
     /** Render the footnote definition text via the template service. */
     private async footnoteDef(
-        input: CitationInput,
+        input: CitationTemplateInput,
         notePath: string,
     ): Promise<string | undefined> {
         const rendered =

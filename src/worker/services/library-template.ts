@@ -19,7 +19,7 @@ import { getAnnotationJson } from "db/annotation";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { DbHelperService } from "./db-helper";
 import type { NotePathService } from "./note-path";
-import type { CitationInput } from "services/citation-service";
+import type { CitationTemplateInput } from "services/citation-service";
 
 const DEFAULT_ITEM_TEMPLATE = `---
 citationKey: {{ item.citationKey | json }}
@@ -253,7 +253,7 @@ export class LibraryTemplateService {
 
     /** Render a citation template for an item, with notePath in the context. */
     async renderCitationTemplate(
-        input: CitationInput,
+        input: CitationTemplateInput,
         notePath: string,
         format: "pandoc" | "wikilink" | "footnote",
     ): Promise<string> {
@@ -293,7 +293,7 @@ export class LibraryTemplateService {
 
     /** Preview a citation template for a library item (no file creation). */
     async previewCitationTemplate(
-        input: CitationInput,
+        input: CitationTemplateInput,
         template: string,
     ): Promise<string> {
         const item = await db.items.get([input.item.libraryID, input.item.key]);

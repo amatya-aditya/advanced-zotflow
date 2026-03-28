@@ -28,6 +28,7 @@ import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./ui/reader/view";
 import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
 import { services } from "./services/services";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
+import { handleEditorDrop } from "ui/editor/citation-helper";
 
 import { openAttachment } from "utils/viewer";
 import { ActivityCenterModal } from "ui/activity-center/modal";
@@ -106,6 +107,11 @@ export default class ZotFlow extends Plugin {
         // Register lock extension
         this.registerEditorExtension([ZotFlowLockExtension()]);
         // this.registerEditorExtension([ZotFlowCommentExtension()]);
+
+        // Register drop-to-cite handler
+        this.registerEvent(
+            this.app.workspace.on("editor-drop", handleEditorDrop),
+        );
 
         // Register citation suggest
         this.citationSuggest = new CitationSuggest();

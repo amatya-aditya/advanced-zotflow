@@ -7,7 +7,10 @@ import { services } from "services/services";
 import { workerBridge } from "bridge";
 
 import { openAttachment } from "utils/viewer";
-import { getNotePath } from "utils/utils";
+import {
+    ZOTFLOW_CITATION_MIME,
+    type ZotFlowCitationPayload,
+} from "ui/editor/citation-helper";
 
 /** Pixel indentation per tree depth level. */
 export const INDENT_SIZE = 20;
@@ -278,46 +281,26 @@ export const NodeItem = ({
     };
 
     const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
-        let link = "";
-        let dragText = "";
+        const isCitationDrag =
+            nodeType === "item" && node.data.itemType !== "attachment";
+        let plainText = node.data.name || "Untitled";
+
         if (node.data.itemType === "attachment") {
             const url = `obsidian://zotflow?type=open-attachment&libraryID=${node.data.libraryID}&key=${node.data.key}`;
-            link = `[${node.data.name}](${url})`;
-            dragText = node.data.name;
-        } else if (nodeType === "item" && node.data.itemType !== "attachment") {
-            // Try force update the source note
-            workerBridge.libraryNote
-                .triggerUpdate(node.data.libraryID, node.data.key)
-                .catch((e) =>
-                    services.logService.error(
-                        "Failed to trigger note update on drag",
-                        "TreeView",
-                        e,
-                    ),
-                );
-
-            const file = services.indexService.getFileByKey(node.data.key);
-            if (file) {
-                link = services.app.fileManager.generateMarkdownLink(
-                    file,
-                    "",
-                    "",
-                    file.name.split(".").shift(),
-                );
-                dragText = file.name;
-            } else {
-                // const path = getNotePath({
-                //     citationKey: node.data.citationKey,
-                //     title: node.data.name,
-                //     key: node.data.key,
-                //     sourceNoteFolder: services.settings.sourceNoteFolder,
-                //     libraryName: node.data.libraryName,
-                // });
-                // const filename = path.split("/").pop()!;
-                // const alias = filename.split(".").shift()!;
-                // link = `[[${path}|${alias}]]`;
-                // dragText = filename;
-            }
+            plainText = `[${node.data.name}](${url})`;
+        } else if (isCitationDrag) {
+            // Only set the structured citation payload — CitationService.resolve()
+            // (invoked by the drop handler) handles note creation, link generation,
+            // and all format logic.
+            const citationPayload: ZotFlowCitationPayload = {
+                type: "zotflow-citation",
+                libraryID: node.data.libraryID,
+                key: node.data.key,
+            };
+            e.dataTransfer.setData(
+                ZOTFLOW_CITATION_MIME,
+                JSON.stringify(citationPayload),
+            );
         }
 
         // Custom Drag Ghost using Obsidian classes
@@ -327,33 +310,26 @@ export const NodeItem = ({
         const self = document.createElement("div");
         self.addClass("drag-ghost-self");
 
-        let iconName = "";
-        if (nodeType === "library") iconName = "landmark";
-        else if (nodeType === "collection") iconName = "folder";
-        else if (node.data.itemType === "attachment") {
-            iconName = getAttachmentFileIcon(node.data.contentType);
-        } else {
-            iconName = getItemTypeIcon(node.data.itemType);
-        }
-
         setIcon(self, iconName || "file");
 
         const titleSpan = document.createElement("span");
-        titleSpan.textContent = dragText || "Untitled";
+        titleSpan.textContent = node.data.name || "Untitled";
 
         self.appendChild(titleSpan);
 
         const action = document.createElement("div");
         action.addClass("drag-ghost-action");
-        action.textContent = "Insert link here";
+        action.textContent = isCitationDrag
+            ? "Insert citation here"
+            : "Insert link here";
 
         ghost.appendChild(self);
         ghost.appendChild(action);
 
         document.body.appendChild(ghost);
 
-        // Set data for drag
-        e.dataTransfer.setData("text/plain", link);
+        // text/plain serves as fallback for non-ZotFlow drop targets
+        e.dataTransfer.setData("text/plain", plainText);
         e.dataTransfer.setDragImage(ghost, 0, 0);
         e.dataTransfer.effectAllowed = "copy";
 
