@@ -132,6 +132,8 @@ export class IframeReaderBridge {
 
             isAndroidApp: () => Platform.isAndroidApp,
 
+            isLocalReader: () => this.isLocal,
+
             handleEvent: (evt) => {
                 const ls = this.typedListeners.get(evt.type);
                 if (ls) ls.forEach((l) => l(evt));

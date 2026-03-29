@@ -70,6 +70,7 @@ export type ParentAPI = {
     getBlobUrlMap: () => Record<string, string>;
     handleEvent: (evt: ChildEvents) => void;
     isAndroidApp: () => boolean;
+    isLocalReader: () => boolean;
     getOrigin: () => string;
     getMathJaxConfig: () => any;
     getStyleSheets: () => StyleSheetList;
