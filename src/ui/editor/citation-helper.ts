@@ -18,8 +18,8 @@ export interface ZotFlowCitationPayload {
     type: "zotflow-citation";
     libraryID: number;
     key: string;
-    /** Stripped annotation — only template-relevant fields, no binary/position data. */
-    annotation?: AnnotationJSON;
+    /** Stripped annotations — only template-relevant fields, no binary/position data. */
+    annotations?: AnnotationJSON[];
 }
 
 /**
@@ -71,7 +71,7 @@ export function parseZotFlowCitationPayload(
                 type: obj.type,
                 libraryID: obj.libraryID,
                 key: obj.key,
-                annotation: obj.annotation,
+                annotations: obj.annotations,
             };
         }
     } catch {
@@ -84,9 +84,9 @@ export function parseZotFlowCitationPayload(
  * Determine the citation format from keyboard modifier keys.
  * Mirrors the CitationSuggest key mapping for consistency:
  * - Ctrl/Cmd + Shift → citekey
- * - Shift            → pandoc
+ * - Shift            → wikilink
  * - Ctrl/Cmd         → footnote
- * - Alt              → wikilink
+ * - Alt              → pandoc
  * - (none)           → settings default
  */
 export function resolveFormatFromModifiers(event: {
@@ -96,9 +96,9 @@ export function resolveFormatFromModifiers(event: {
     altKey: boolean;
 }): CitationFormat {
     if ((event.ctrlKey || event.metaKey) && event.shiftKey) return "citekey";
-    if (event.shiftKey) return "pandoc";
+    if (event.shiftKey) return "wikilink";
     if (event.ctrlKey || event.metaKey) return "footnote";
-    if (event.altKey) return "wikilink";
+    if (event.altKey) return "pandoc";
     return services.settings.defaultCitationFormat;
 }
 

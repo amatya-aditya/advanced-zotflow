@@ -6,8 +6,10 @@ import { ItemPickerModal } from "ui/modals/item-picker";
 import { FilePickerModal } from "ui/modals/file-picker";
 import { createEmbeddableMarkdownEditor } from "ui/editor/markdown-editor";
 import { ObsidianIcon } from "ui/ObsidianIcon";
+import { MultiSelectDropdown } from "ui/activity-center/MultiSelectDropdown";
 
 import type { EmbeddableMarkdownEditor } from "ui/editor/markdown-editor";
+import type { MultiSelectOption } from "ui/activity-center/MultiSelectDropdown";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { TFile } from "obsidian";
@@ -77,8 +79,9 @@ export const TemplateTestView: React.FC = () => {
     const [availableAnnotations, setAvailableAnnotations] = useState<
         AnnotationJSON[]
     >([]);
-    const [selectedAnnotationId, setSelectedAnnotationId] =
-        useState<string>("");
+    const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<
+        string[]
+    >([]);
     const [loadingAnnotations, setLoadingAnnotations] = useState(false);
 
     const [template, setTemplate] = useState("");
@@ -206,37 +209,37 @@ export const TemplateTestView: React.FC = () => {
                         break;
                     case "library-path":
                         defaultTpl =
-                            workerBridge.notePath.getDefaultPathTemplate(
+                            await workerBridge.notePath.getDefaultPathTemplate(
                                 "library",
                             );
                         break;
                     case "local-path":
                         defaultTpl =
-                            workerBridge.notePath.getDefaultPathTemplate(
+                            await workerBridge.notePath.getDefaultPathTemplate(
                                 "local",
                             );
                         break;
                     case "citation-pandoc":
                         defaultTpl =
-                            workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
                                 "pandoc",
                             );
                         break;
                     case "citation-wikilink":
                         defaultTpl =
-                            workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
                                 "wikilink",
                             );
                         break;
                     case "citation-footnote-ref":
                         defaultTpl =
-                            workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
                                 "footnote-ref",
                             );
                         break;
                     case "citation-footnote":
                         defaultTpl =
-                            workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
                                 "footnote",
                             );
                         break;
@@ -255,14 +258,14 @@ export const TemplateTestView: React.FC = () => {
         setSelectedItem(null);
         setSelectedFile(null);
         setAvailableAnnotations([]);
-        setSelectedAnnotationId("");
+        setSelectedAnnotationIds([]);
     }, [needsLibraryItem(context)]);
 
     // Fetch annotations when a library item is picked (for citation contexts)
     useEffect(() => {
         if (!selectedItem) {
             setAvailableAnnotations([]);
-            setSelectedAnnotationId("");
+            setSelectedAnnotationIds([]);
             return;
         }
         let cancelled = false;
@@ -278,7 +281,7 @@ export const TemplateTestView: React.FC = () => {
                     );
                 if (!cancelled) {
                     setAvailableAnnotations(annots);
-                    setSelectedAnnotationId("");
+                    setSelectedAnnotationIds([]);
                 }
             } catch {
                 if (!cancelled) {
@@ -343,16 +346,21 @@ export const TemplateTestView: React.FC = () => {
                         currentTemplate,
                     );
                 } else {
-                    const selectedAnnotation = selectedAnnotationId
-                        ? availableAnnotations.find(
-                              (a) => a.id === selectedAnnotationId,
-                          )
-                        : undefined;
+                    const selectedAnnotations =
+                        selectedAnnotationIds.length > 0
+                            ? availableAnnotations.filter((a) =>
+                                  selectedAnnotationIds.includes(a.id),
+                              )
+                            : undefined;
                     result =
                         await workerBridge.libraryTemplate.previewCitationTemplate(
                             {
                                 item: selectedItem,
-                                annotation: selectedAnnotation,
+                                annotations:
+                                    selectedAnnotations &&
+                                    selectedAnnotations.length > 0
+                                        ? selectedAnnotations
+                                        : undefined,
                             },
                             currentTemplate,
                         );
@@ -394,13 +402,20 @@ export const TemplateTestView: React.FC = () => {
         selectedItem,
         selectedFile,
         template,
-        selectedAnnotationId,
+        selectedAnnotationIds,
         availableAnnotations,
     ]);
 
     const selectionLabel = needsLibraryItem(context)
         ? (selectedItem?.title ?? "No item selected")
         : (selectedFile?.path ?? "No file selected");
+
+    const annotationOptions: MultiSelectOption[] = availableAnnotations.map(
+        (a) => ({
+            value: a.id,
+            label: `[${a.type}] ${annotationLabel(a)}`,
+        }),
+    );
 
     return (
         <div className="zotflow-template-test">
@@ -444,25 +459,17 @@ export const TemplateTestView: React.FC = () => {
                 {/* Annotation picker for citation contexts */}
                 {isCitationContext(context) && selectedItem && (
                     <div className="zotflow-template-test-annotation-row">
-                        <select
-                            className="dropdown"
-                            value={selectedAnnotationId}
-                            onChange={(e) =>
-                                setSelectedAnnotationId(e.target.value)
+                        <MultiSelectDropdown
+                            options={annotationOptions}
+                            selected={selectedAnnotationIds}
+                            onChange={setSelectedAnnotationIds}
+                            placeholder={
+                                loadingAnnotations
+                                    ? "Loading…"
+                                    : "Annotations (optional)"
                             }
                             disabled={loadingAnnotations}
-                        >
-                            <option value="">
-                                {loadingAnnotations
-                                    ? "Loading…"
-                                    : "Annotation (optional)"}
-                            </option>
-                            {availableAnnotations.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                    [{a.type}] {annotationLabel(a)}
-                                </option>
-                            ))}
-                        </select>
+                        />
                     </div>
                 )}
             </div>

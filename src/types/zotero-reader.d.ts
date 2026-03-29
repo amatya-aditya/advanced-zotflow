@@ -81,6 +81,10 @@ export type ParentAPI = {
         annotations: AnnotationJSON[],
         fromText?: boolean,
     ) => void;
+    copyAnnotationCitation: (
+        annotations: AnnotationJSON[],
+        format: string,
+    ) => void;
     createAnnotationEditor: (
         container: HTMLElement,
         options: Partial<MarkdownEditorProps>,

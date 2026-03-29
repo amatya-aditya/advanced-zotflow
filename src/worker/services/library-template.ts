@@ -94,19 +94,19 @@ doi: {{ item.DOI | json }}
 {%- endif -%}
 `;
 
-const FALLBACK_WIKILINK_TEMPLATE = `{%- if annotation -%}
-[[{{ notePath }}#^{{ annotation.key }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }}), p. {{ annotation.pageLabel }}]] {%- else -%}
+const FALLBACK_WIKILINK_TEMPLATE = `{%- if annotations.size > 0 -%}{%- for annotation in annotations -%}
+[[{{ notePath }}#^{{ annotation.key }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }}), p. {{ annotation.pageLabel }}]]{% if forloop.last == false %}, {% endif %}{%- endfor -%}{%- else -%}
 [[{{ notePath }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }})]] {%- endif -%}`;
 
 const FALLBACK_PANDOC_TEMPLATE =
-    "[@{{ item.citationKey | default: item.key }}{% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}]";
+    "[@{{ item.citationKey | default: item.key }}{% if annotations.size > 0 %}{% assign pages = annotations | map: 'pageLabel' | compact | uniq | join: ', ' %}{% if pages != empty %}, pp. {{ pages }}{% endif %}{% endif %}]";
 
 const FALLBACK_FOOTNOTE_REF_TEMPLATE =
-    "[^{{ item.citationKey | default: item.key }}]{% if annotation and annotation.pageLabel %}, p. {{ annotation.pageLabel }}{% endif %}";
+    "[^{{ item.citationKey | default: item.key }}]";
 
 const FALLBACK_FOOTNOTE_TEMPLATE = `{%- if item.creators.length > 1 -%}
 {{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}
-{{ item.creators[0].name }} {%- else -%}
+ {{ item.creators[0].name }} {%- else -%}
 Unknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}).`;
 
 /** LiquidJS template engine for rendering library (Zotero) item source notes. */
@@ -263,18 +263,24 @@ export class LibraryTemplateService {
         let template: string;
         if (format === "pandoc") {
             template =
-                this.settings.citationPandocTemplate.trim() ||
-                FALLBACK_PANDOC_TEMPLATE;
+                this.settings.citationPandocTemplate.trim() === ""
+                    ? FALLBACK_PANDOC_TEMPLATE
+                    : this.settings.citationPandocTemplate.trim();
         } else if (format === "wikilink") {
-            template = this.settings.citationWikilinkTemplate.trim();
+            template =
+                this.settings.citationWikilinkTemplate.trim() === ""
+                    ? FALLBACK_WIKILINK_TEMPLATE
+                    : this.settings.citationWikilinkTemplate.trim();
         } else if (format === "footnote-ref") {
             template =
-                this.settings.citationFootnoteRefTemplate.trim() ||
-                FALLBACK_FOOTNOTE_REF_TEMPLATE;
+                this.settings.citationFootnoteRefTemplate.trim() === ""
+                    ? FALLBACK_FOOTNOTE_REF_TEMPLATE
+                    : this.settings.citationFootnoteRefTemplate.trim();
         } else {
             template =
-                this.settings.citationFootnoteTemplate.trim() ||
-                FALLBACK_FOOTNOTE_TEMPLATE;
+                this.settings.citationFootnoteTemplate.trim() === ""
+                    ? FALLBACK_FOOTNOTE_TEMPLATE
+                    : this.settings.citationFootnoteTemplate.trim();
         }
 
         if (!template) return "";
@@ -291,8 +297,10 @@ export class LibraryTemplateService {
         const context = {} as any;
         context.item = await this.mapToItemContext(item);
         context.notePath = notePath;
-        if (input.annotation) {
-            context.annotation = this.mapToAnnotationContext(input.annotation);
+        if (input.annotations?.length) {
+            context.annotations = input.annotations.map((a) =>
+                this.mapToAnnotationContext(a),
+            );
         }
 
         return this.engine.parseAndRender(template, context);
@@ -316,8 +324,10 @@ export class LibraryTemplateService {
         const context = {} as any;
         context.item = await this.mapToItemContext(item);
         context.notePath = notePath;
-        if (input.annotation) {
-            context.annotation = this.mapToAnnotationContext(input.annotation);
+        if (input.annotations?.length) {
+            context.annotations = input.annotations.map((a) =>
+                this.mapToAnnotationContext(a),
+            );
         }
         return this.engine.parseAndRender(template, context);
     }
@@ -327,25 +337,23 @@ export class LibraryTemplateService {
         format: "pandoc" | "wikilink" | "footnote" | "footnote-ref",
     ): string {
         if (format === "pandoc") {
-            return (
-                this.settings.citationPandocTemplate || FALLBACK_PANDOC_TEMPLATE
-            );
+            return this.settings.citationPandocTemplate.trim() === ""
+                ? FALLBACK_PANDOC_TEMPLATE
+                : this.settings.citationPandocTemplate.trim();
         }
         if (format === "wikilink") {
-            return (
-                this.settings.citationWikilinkTemplate ||
-                FALLBACK_WIKILINK_TEMPLATE
-            );
+            return this.settings.citationWikilinkTemplate.trim() === ""
+                ? FALLBACK_WIKILINK_TEMPLATE
+                : this.settings.citationWikilinkTemplate.trim();
         }
         if (format === "footnote-ref") {
-            return (
-                this.settings.citationFootnoteRefTemplate ||
-                FALLBACK_FOOTNOTE_REF_TEMPLATE
-            );
+            return this.settings.citationFootnoteRefTemplate.trim() === ""
+                ? FALLBACK_FOOTNOTE_REF_TEMPLATE
+                : this.settings.citationFootnoteRefTemplate.trim();
         }
-        return (
-            this.settings.citationFootnoteTemplate || FALLBACK_FOOTNOTE_TEMPLATE
-        );
+        return this.settings.citationFootnoteTemplate.trim() === ""
+            ? FALLBACK_FOOTNOTE_TEMPLATE
+            : this.settings.citationFootnoteTemplate.trim();
     }
 
     private sanitizeQuotesString(str: string): string {

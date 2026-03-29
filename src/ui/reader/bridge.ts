@@ -20,6 +20,12 @@ import type { AttachmentData } from "types/zotero-item";
 import type { LocalDataManager } from "./local-data-manager";
 import { getLinkedLocalSourceNote } from "utils/file";
 import type { TFile } from "obsidian";
+import type { CitationFormat } from "settings/types";
+import {
+    ZOTFLOW_CITATION_MIME,
+    stripAnnotationForPayload,
+    type ZotFlowCitationPayload,
+} from "ui/editor/citation-helper";
 import {
     createEmbeddableMarkdownEditor,
     EmbeddableMarkdownEditor,
@@ -101,6 +107,25 @@ export class IframeReaderBridge {
         }
     }
 
+    private getParentItemKey(): string | undefined {
+        if (!this.attachmentItem) return undefined;
+        return this.attachmentItem.parentItem === ""
+            ? this.attachmentItem.key
+            : this.attachmentItem.parentItem;
+    }
+
+    private getReaderSourceNotePath(): string | undefined {
+        if (this.isLocal && this.localAttachment) {
+            return getLinkedLocalSourceNote(services.app, this.localAttachment)
+                ?.path;
+        }
+        const parentKey = this.getParentItemKey();
+        if (parentKey) {
+            return services.indexService.getFileByKey(parentKey)?.path;
+        }
+        return undefined;
+    }
+
     private buildParentAPI(): ParentAPI {
         return {
             getBlobUrlMap: () => getBlobUrls(),
@@ -178,43 +203,105 @@ export class IframeReaderBridge {
                 if (fromText) {
                     dataTransfer.setData(
                         "text/plain",
-                        annotations.map((a) => a.text).join("\n"),
+                        annotations
+                            .map((a) => a.text || "")
+                            .join("\n")
+                            .trim(),
                     );
                     return;
-                } else {
-                    if (this.isLocal && this.localAttachment) {
-                        const note = getLinkedLocalSourceNote(
-                            services.app,
-                            this.localAttachment,
-                        );
-
-                        if (note) {
-                            const content = annotations.reduce((acc, anno) => {
-                                return (
-                                    acc + `![[${note.path}#^${anno.id}]]\n\n`
-                                );
-                            }, "");
-                            dataTransfer.setData("text/plain", content);
-                            return;
-                        }
-                    } else if (!this.isLocal && this.attachmentItem) {
-                        const note = services.indexService.getFileByKey(
-                            this.attachmentItem.parentItem === ""
-                                ? this.attachmentItem.key
-                                : this.attachmentItem.parentItem,
-                        );
-                        if (note) {
-                            const content = annotations.reduce((acc, anno) => {
-                                return (
-                                    acc + `![[${note.path}#^${anno.id}]]\n\n`
-                                );
-                            }, "");
-                            dataTransfer.setData("text/plain", content);
-                            return;
-                        }
-                    }
                 }
-                dataTransfer.setData("text/plain", " ");
+
+                // Annotation drag: set citation MIME for Zotero items
+                if (
+                    !this.isLocal &&
+                    this.attachmentItem &&
+                    annotations.length
+                ) {
+                    const parentKey = this.getParentItemKey()!;
+                    const payload: ZotFlowCitationPayload = {
+                        type: "zotflow-citation",
+                        libraryID: this.attachmentItem.libraryID,
+                        key: parentKey,
+                        annotations: annotations.map((a) =>
+                            stripAnnotationForPayload(a),
+                        ),
+                    };
+                    dataTransfer.setData(
+                        ZOTFLOW_CITATION_MIME,
+                        JSON.stringify(payload),
+                    );
+                }
+
+                // text/plain fallback: embed links if source note exists
+                const notePath = this.getReaderSourceNotePath();
+                if (notePath) {
+                    const content = annotations.reduce(
+                        (acc, anno) => acc + `![[${notePath}#^${anno.id}]]\n\n`,
+                        "",
+                    );
+                    dataTransfer.setData("text/plain", content.trim());
+                } else {
+                    dataTransfer.setData("text/plain", " ");
+                }
+            },
+
+            copyAnnotationCitation: (
+                annotations: AnnotationJSON[],
+                format: string,
+            ) => {
+                // Fire-and-forget: async resolution + clipboard write
+                void (async () => {
+                    try {
+                        if (format === "text") {
+                            const text = annotations
+                                .map((a) => a.text)
+                                .filter(Boolean)
+                                .join("\n");
+                            await navigator.clipboard.writeText(text.trim());
+                            return;
+                        }
+                        if (format === "embed") {
+                            const notePath = this.getReaderSourceNotePath();
+                            if (notePath) {
+                                const text = annotations
+                                    .map((a) => `![[${notePath}#^${a.id}]]`)
+                                    .join("\n");
+                                await navigator.clipboard.writeText(text);
+                            }
+                            return;
+                        }
+                        // Citation formats: resolve via CitationService
+                        const parentKey = this.getParentItemKey();
+                        if (!this.attachmentItem || !parentKey) return;
+                        const citationFormat =
+                            format === "default"
+                                ? services.settings.defaultCitationFormat
+                                : (format as CitationFormat);
+                        const result = await services.citationService.resolve(
+                            {
+                                libraryID: this.attachmentItem.libraryID,
+                                key: parentKey,
+                                annotations: annotations.map((a) =>
+                                    stripAnnotationForPayload(a),
+                                ),
+                            },
+                            citationFormat,
+                        );
+                        if (result) {
+                            let text = result.citation;
+                            if (result.footnoteDef) {
+                                text += "\n" + result.footnoteDef;
+                            }
+                            await navigator.clipboard.writeText(text);
+                        }
+                    } catch (e) {
+                        services.logService.error(
+                            "Failed to copy annotation citation",
+                            "IframeReaderBridge",
+                            e,
+                        );
+                    }
+                })();
             },
 
             createAnnotationEditor: (

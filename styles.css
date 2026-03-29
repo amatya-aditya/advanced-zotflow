@@ -1479,6 +1479,85 @@
     margin-top: var(--size-4-1);
 }
 
+/* ── Multi-select dropdown ── */
+.zotflow-multiselect {
+    position: relative;
+    display: inline-block;
+    min-width: 200px;
+}
+
+.zotflow-multiselect-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: var(--size-4-2);
+    padding: var(--size-4-1) var(--size-4-2);
+}
+
+.zotflow-multiselect-trigger-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-multiselect-chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+}
+
+.zotflow-multiselect-chevron svg {
+    width: 14px;
+    height: 14px;
+}
+
+.zotflow-multiselect-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: var(--layer-popover);
+    margin-top: 2px;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-primary);
+    box-shadow: var(--shadow-s);
+}
+
+.zotflow-multiselect-toggle-all {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.zotflow-multiselect-empty {
+    padding: var(--size-4-2);
+    font-size: var(--font-ui-small);
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+.zotflow-multiselect-item {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    padding: var(--size-2-2) var(--size-4-2);
+    cursor: pointer;
+    font-size: var(--font-ui-small);
+}
+
+.zotflow-multiselect-item:hover {
+    background: var(--background-modifier-hover);
+}
+
+.zotflow-multiselect-item-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .zotflow-template-test-selection {
     font-size: var(--font-ui-small);
     color: var(--text-muted);

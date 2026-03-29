@@ -5,10 +5,10 @@ import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { CitationFormat } from "settings/types";
 import type { AnnotationJSON } from "types/zotero-reader";
 
-/** A Zotero item bundled with its optional annotation for citation. */
+/** A Zotero item bundled with its optional annotations for citation. */
 export interface CitationTemplateInput {
     item: AnyIDBZoteroItem;
-    annotation?: AnnotationJSON;
+    annotations?: AnnotationJSON[];
 }
 
 /** Result of citation generation for a single item. */
@@ -25,7 +25,7 @@ export interface CitationResult {
 export interface CitationRef {
     libraryID: number;
     key: string;
-    annotation?: AnnotationJSON;
+    annotations?: AnnotationJSON[];
 }
 
 /** Generates citation strings for Zotero items. */
@@ -54,7 +54,7 @@ export class CitationService {
 
         const input: CitationTemplateInput = {
             item,
-            annotation: ref.annotation,
+            annotations: ref.annotations || [],
         };
 
         // Resolve note path (cache hit → instant, miss → quick-create stub)
@@ -136,6 +136,11 @@ export class CitationService {
         if (rendered) {
             return { citation: rendered, citekey };
         }
+        services.logService.warn(
+            `Wikilink template failed for item ${input.item.libraryID}/${input.item.key}, falling back to generateMarkdownLink.`,
+            "CitationService",
+        );
+
         // Fallback: generateMarkdownLink
         const file = services.app.vault.getAbstractFileByPath(notePath);
         if (file instanceof TFile) {
@@ -147,6 +152,11 @@ export class CitationService {
             );
             return { citation: link, citekey };
         }
+
+        services.logService.error(
+            `Failed to find source note file at ${notePath} for item ${input.item.libraryID}/${input.item.key}.`,
+            "CitationService",
+        );
         return { citation: `[[@${citekey}]]`, citekey };
     }
 
