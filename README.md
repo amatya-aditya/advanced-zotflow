@@ -6,6 +6,8 @@ ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply in
 
 ## Features Added in This Fork
 
+This section tracks fork-specific changes after `v0.5.0`.
+
 ### v0.5.2
 
 - **User content zone in source notes** — generated Zotero and local source notes now end with `%% ZOTFLOW_USER_START %%`. Anything you write below that marker is preserved across syncs and note regeneration.
@@ -19,16 +21,6 @@ ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply in
 - **Bases toolbar button** — browse created Base views directly from the sidebar toolbar.
 - **Expanded default source note template** — the default template now includes more Zotero metadata fields such as pages, volume, issue, ISBN, ISSN, publisher, place, series, edition, abstract, and tags.
 - **Base view folder setting** — configure where Base files are stored.
-
-### v0.5.0
-
-- **Sidebar toolbar redesign** — inline icon toolbar with Library, Recent, Bookmarks, Search, Sort, and Refresh buttons.
-- **Bookmarks** — toggle bookmarks on items via right-click context menus, with a dedicated Bookmarks view and sort/filter support.
-- **Recently opened items** — automatically tracked with a dedicated Recent view.
-- **Reader hotkey forwarding** — `Ctrl+P` in the reader iframe opens the Obsidian command palette instead of the print dialog.
-- **Obsidian theme support in reader** — the reader's "Obsidian" theme option now follows your vault theme.
-- **Tree state persistence** — sidebar open/closed state is preserved across focus changes.
-- **`truncate_words` Liquid filter** — shorten long attachment filenames in custom templates.
 
 ## Features
 
