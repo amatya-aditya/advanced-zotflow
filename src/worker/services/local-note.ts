@@ -392,11 +392,18 @@ export class LocalNoteService {
         const templateContent = await this.parentHost.readTextFile(
             this.settings.localSourceNoteTemplatePath,
         );
+
+        // Read existing content to preserve user zone during updates
+        const existingContent = await this.parentHost.readTextFile(
+            fileCheck.path,
+        );
+
         const content = await this.templateService.renderLocalNote(
             localAttachment,
             annotations,
             templateContent,
             fileCheck.frontmatter || {},
+            existingContent || undefined,
         );
 
         await this.parentHost.writeTextFile(fileCheck.path, content);

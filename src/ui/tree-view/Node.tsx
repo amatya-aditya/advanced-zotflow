@@ -352,6 +352,44 @@ export const NodeItem = ({
                         }
                     });
             });
+            menu.addItem((item) => {
+                item.setTitle("Create Companion Note")
+                    .setIcon("file-plus-2")
+                    .onClick(async () => {
+                        try {
+                            // Ensure source note exists first
+                            await workerBridge.libraryNote.openNote(
+                                node.data.libraryID,
+                                node.data.key,
+                                {
+                                    forceUpdateContent: false,
+                                    forceUpdateImages: false,
+                                },
+                            );
+                            const file = services.indexService.getFileByKey(
+                                node.data.key,
+                            );
+                            if (file) {
+                                services.plugin.promptCompanionNote(file);
+                            } else {
+                                services.notificationService.notify(
+                                    "error",
+                                    "Source note not found.",
+                                );
+                            }
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to create companion note",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to create companion note.",
+                            );
+                        }
+                    });
+            });
         }
 
         if (

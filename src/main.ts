@@ -125,6 +125,26 @@ export default class ZotFlow extends Plugin {
             this.app.workspace.on("file-open", this.handleFileOpen.bind(this)),
         );
 
+        // Add "Create Companion Note" to file context menu for source notes
+        this.registerEvent(
+            this.app.workspace.on("file-menu", (menu, file) => {
+                if (!(file instanceof TFile) || file.extension !== "md") return;
+                const cache = this.app.metadataCache.getFileCache(file);
+                if (
+                    !cache?.frontmatter ||
+                    !cache.frontmatter.hasOwnProperty("zotflow-locked")
+                )
+                    return;
+                menu.addItem((item) => {
+                    item.setTitle("Create Companion Note")
+                        .setIcon("file-plus-2")
+                        .onClick(() => {
+                            this.promptCompanionNote(file);
+                        });
+                });
+            }),
+        );
+
         // Register lock extension
         this.registerEditorExtension([ZotFlowLockExtension()]);
         this.registerEditorExtension([ZotFlowCommentExtension()]);
@@ -238,6 +258,44 @@ export default class ZotFlow extends Plugin {
                         e,
                     );
                 }
+            },
+        });
+
+        this.addCommand({
+            id: "toggle-zotflow-lock",
+            name: "Toggle Source Note Lock",
+            checkCallback: (checking) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file || file.extension !== "md") return false;
+                const cache = this.app.metadataCache.getFileCache(file);
+                if (
+                    !cache?.frontmatter ||
+                    !cache.frontmatter.hasOwnProperty("zotflow-locked")
+                )
+                    return false;
+                if (checking) return true;
+                this.app.fileManager.processFrontMatter(file, (fm) => {
+                    fm["zotflow-locked"] = !fm["zotflow-locked"];
+                });
+                return true;
+            },
+        });
+
+        this.addCommand({
+            id: "create-companion-note",
+            name: "Create Companion Note",
+            checkCallback: (checking) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file || file.extension !== "md") return false;
+                const cache = this.app.metadataCache.getFileCache(file);
+                if (
+                    !cache?.frontmatter ||
+                    !cache.frontmatter.hasOwnProperty("zotflow-locked")
+                )
+                    return false;
+                if (checking) return true;
+                this.promptCompanionNote(file);
+                return true;
             },
         });
 
@@ -484,6 +542,78 @@ export default class ZotFlow extends Plugin {
     }
 
     /**
+     * Prompt the user for a companion note name and create it linked to the source note.
+     * The companion note is placed in a subfolder named after the source note's title.
+     */
+    promptCompanionNote(sourceFile: TFile) {
+        const modal = new CompanionNoteModal(this.app, async (name: string) => {
+            await this.createCompanionNote(sourceFile, name);
+        });
+        modal.open();
+    }
+
+    /**
+     * Create a companion note in a subfolder named after the source note's title.
+     */
+    async createCompanionNote(sourceFile: TFile, name: string): Promise<void> {
+        const cache = this.app.metadataCache.getFileCache(sourceFile);
+        const fm = cache?.frontmatter || {};
+
+        // Build subfolder path from source note's parent dir + source basename
+        const dir = sourceFile.path.substring(
+            0,
+            sourceFile.path.lastIndexOf("/"),
+        );
+        const prefix = dir ? `${dir}/` : "";
+        const subfolderPath = normalizePath(
+            `${prefix}${sourceFile.basename}`,
+        );
+        const notePath = normalizePath(`${subfolderPath}/${name}.md`);
+
+        const existing = this.app.vault.getAbstractFileByPath(notePath);
+        if (existing) {
+            services.notificationService.notify(
+                "error",
+                `File already exists: ${notePath}`,
+            );
+            return;
+        }
+
+        // Ensure subfolder exists
+        if (!this.app.vault.getAbstractFileByPath(subfolderPath)) {
+            await this.app.vault.createFolder(subfolderPath);
+        }
+
+        // Build frontmatter with relevant properties from the source
+        const companionFm: Record<string, unknown> = {
+            "zotflow-companion-of": `[[${sourceFile.path}]]`,
+        };
+        if (fm["zotero-key"]) companionFm["zotero-key"] = fm["zotero-key"];
+        if (fm.citationKey) companionFm.citationKey = fm.citationKey;
+        if (fm.title) companionFm.title = fm.title;
+        if (fm.creators) companionFm.creators = fm.creators;
+        if (fm.itemType) companionFm.itemType = fm.itemType;
+        if (fm.year) companionFm.year = fm.year;
+        if (fm.tags) companionFm.tags = fm.tags;
+
+        const yamlLines = Object.entries(companionFm)
+            .map(([k, v]) => {
+                if (typeof v === "string") return `${k}: "${v}"`;
+                return `${k}: ${JSON.stringify(v)}`;
+            })
+            .join("\n");
+        const content = `---\n${yamlLines}\n---\n\n# ${name}\n\n`;
+
+        await this.app.vault.create(notePath, content);
+
+        const leaf = this.app.workspace.getLeaf(false);
+        const created = this.app.vault.getAbstractFileByPath(notePath);
+        if (created instanceof TFile) {
+            await leaf.openFile(created);
+        }
+    }
+
+    /**
      * Derive sidecar `.zf.json` path from a raw file path string.
      * `Papers/myPaper.pdf` → `Papers/myPaper.zf.json`
      */
@@ -536,5 +666,52 @@ export default class ZotFlow extends Plugin {
                 }
             }
         }
+    }
+}
+
+/** Simple modal to prompt for a companion note name. */
+class CompanionNoteModal extends Modal {
+    private name = "";
+
+    constructor(
+        app: App,
+        private onSubmit: (name: string) => void,
+    ) {
+        super(app);
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.createEl("h3", { text: "Create Companion Note" });
+
+        const input = contentEl.createEl("input", {
+            type: "text",
+            placeholder: "e.g. Chapter 3 - Filters",
+        });
+        input.style.width = "100%";
+        input.style.marginBottom = "1em";
+        input.addEventListener("input", () => {
+            this.name = input.value;
+        });
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && this.name.trim()) {
+                this.close();
+                this.onSubmit(this.name.trim());
+            }
+        });
+
+        const btn = contentEl.createEl("button", { text: "Create" });
+        btn.addEventListener("click", () => {
+            if (this.name.trim()) {
+                this.close();
+                this.onSubmit(this.name.trim());
+            }
+        });
+
+        input.focus();
+    }
+
+    onClose() {
+        this.contentEl.empty();
     }
 }

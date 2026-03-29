@@ -4,6 +4,32 @@
 
 ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply integrates [Zotero](https://www.zotero.org) into your note-taking workflow. It syncs your Zotero libraries, lets you read and annotate PDFs/EPUBs/snapshots directly inside Obsidian, and automatically generates richly-templated source notes — all without leaving your vault.
 
+## Features Added in This Fork
+
+### v0.5.2
+
+- **User content zone in source notes** — generated Zotero and local source notes now end with `%% ZOTFLOW_USER_START %%`. Anything you write below that marker is preserved across syncs and note regeneration.
+- **Toggle Source Note Lock** — source notes can still be protected with `zotflow-locked`, but you now get a command to flip the lock on the active source note when you need to edit the generated body.
+- **Create Companion Note** — create chapter-wise or topic-wise notes linked to a source note via `zotflow-companion-of`. The action is available from the command palette, the source note file menu, and Zotero tree item context menus.
+- **Improved annotation drag-and-drop** — dragging annotations into notes now emits full callout blocks that match the source-note template format. Unsaved text selections fall back to plain text instead of broken `#^undefined` embeds.
+
+### v0.5.1
+
+- **Collection Base Views** — right-click a collection or library in the sidebar and select "Create Base View" to generate a table-like Obsidian Bases view with all Zotero item metadata rendered as Table, Detailed, and Cards views.
+- **Bases toolbar button** — browse created Base views directly from the sidebar toolbar.
+- **Expanded default source note template** — the default template now includes more Zotero metadata fields such as pages, volume, issue, ISBN, ISSN, publisher, place, series, edition, abstract, and tags.
+- **Base view folder setting** — configure where Base files are stored.
+
+### v0.5.0
+
+- **Sidebar toolbar redesign** — inline icon toolbar with Library, Recent, Bookmarks, Search, Sort, and Refresh buttons.
+- **Bookmarks** — toggle bookmarks on items via right-click context menus, with a dedicated Bookmarks view and sort/filter support.
+- **Recently opened items** — automatically tracked with a dedicated Recent view.
+- **Reader hotkey forwarding** — `Ctrl+P` in the reader iframe opens the Obsidian command palette instead of the print dialog.
+- **Obsidian theme support in reader** — the reader's "Obsidian" theme option now follows your vault theme.
+- **Tree state persistence** — sidebar open/closed state is preserved across focus changes.
+- **`truncate_words` Liquid filter** — shorten long attachment filenames in custom templates.
+
 ## Features
 
 ### Zotero Library Sync
@@ -17,6 +43,7 @@ ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply in
 
 - **Read PDFs, EPUBs, and HTML snapshots** inside Obsidian — no external app needed.
 - **Full annotation support** — highlights, underlines, notes, text selections, images, and ink drawings.
+- **Annotation drag-and-drop** — drag annotations or selections directly into notes as rich Markdown callouts.
 - **Local reader mode** — open any PDF/EPUB/HTML file in your vault with the same reader.
 - **Live annotation refresh** — annotations update automatically after a sync completes.
 - Optionally **replace Obsidian's default viewer** for PDF/EPUB/HTML files.
@@ -28,13 +55,16 @@ ZotFlow's source notes follow a **Zettelkasten-inspired** philosophy: each Zoter
 - **Template-powered** — use [LiquidJS](https://liquidjs.com) templates to control exactly how Zotero items are rendered as Markdown notes.
 - **Separate templates** for Zotero items and local vault files.
 - **Auto-update** — source notes regenerate when annotations change.
+- **User content zone** — content below `%% ZOTFLOW_USER_START %%` is preserved when source notes are regenerated.
+- **Companion notes** — create linked chapter or topic notes that sit alongside a source note without turning the source note itself into a scratchpad.
 - **Annotation images** — visual annotations (image/ink) can be auto-extracted and saved to your vault.
-- **Locked notes** — generated notes are marked `zotflow-locked` so they open in preview mode, preventing accidental edits.
+- **Locked notes with override** — generated notes are marked `zotflow-locked` so they open in preview mode, but you can toggle the lock when needed.
 
 ### Zotero Tree View
 
 - Browse your entire Zotero library structure (collections, items, attachments) in a sidebar tree.
 - Quickly open attachments or source notes from the tree.
+- Create companion notes directly from Zotero item context menus.
 
 ### Activity Center
 
@@ -59,7 +89,7 @@ ZotFlow's source notes follow a **Zettelkasten-inspired** philosophy: each Zoter
 
 ### Manual Installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/duanxianpi/obsidian-zotflow/releases).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/amatya-aditya/advanced-zotflow/releases).
 2. Create a folder at `<your-vault>/.obsidian/plugins/obsidian-zotflow/`.
 3. Copy the three files into that folder.
 4. Reload Obsidian → **Settings → Community plugins** → enable **ZotFlow**. -->
@@ -83,11 +113,10 @@ ZotFlow's source notes follow a **Zettelkasten-inspired** philosophy: each Zoter
 
 ## Commands
 
-TODO
-
-<!-- | Command                   | Description                              |
-| ------------------------- | ---------------------------------------- |
-| **Open Zotero Tree View** | Show the library browser in the sidebar. | -->
+- **Open Zotero Tree View** — show the Zotero library browser in the sidebar.
+- **Search Zotero Library** — search your Zotero library without leaving Obsidian.
+- **Toggle Source Note Lock** — toggle `zotflow-locked` on the active source note.
+- **Create Companion Note** — create a linked companion note for the active source note.
 
 ## Architecture
 

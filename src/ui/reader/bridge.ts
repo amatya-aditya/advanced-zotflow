@@ -27,6 +27,70 @@ import {
     type MarkdownEditorProps,
 } from "ui/editor/markdown-editor";
 
+/** Encode an annotation key as a URL-encoded navigation JSON parameter. */
+function encodeNavInfo(annotationID: string): string {
+    return encodeURIComponent(JSON.stringify({ annotationID }));
+}
+
+/** Build the callout title link for a Zotero library annotation. */
+function buildLibraryLink(
+    fileName: string,
+    libraryID: number,
+    attachmentKey: string,
+    anno: AnnotationJSON,
+): string {
+    const nav = encodeNavInfo(anno.id);
+    return `[${fileName}, p.${anno.pageLabel || "?"}](obsidian://zotflow?type=open-attachment&libraryID=${libraryID}&key=${attachmentKey}&navigation=${nav})`;
+}
+
+/** Build the callout title link for a local vault PDF annotation. */
+function buildLocalLink(
+    filePath: string,
+    fileName: string,
+    anno: AnnotationJSON,
+): string {
+    const nav = encodeNavInfo(anno.id);
+    return `[[${filePath}${anno.pageLabel ? `#page=${anno.pageLabel}` : ""}#annotation=${nav}|${fileName}, p.${anno.pageLabel || "?"}]]`;
+}
+
+/**
+ * Format an annotation as a rich callout block matching the source note template format.
+ * Produces markdown like:
+ * ```
+ * > [!zotflow-highlight-#ffd400] [file.pdf, p.34](obsidian://...)
+ * > > The highlighted text
+ * >
+ * > User comment
+ * ^ANNOTATIONKEY
+ * ```
+ */
+function formatAnnotationCallout(
+    anno: AnnotationJSON,
+    fileName: string,
+    imgFolder: string,
+    titleLink: string,
+): string {
+    const type = anno.type || "highlight";
+    const color = anno.color ? `#${anno.color.replace(/^#/, "")}` : "#ffd400";
+    let block = `> [!zotflow-${type}-${color}] ${titleLink}\n`;
+
+    if (type === "ink" || type === "image") {
+        block += `> > ![[${imgFolder}/${anno.id}.png]]\n`;
+    } else if (anno.text) {
+        const quotedText = anno.text.replace(/\n/g, "\n> > ");
+        block += `> > ${quotedText}\n`;
+    }
+
+    if (anno.comment) {
+        block += `>\n`;
+        const quotedComment = anno.comment.replace(/\n/g, "\n> ");
+        block += `> ${quotedComment}\n`;
+    }
+
+    block += `^${anno.id}`;
+    return block;
+}
+
 type BridgeState =
     | "idle"
     | "connecting"
@@ -254,10 +318,17 @@ export class IframeReaderBridge {
                             );
 
                         if (note) {
+                            const filePath = this.localAttachment.path;
+                            const fileName = this.localAttachment.name;
+                            const imgFolder = services.settings.annotationImageFolder.replace(/\/$/, "");
                             const content = annotations.reduce((acc, anno) => {
-                                return (
-                                    acc + `![[${note.path}#^${anno.id}]]\n\n`
-                                );
+                                if (!anno.id) {
+                                    return acc + (anno.text || "") + "\n\n";
+                                }
+                                return acc + formatAnnotationCallout(
+                                    anno, fileName, imgFolder,
+                                    buildLocalLink(filePath, fileName, anno),
+                                ) + "\n\n";
                             }, "");
                             dataTransfer.setData("text/plain", content);
                             return;
@@ -269,10 +340,17 @@ export class IframeReaderBridge {
                                 : this.attachmentItem.parentItem,
                         );
                         if (note) {
+                            const att = this.attachmentItem;
+                            const fileName = att.title || att.key;
+                            const imgFolder = services.settings.annotationImageFolder.replace(/\/$/, "");
                             const content = annotations.reduce((acc, anno) => {
-                                return (
-                                    acc + `![[${note.path}#^${anno.id}]]\n\n`
-                                );
+                                if (!anno.id) {
+                                    return acc + (anno.text || "") + "\n\n";
+                                }
+                                return acc + formatAnnotationCallout(
+                                    anno, fileName, imgFolder,
+                                    buildLibraryLink(fileName, att.libraryID, att.key, anno),
+                                ) + "\n\n";
                             }, "");
                             dataTransfer.setData("text/plain", content);
                             return;

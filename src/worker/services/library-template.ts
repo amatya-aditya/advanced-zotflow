@@ -124,6 +124,8 @@ dateAdded: {{ item.dateAdded | json }}
 
 {%- endfor -%}
 {%- endif -%}
+
+%% ZOTFLOW_USER_START %%
 `;
 
 /** LiquidJS template engine for rendering library (Zotero) item source notes. */
@@ -183,13 +185,14 @@ export class LibraryTemplateService {
         item: AnyIDBZoteroItem,
         templateContent: string | null,
         originalFrontmatter: Record<string, any> = {},
+        existingContent?: string,
     ): Promise<string> {
         const context = await this.prepareItemContext(item);
         return this.renderTemplate(context, templateContent, originalFrontmatter, {
             "zotflow-locked": true,
             "zotero-key": item.key,
             "item-version": item.version,
-        });
+        }, existingContent);
     }
 
     /**
@@ -200,6 +203,7 @@ export class LibraryTemplateService {
         itemContext: ItemTemplateContext,
         templateContent: string | null,
         originalFrontmatter: Record<string, any> = {},
+        existingContent?: string,
     ): Promise<string> {
         const context = {
             item: itemContext,
@@ -213,14 +217,17 @@ export class LibraryTemplateService {
             "zotflow-locked": true,
             "zotero-key": itemContext.key,
             "item-version": itemContext.version,
-        });
+        }, existingContent);
     }
+
+    private static readonly USER_ZONE_MARKER = "%% ZOTFLOW_USER_START %%";
 
     private async renderTemplate(
         context: any,
         templateContent: string | null,
         originalFrontmatter: Record<string, any>,
         mandatoryFields: Record<string, unknown>,
+        existingContent?: string,
     ): Promise<string> {
         try {
             const template = templateContent || DEFAULT_ITEM_TEMPLATE;
@@ -284,7 +291,26 @@ export class LibraryTemplateService {
                 context,
             );
 
-            return `---\n${frontmatterString}---\n${renderedBody}`;
+            let result = `---\n${frontmatterString}---\n${renderedBody}`;
+
+            // Preserve user content from existing file across updates
+            if (existingContent) {
+                const marker = LibraryTemplateService.USER_ZONE_MARKER;
+                const existingMarkerIdx = existingContent.indexOf(marker);
+                if (existingMarkerIdx !== -1) {
+                    const userContent = existingContent.substring(
+                        existingMarkerIdx + marker.length,
+                    );
+                    const newMarkerIdx = result.indexOf(marker);
+                    if (newMarkerIdx !== -1) {
+                        result =
+                            result.substring(0, newMarkerIdx + marker.length) +
+                            userContent;
+                    }
+                }
+            }
+
+            return result;
         } catch (e) {
             throw ZotFlowError.wrap(
                 e,

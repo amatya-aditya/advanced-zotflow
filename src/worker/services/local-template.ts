@@ -20,9 +20,9 @@ zotflow-local-attachment: [[{{ path }}]]
 
 > [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [[{{item.path}}#page={{ annotation.pageLabel }}#annotation={{ annotation.key | process_nav_info }}|{{ item.name }}, p.{{ annotation.pageLabel }}]]
 {%- if annotation.type == "ink" or annotation.type == "image"-%}
-> > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
+>  ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
 {%- else -%}
-> > {{ annotation.text | replace: newline, quote_string_2 }}
+>  {{ annotation.text | replace: newline, quote_string_2 }}
 {%- endif -%}
 {%- if annotation.comment != "" -%}
 >
@@ -32,6 +32,8 @@ zotflow-local-attachment: [[{{ path }}]]
 
 {%- endfor -%}
 {%- endif -%}
+
+%% ZOTFLOW_USER_START %%
 `;
 
 /** LiquidJS template engine for rendering local vault file (PDF/EPUB) source notes. */
@@ -69,11 +71,14 @@ export class LocalTemplateService {
     /**
      * Render the local note content using LiquidJS
      */
+    private static readonly USER_ZONE_MARKER = "%% ZOTFLOW_USER_START %%";
+
     async renderLocalNote(
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
         templateContent: string | null,
         originalFrontmatter: Record<string, any> = {},
+        existingContent?: string,
     ): Promise<string> {
         try {
             const context = await this.prepareLocalAttachmentContext(
@@ -143,7 +148,26 @@ export class LocalTemplateService {
                 context,
             );
 
-            return `---\n${frontmatterString}---\n${renderedBody}`;
+            let result = `---\n${frontmatterString}---\n${renderedBody}`;
+
+            // Preserve user content from existing file across updates
+            if (existingContent) {
+                const marker = LocalTemplateService.USER_ZONE_MARKER;
+                const existingMarkerIdx = existingContent.indexOf(marker);
+                if (existingMarkerIdx !== -1) {
+                    const userContent = existingContent.substring(
+                        existingMarkerIdx + marker.length,
+                    );
+                    const newMarkerIdx = result.indexOf(marker);
+                    if (newMarkerIdx !== -1) {
+                        result =
+                            result.substring(0, newMarkerIdx + marker.length) +
+                            userContent;
+                    }
+                }
+            }
+
+            return result;
         } catch (err) {
             throw ZotFlowError.wrap(
                 err,

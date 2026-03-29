@@ -1,6 +1,8 @@
 import type { Extension } from "@codemirror/state";
 import { EditorState } from "@codemirror/state";
 
+const USER_ZONE_MARKER = "%% ZOTFLOW_USER_START %%";
+
 function isLocked(state: EditorState): boolean {
     if (state.doc.sliceString(0, 3) !== "---") return false;
 
@@ -19,9 +21,16 @@ function getFrontmatterEnd(state: EditorState): number {
     return match ? match[0].length : -1;
 }
 
+/** Returns the character offset of the user zone marker, or -1 if none. */
+function getUserZoneStart(state: EditorState): number {
+    const text = state.doc.toString();
+    const idx = text.indexOf(USER_ZONE_MARKER);
+    return idx === -1 ? -1 : idx;
+}
+
 /**
  * Returns a CM6 extension that makes the editor read-only when `zotflow-locked: true` is in frontmatter,
- * except for changes within the frontmatter itself.
+ * except for changes within the frontmatter itself or within the user content zone.
  */
 export function ZotFlowLockExtension(): Extension {
     return [
@@ -34,15 +43,21 @@ export function ZotFlowLockExtension(): Extension {
             const fmEnd = getFrontmatterEnd(tr.startState);
             if (fmEnd === -1) return true;
 
+            const userZoneStart = getUserZoneStart(tr.startState);
+
             let allow = true;
 
             tr.changes.iterChanges((fromChange, toChange) => {
                 if (!allow) return;
 
-                // Block any change that touches content outside frontmatter
-                if (toChange > fmEnd) {
-                    allow = false;
-                }
+                // Allow changes within frontmatter
+                if (toChange <= fmEnd) return;
+
+                // Allow changes within or after user zone marker
+                if (userZoneStart !== -1 && fromChange >= userZoneStart) return;
+
+                // Block everything else (the auto-generated zone)
+                allow = false;
             });
 
             return allow;
