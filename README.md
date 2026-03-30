@@ -6,6 +6,11 @@ ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply in
 
 ## Features Added in This Fork
 
+### v0.5.3
+
+- **Companion notes in recent & bookmark context menus** — right-click items in the Recent Items or Bookmarks sidebar views to create companion notes directly.
+- **Companion tracking in source notes** — creating a companion note now adds a `zotflow-companions` property to the source note's frontmatter, keeping all companion links discoverable and preserved across syncs.
+
 ### v0.5.2
 
 - **User content zone in source notes** — generated Zotero and local source notes now end with `%% ZOTFLOW_USER_START %%`. Anything you write below that marker is preserved across syncs and note regeneration.

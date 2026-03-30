@@ -281,6 +281,47 @@ const SidebarItem = ({
                 });
         });
 
+        // Create companion note (for non-attachment items)
+        if (itemType !== "attachment") {
+            menu.addItem((item) => {
+                item.setTitle("Create Companion Note")
+                    .setIcon("file-plus-2")
+                    .onClick(async () => {
+                        try {
+                            // Ensure source note exists first
+                            await workerBridge.libraryNote.openNote(
+                                libraryID,
+                                itemKey,
+                                {
+                                    forceUpdateContent: false,
+                                    forceUpdateImages: false,
+                                },
+                            );
+                            const file =
+                                services.indexService.getFileByKey(itemKey);
+                            if (file) {
+                                services.plugin.promptCompanionNote(file);
+                            } else {
+                                services.notificationService.notify(
+                                    "error",
+                                    "Source note not found.",
+                                );
+                            }
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to create companion note",
+                                "SidebarItem",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to create companion note.",
+                            );
+                        }
+                    });
+            });
+        }
+
         // Remove from recents (only for recent items, not bookmarks — avoid duplicate)
         if (onRemove && removeIcon !== "bookmark-minus") {
             menu.addItem((item) => {

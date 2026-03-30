@@ -606,6 +606,18 @@ export default class ZotFlow extends Plugin {
 
         await this.app.vault.create(notePath, content);
 
+        // Add companion link back to the source note's frontmatter
+        await this.app.fileManager.processFrontMatter(sourceFile, (srcFm) => {
+            const companions: string[] = Array.isArray(srcFm["zotflow-companions"])
+                ? srcFm["zotflow-companions"]
+                : [];
+            const link = `[[${notePath}]]`;
+            if (!companions.includes(link)) {
+                companions.push(link);
+                srcFm["zotflow-companions"] = companions;
+            }
+        });
+
         const leaf = this.app.workspace.getLeaf(false);
         const created = this.app.vault.getAbstractFileByPath(notePath);
         if (created instanceof TFile) {
