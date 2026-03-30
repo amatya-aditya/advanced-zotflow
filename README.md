@@ -6,6 +6,13 @@ ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply in
 
 ## Features Added in This Fork
 
+### v0.5.4
+
+- **Source note co-location** — when creating a companion note, the source note moves into a subfolder named after itself, keeping source and companion notes together. Subsequent companions reuse the same folder.
+- **Fixed companion frontmatter corruption** — companion links now use multi-line YAML list format with display labels, avoiding wikilink bracket conflicts.
+- **Source notes sidebar context menu** — right-clicking source notes in the Notes view now shows "Create Companion Note" and "Toggle lock" options.
+- **Companion note action in view header** — a companion note icon appears in the source note header bar for quick access.
+
 ### v0.5.3
 
 - **Companion notes in recent & bookmark context menus** — right-click items in the Recent Items or Bookmarks sidebar views to create companion notes directly.

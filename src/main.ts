@@ -559,15 +559,42 @@ export default class ZotFlow extends Plugin {
         const cache = this.app.metadataCache.getFileCache(sourceFile);
         const fm = cache?.frontmatter || {};
 
-        // Build subfolder path from source note's parent dir + source basename
-        const dir = sourceFile.path.substring(
+        // Determine the companion folder.
+        // If the source note is already inside a folder named after itself
+        // (from a previous companion creation), reuse that folder.
+        const sourceDir = sourceFile.path.substring(
             0,
             sourceFile.path.lastIndexOf("/"),
         );
-        const prefix = dir ? `${dir}/` : "";
-        const subfolderPath = normalizePath(
-            `${prefix}${sourceFile.basename}`,
+        const parentFolderName = sourceDir.substring(
+            sourceDir.lastIndexOf("/") + 1,
         );
+        const alreadyInOwnFolder = parentFolderName === sourceFile.basename;
+
+        let subfolderPath: string;
+        if (alreadyInOwnFolder) {
+            // Source is already at e.g. Source/My Library/@cite/@cite.md
+            subfolderPath = sourceDir;
+        } else {
+            // Source is at e.g. Source/My Library/@cite.md — create subfolder
+            const prefix = sourceDir ? `${sourceDir}/` : "";
+            subfolderPath = normalizePath(
+                `${prefix}${sourceFile.basename}`,
+            );
+
+            // Ensure subfolder exists
+            if (!this.app.vault.getAbstractFileByPath(subfolderPath)) {
+                await this.app.vault.createFolder(subfolderPath);
+            }
+
+            // Move the source note into the subfolder
+            const newSourcePath = normalizePath(
+                `${subfolderPath}/${sourceFile.name}`,
+            );
+            await this.app.fileManager.renameFile(sourceFile, newSourcePath);
+            // sourceFile reference is updated in-place by Obsidian
+        }
+
         const notePath = normalizePath(`${subfolderPath}/${name}.md`);
 
         const existing = this.app.vault.getAbstractFileByPath(notePath);
@@ -577,11 +604,6 @@ export default class ZotFlow extends Plugin {
                 `File already exists: ${notePath}`,
             );
             return;
-        }
-
-        // Ensure subfolder exists
-        if (!this.app.vault.getAbstractFileByPath(subfolderPath)) {
-            await this.app.vault.createFolder(subfolderPath);
         }
 
         // Build frontmatter with relevant properties from the source
@@ -606,17 +628,52 @@ export default class ZotFlow extends Plugin {
 
         await this.app.vault.create(notePath, content);
 
-        // Add companion link back to the source note's frontmatter
-        await this.app.fileManager.processFrontMatter(sourceFile, (srcFm) => {
-            const companions: string[] = Array.isArray(srcFm["zotflow-companions"])
-                ? srcFm["zotflow-companions"]
-                : [];
-            const link = `[[${notePath}]]`;
-            if (!companions.includes(link)) {
-                companions.push(link);
-                srcFm["zotflow-companions"] = companions;
+        // Add companion link to the source note's frontmatter using
+        // multi-line YAML list format to avoid wikilink bracket conflicts.
+        const sourceContent = await this.app.vault.read(sourceFile);
+        const fmEndIdx = sourceContent.indexOf("\n---", 1);
+        if (fmEndIdx !== -1) {
+            const label = notePath.substring(notePath.lastIndexOf("/") + 1).replace(/\.md$/, "");
+            const newEntry = `  - "[[${notePath}|${label}]]"`;
+
+            // Check if zotflow-companions already exists in frontmatter
+            const companionsLineRegex =
+                /^zotflow-companions:\s*$/m;
+            const fmBlock = sourceContent.substring(0, fmEndIdx);
+
+            let updatedContent: string;
+            if (companionsLineRegex.test(fmBlock)) {
+                // Find the end of the existing list entries (lines starting with "  - ")
+                const lines = sourceContent.split("\n");
+                let insertIdx = -1;
+                let inCompanions = false;
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i] ?? "";
+                    if (/^zotflow-companions:\s*$/.test(line)) {
+                        inCompanions = true;
+                        continue;
+                    }
+                    if (inCompanions) {
+                        if (/^\s+-\s+/.test(line)) {
+                            insertIdx = i; // track last list item
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if (insertIdx !== -1) {
+                    lines.splice(insertIdx + 1, 0, newEntry);
+                }
+                updatedContent = lines.join("\n");
+            } else {
+                // Insert new companions field before the closing ---
+                updatedContent =
+                    sourceContent.substring(0, fmEndIdx) +
+                    `\nzotflow-companions:\n${newEntry}` +
+                    sourceContent.substring(fmEndIdx);
             }
-        });
+            await this.app.vault.modify(sourceFile, updatedContent);
+        }
 
         const leaf = this.app.workspace.getLeaf(false);
         const created = this.app.vault.getAbstractFileByPath(notePath);
@@ -645,10 +702,19 @@ export default class ZotFlow extends Plugin {
         return `${prefix}${file.basename}.zf.json`;
     }
 
+    /** Track the companion-note action element so we can remove it when leaving a source note. */
+    private companionActionEl: HTMLElement | null = null;
+
     async handleFileOpen(file: TFile | null) {
         if (!file || file.extension !== "md") return;
 
         const cache = this.app.metadataCache.getFileCache(file);
+
+        // Remove previous companion action if it exists
+        if (this.companionActionEl) {
+            this.companionActionEl.remove();
+            this.companionActionEl = null;
+        }
 
         if (
             cache?.frontmatter &&
@@ -676,6 +742,15 @@ export default class ZotFlow extends Plugin {
                         }
                     }, 10);
                 }
+
+                // Add companion note action to the view header
+                this.companionActionEl = view.addAction(
+                    "file-plus-2",
+                    "Create Companion Note",
+                    () => {
+                        this.promptCompanionNote(file);
+                    },
+                );
             }
         }
     }

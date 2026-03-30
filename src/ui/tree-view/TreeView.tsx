@@ -950,6 +950,34 @@ export const ZotFlowTree = () => {
                                     .getLeaf(false)
                                     .openFile(f);
                             }}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const menu = new Menu();
+                                menu.addItem((item) => {
+                                    item.setTitle("Create Companion Note")
+                                        .setIcon("file-plus-2")
+                                        .onClick(() => {
+                                            services.plugin.promptCompanionNote(
+                                                f,
+                                            );
+                                        });
+                                });
+                                menu.addItem((item) => {
+                                    item.setTitle("Toggle lock")
+                                        .setIcon("lock")
+                                        .onClick(() => {
+                                            services.app.fileManager.processFrontMatter(
+                                                f,
+                                                (fm) => {
+                                                    fm["zotflow-locked"] =
+                                                        !fm["zotflow-locked"];
+                                                },
+                                            );
+                                        });
+                                });
+                                menu.showAtMouseEvent(e.nativeEvent);
+                            }}
                         >
                             <ObsidianIcon
                                 icon="file-text"
