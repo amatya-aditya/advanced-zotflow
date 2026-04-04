@@ -6,7 +6,7 @@ on:
             - "**"
 
 env:
-    PLUGIN_NAME: obsidian-zotflow
+    PLUGIN_NAME: advanced-zotflow
 
 permissions:
     contents: write
