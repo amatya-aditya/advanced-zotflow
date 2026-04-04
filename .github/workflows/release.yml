@@ -35,63 +35,35 @@ jobs:
             - name: Package
               id: build
               run: |
-                  mkdir ${{ env.PLUGIN_NAME }}
+                  mkdir -p ${{ env.PLUGIN_NAME }}
                   cp main.js manifest.json styles.css ${{ env.PLUGIN_NAME }}
                   zip -r ${{ env.PLUGIN_NAME }}.zip ${{ env.PLUGIN_NAME }}
-                  ls
-                  echo "tag_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+                  echo "zip_path=${{ env.PLUGIN_NAME }}.zip" >> "$GITHUB_OUTPUT"
+                  echo "zip_asset_name=${{ env.PLUGIN_NAME }}-${{ github.ref_name }}.zip" >> "$GITHUB_OUTPUT"
 
-            - name: Create Release
-              id: create_release
-              uses: actions/create-release@v1
+            - name: Create or update release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  tag_name: ${{ github.ref_name }}
-                  release_name: ${{ github.ref_name }}
-                  draft: false
-                  prerelease: false
+              shell: bash
+              run: |
+                  set -euo pipefail
 
-            - name: Upload zip file
-              id: upload-zip
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./${{ env.PLUGIN_NAME }}.zip
-                  asset_name: ${{ env.PLUGIN_NAME }}-${{ steps.build.outputs.tag_name }}.zip
-                  asset_content_type: application/zip
+                  tag="${{ github.ref_name }}"
+                  zip_path="./${{ steps.build.outputs.zip_path }}"
+                  zip_asset_name="${{ steps.build.outputs.zip_asset_name }}"
 
-            - name: Upload main.js
-              id: upload-main
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./main.js
-                  asset_name: main.js
-                  asset_content_type: text/javascript
-
-            - name: Upload manifest.json
-              id: upload-manifest
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./manifest.json
-                  asset_name: manifest.json
-                  asset_content_type: application/json
-
-            - name: Upload styles.css
-              id: upload-css
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./styles.css
-                  asset_name: styles.css
-                  asset_content_type: text/css
+                  if gh release view "$tag" >/dev/null 2>&1; then
+                      gh release upload "$tag" \
+                          "${zip_path}#${zip_asset_name}" \
+                          "./main.js#main.js" \
+                          "./manifest.json#manifest.json" \
+                          "./styles.css#styles.css" \
+                          --clobber
+                  else
+                      gh release create "$tag" \
+                          "${zip_path}#${zip_asset_name}" \
+                          "./main.js#main.js" \
+                          "./manifest.json#manifest.json" \
+                          "./styles.css#styles.css" \
+                          --title "$tag"
+                  fi
