@@ -5,6 +5,7 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { IParentProxy } from "bridge/types";
 import type { LibraryNoteService, UpdateOptions } from "./library-note";
+import type { ConvertService } from "./convert";
 import type { IDBZoteroItem, IDBZoteroKey } from "types/db-schema";
 import type {
     AnnotationData,
@@ -27,6 +28,7 @@ export class AnnotationService {
     constructor(
         private noteService: LibraryNoteService,
         private parentHost: IParentProxy,
+        private convertService: ConvertService,
     ) {}
 
     /* ================================================================ */
@@ -381,6 +383,60 @@ export class AnnotationService {
                     "Failed to trigger note update after annotation delete",
                 );
             });
+    }
+
+    /**
+     * Update only the comment field of an existing annotation.
+     * Called from the editable-region sync plugin when an ANNO region is edited.
+     *
+     * The incoming `markdownComment` is markdown (bold/italic/sub/sup) that
+     * gets converted to the restricted HTML subset the Zotero annotation
+     * format supports (`<b>`, `<i>`, `<sub>`, `<sup>`).
+     */
+    async updateAnnotationComment(
+        libraryID: number,
+        annotationKey: string,
+        markdownComment: string,
+    ): Promise<void> {
+        const item = await db.items.get([libraryID, annotationKey]);
+
+        if (!item || item.itemType !== "annotation") {
+            this.parentHost.log(
+                "warn",
+                `updateAnnotationComment: item ${annotationKey} not found or not an annotation`,
+                "AnnotationService",
+            );
+            return;
+        }
+
+        const annotation = item as IDBZoteroItem<AnnotationData>;
+        const newComment = this.convertService.annoMd2html(markdownComment);
+
+        // Skip write if comment hasn't changed
+        if (annotation.raw.data.annotationComment === newComment) return;
+
+        const updatedRaw = structuredClone(annotation.raw);
+        (updatedRaw.data as AnnotationData).annotationComment = newComment;
+
+        const now = new Date().toISOString();
+        await db.items.update([libraryID, annotationKey], {
+            raw: updatedRaw,
+            syncStatus:
+                annotation.syncStatus === "created" ? "created" : "updated",
+            dateModified: now,
+        });
+
+        this.parentHost.log(
+            "debug",
+            `Updated annotation comment for ${annotationKey}`,
+            "AnnotationService",
+        );
+
+        this.parentHost.onAnnotationChanged(
+            libraryID,
+            annotationKey,
+            annotation.parentItem,
+        );
     }
 
     /* ================================================================ */

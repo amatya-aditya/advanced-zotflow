@@ -149,6 +149,11 @@ export class ParentHost implements IParentProxy {
         return path.join(...segments) as string;
     }
 
+    public async getVaultConfig(): Promise<Record<string, any>> {
+        // @ts-expect-error vault.config is undocumented Obsidian API
+        return { ...this.app.vault.config };
+    }
+
     public async parseYaml(text: string): Promise<any> {
         return parseYaml(text);
     }
@@ -165,5 +170,41 @@ export class ParentHost implements IParentProxy {
 
     public onTaskUpdate(taskId: string, info: ITaskInfo): void {
         services.taskMonitor.onTaskUpdate(taskId, info);
+    }
+
+    public onAnnotationChanged(
+        libraryID: number,
+        annotationKey: string,
+        parentItemKey: string,
+    ): void {
+        services.taskMonitor.annotationChanged.emit(
+            libraryID,
+            annotationKey,
+            parentItemKey,
+        );
+    }
+
+    public onNoteChangedByEditor(
+        libraryID: number,
+        noteKey: string,
+        parentItemKey: string,
+    ): void {
+        services.taskMonitor.noteChangedByEditor.emit(
+            libraryID,
+            noteKey,
+            parentItemKey,
+        );
+    }
+
+    public onNoteChangedByNoteView(
+        libraryID: number,
+        noteKey: string,
+        parentItemKey: string,
+    ): void {
+        services.taskMonitor.noteChangedByNoteView.emit(
+            libraryID,
+            noteKey,
+            parentItemKey,
+        );
     }
 }

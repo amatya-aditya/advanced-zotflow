@@ -28,6 +28,7 @@ import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./ui/reader/view";
 import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
 import { services } from "./services/services";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
+import { ZotFlowEditableRegionExtension } from "ui/editor/zotflow-editable-region-extension";
 import { handleEditorDrop } from "ui/editor/citation-helper";
 
 import { openAttachment } from "utils/viewer";
@@ -45,7 +46,9 @@ import {
     LOCAL_ZOTERO_READER_VIEW_TYPE,
     LocalReaderView,
 } from "ui/reader/local-view";
+import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "ui/note-editor/view";
 import { ZotFlowCommentExtension } from "ui/editor/zotflow-comment-extension";
+import { ZotFlowRegionDecorationExtension } from "ui/editor/zotflow-region-decoration-extension";
 import { CitationSuggest } from "ui/editor/citation-suggest";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "epub", "html"];
@@ -94,19 +97,28 @@ export default class ZotFlow extends Plugin {
             LOCAL_ZOTERO_READER_VIEW_TYPE,
             (leaf) => new LocalReaderView(leaf),
         );
+        this.registerView(
+            NOTE_EDITOR_VIEW_TYPE,
+            (leaf) => new NoteEditorView(leaf),
+        );
 
         // Add tree view to left
         this.app.workspace.onLayoutReady(async () => {
             this.registerTreeView();
         });
 
-        this.registerEvent(
-            this.app.workspace.on("file-open", this.handleFileOpen.bind(this)),
-        );
+        // this.registerEvent(
+        //     this.app.workspace.on("file-open", this.handleFileOpen.bind(this)),
+        // );
 
-        // Register lock extension
-        this.registerEditorExtension([ZotFlowLockExtension()]);
+        // Register editor extensions
+        const isDefaultLocked = () => this.settings.defaultEditableRegionLocked;
+        this.registerEditorExtension([ZotFlowEditableRegionExtension()]);
+        this.registerEditorExtension([ZotFlowLockExtension(isDefaultLocked)]);
         // this.registerEditorExtension([ZotFlowCommentExtension()]);
+        this.registerEditorExtension([
+            ZotFlowRegionDecorationExtension(isDefaultLocked),
+        ]);
 
         // Register drop-to-cite handler
         this.registerEvent(

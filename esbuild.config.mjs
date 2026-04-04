@@ -41,6 +41,7 @@ const inlineWorkerPlugin = {
                 format: "iife",
                 target: "es2018",
                 minify: prod,
+                conditions: ["worker"],
                 plugins: [], // No plugins for the worker itself to avoid recursion if not needed
                 external: ["obsidian"],
             });

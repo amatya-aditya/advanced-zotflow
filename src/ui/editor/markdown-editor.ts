@@ -373,6 +373,11 @@ export class EmbeddableMarkdownEditor {
             this.editorEl.classList.add(options.cls);
         }
 
+        // Match Obsidian's default readable line width styling
+        if (app.vault.getConfig("readableLineLength") ?? true) {
+            this.editorEl.classList.add("is-readable-line-width");
+        }
+
         // Set the font-size to 1em
         this.editorEl.style.fontSize = "1em";
 

@@ -1479,7 +1479,7 @@
     margin-top: var(--size-4-1);
 }
 
-/* ── Multi-select dropdown ── */
+/* Multi-select dropdown */
 .zotflow-multiselect {
     position: relative;
     display: inline-block;
@@ -1656,4 +1656,20 @@
 .zotflow-template-test-actions {
     display: flex;
     justify-content: flex-end;
+}
+
+/* ============================================================
+    Note Editor View
+    ============================================================ */
+
+.zotflow-note-preview-content {
+    width: 100%;
+    height: 100%;
+}
+
+.zotflow-note-preview-empty {
+    padding: var(--size-4-8);
+    color: var(--text-muted);
+    text-align: center;
+    font-style: italic;
 }

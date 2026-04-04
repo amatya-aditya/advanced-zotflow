@@ -6,7 +6,7 @@ import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
 import { services } from "services/services";
 import { workerBridge } from "bridge";
 
-import { openAttachment } from "utils/viewer";
+import { openAttachment, openItemNote } from "utils/viewer";
 import {
     ZOTFLOW_CITATION_MIME,
     type ZotFlowCitationPayload,
@@ -79,6 +79,13 @@ export const NodeItem = ({
         if (nodeType === "item" && node.data.itemType === "attachment") {
             // Attachment: Open PDF
             await openAttachment(
+                node.data.libraryID,
+                node.data.key,
+                services.app,
+            );
+        } else if (nodeType === "item" && node.data.itemType === "note") {
+            // Child note: Open read-only preview
+            await openItemNote(
                 node.data.libraryID,
                 node.data.key,
                 services.app,
@@ -269,12 +276,72 @@ export const NodeItem = ({
                         }
                     });
             });
+            // Standalone attachments (no parent item) cannot have child notes
+            if (node.data.itemType !== "attachment") {
+                menu.addItem((item) => {
+                    item.setTitle("Create child note")
+                        .setIcon("sticky-note")
+                        .onClick(async () => {
+                            try {
+                                const noteKey =
+                                    await workerBridge.itemNote.createChildNote(
+                                        node.data.libraryID,
+                                        node.data.key,
+                                    );
+                                await openItemNote(
+                                    node.data.libraryID,
+                                    noteKey,
+                                    services.app,
+                                );
+                            } catch (err) {
+                                services.logService.error(
+                                    "Failed to create child note",
+                                    "TreeView",
+                                    err,
+                                );
+                                services.notificationService.notify(
+                                    "error",
+                                    "Failed to create child note.",
+                                );
+                            }
+                        });
+                });
+            }
+        } else if (nodeType === "item" && node.data.itemType === "note") {
+            menu.addItem((item) => {
+                item.setTitle("Delete note")
+                    .setIcon("trash-2")
+                    .onClick(async () => {
+                        try {
+                            await workerBridge.itemNote.deleteNote(
+                                node.data.libraryID,
+                                node.data.key,
+                            );
+                            services.taskMonitor.treeChanged.emit();
+                            services.notificationService.notify(
+                                "success",
+                                "Note deleted.",
+                            );
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to delete note",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to delete note.",
+                            );
+                        }
+                    });
+            });
         }
 
         if (
             nodeType === "collection" ||
             nodeType === "library" ||
-            (isTopLevelItem && node.data.itemType !== "note")
+            (isTopLevelItem && node.data.itemType !== "note") ||
+            (nodeType === "item" && node.data.itemType === "note")
         ) {
             menu.showAtMouseEvent(e.nativeEvent);
         }

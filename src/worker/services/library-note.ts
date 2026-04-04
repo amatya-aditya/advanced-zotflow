@@ -318,6 +318,7 @@ export class LibraryNoteService {
             "zotflow-locked: true",
             `zotero-key: \"${key}\"`,
             "item-version: 0",
+            `library-id: ${libraryID}`,
             "---",
             "",
         ].join("\n");

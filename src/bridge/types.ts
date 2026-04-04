@@ -41,6 +41,7 @@ export interface IParentProxy {
     indexFile(path: string): Promise<void>;
 
     // Utils
+    getVaultConfig(): Promise<Record<string, any>>;
     parseYaml(text: string): Promise<any>;
     stringifyYaml(obj: any): Promise<string>;
     joinPath(...segments: string[]): Promise<string>;
@@ -50,4 +51,23 @@ export interface IParentProxy {
 
     // Tasks
     onTaskUpdate(taskId: string, info: ITaskInfo): void;
+
+    // Events
+    onAnnotationChanged(
+        libraryID: number,
+        annotationKey: string,
+        parentItemKey: string,
+    ): void;
+
+    onNoteChangedByEditor(
+        libraryID: number,
+        noteKey: string,
+        parentItemKey: string,
+    ): void;
+
+    onNoteChangedByNoteView(
+        libraryID: number,
+        noteKey: string,
+        parentItemKey: string,
+    ): void;
 }

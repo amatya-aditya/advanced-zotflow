@@ -33,6 +33,7 @@ export class ZoteroReaderView extends ItemView {
     private bridge?: IframeReaderBridge;
     private colorScheme: ColorScheme = "light"; // Default to light
     private unsubscribeTaskMonitor?: () => void;
+    private unsubscribeAnnotationChanged?: () => void;
     private lastSyncTaskStatuses = new Map<string, ITaskInfo["status"]>();
     /** MD5 of the file blob used to init the reader, for extraction skip check. */
     private fileBlobMD5?: string;
@@ -350,6 +351,7 @@ export class ZoteroReaderView extends ItemView {
 
                 // Subscribe to sync events for live annotation updates
                 this.subscribeToSyncEvents();
+                this.subscribeToAnnotationChanges();
 
                 // Extract external annotations
                 this.extractExternalAnnotation();
@@ -386,6 +388,7 @@ export class ZoteroReaderView extends ItemView {
 
     async onClose() {
         this.unsubscribeTaskMonitor?.();
+        this.unsubscribeAnnotationChanged?.();
         if (this.bridge) {
             await this.bridge.dispose();
         }
@@ -471,6 +474,31 @@ export class ZoteroReaderView extends ItemView {
                 }
             },
         );
+    }
+
+    /**
+     * Subscribe to annotation-changed events (fired when the user edits
+     * an ANNO region in the markdown source note).  The upstream editor
+     * sync plugin already debounces at 2 s, so we refresh immediately.
+     */
+    private subscribeToAnnotationChanges() {
+        this.unsubscribeAnnotationChanged?.();
+
+        this.unsubscribeAnnotationChanged =
+            services.taskMonitor.annotationChanged.subscribe(
+                (libraryID, _annotationKey, parentItemKey) => {
+                    if (libraryID !== this.attachmentItem.libraryID) return;
+                    if (parentItemKey !== this.attachmentItem.key) return;
+
+                    this.refreshAnnotationsFromDB().catch((e) => {
+                        services.logService.error(
+                            "Failed to refresh reader annotations after markdown edit",
+                            "ZoteroReaderView",
+                            e,
+                        );
+                    });
+                },
+            );
     }
 
     /**

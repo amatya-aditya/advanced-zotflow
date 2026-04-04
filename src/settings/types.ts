@@ -60,6 +60,7 @@ export interface ZotFlowSettings {
     treeCollectionSort: CollectionSortOrder;
     treeItemSort: ItemSortOrder;
     linkedAttachmentBaseDir: string;
+    defaultEditableRegionLocked: boolean;
     defaultCitationFormat: CitationFormat;
     citationTrigger: string;
     citationPandocTemplate: string;
@@ -113,6 +114,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     treeCollectionSort: "name-asc",
     treeItemSort: "title-asc",
     linkedAttachmentBaseDir: "",
+    defaultEditableRegionLocked: true,
     defaultCitationFormat: "footnote",
     citationTrigger: "@@",
     citationPandocTemplate: "",

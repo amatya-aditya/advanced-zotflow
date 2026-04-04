@@ -1,4 +1,5 @@
 import { App } from "obsidian";
+import { EventBus } from "services/event-bus";
 import type { ITaskInfo } from "types/tasks";
 
 type TaskUpdateCallback = (tasks: ITaskInfo[]) => void;
@@ -7,6 +8,24 @@ type TaskUpdateCallback = (tasks: ITaskInfo[]) => void;
 export class TaskMonitor {
     private tasks: Map<string, ITaskInfo> = new Map();
     private subscribers: Set<TaskUpdateCallback> = new Set();
+
+    /** Fires when an annotation is created/updated/deleted (from editor or reader). */
+    public readonly annotationChanged = new EventBus<
+        [libraryID: number, annotationKey: string, parentItemKey: string]
+    >();
+
+    /** Fires when a child note is created or updated from the source-note editable region. */
+    public readonly noteChangedByEditor = new EventBus<
+        [libraryID: number, noteKey: string, parentItemKey: string]
+    >();
+
+    /** Fires when a child note is created or updated from the standalone NotePreviewView. */
+    public readonly noteChangedByNoteView = new EventBus<
+        [libraryID: number, noteKey: string, parentItemKey: string]
+    >();
+
+    /** Fires when the tree data should be refreshed (e.g. item deleted). */
+    public readonly treeChanged = new EventBus<[]>();
 
     constructor(private app: App) {}
 

@@ -1,5 +1,6 @@
 import { App } from "obsidian";
 import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "../ui/reader/view";
+import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "../ui/note-editor/view";
 import { workerBridge } from "../bridge";
 
 /**
@@ -55,5 +56,40 @@ export async function openAttachment(
         (activeLeaf.view as ZoteroReaderView).readerNavigate(
             JSON.parse(navigationInfo),
         );
+    }
+}
+
+/**
+ * Open a Zotero child note in the note editor view.
+ * Reuses an existing leaf if one is already showing the same note.
+ */
+export async function openItemNote(
+    libraryID: number,
+    noteKey: string,
+    app: App,
+) {
+    let activeLeaf;
+    const leaves = app.workspace.getLeavesOfType(NOTE_EDITOR_VIEW_TYPE);
+
+    for (const leaf of leaves) {
+        const view = leaf.view as NoteEditorView;
+        if (view) {
+            const state = view.getState();
+            if (state.libraryID === libraryID && state.noteKey === noteKey) {
+                activeLeaf = leaf;
+            }
+        }
+    }
+
+    if (activeLeaf) {
+        app.workspace.setActiveLeaf(activeLeaf);
+    } else {
+        activeLeaf = app.workspace.getLeaf("tab");
+        await activeLeaf.setViewState({
+            type: NOTE_EDITOR_VIEW_TYPE,
+            active: true,
+            state: { libraryID, noteKey },
+        });
+        app.workspace.revealLeaf(activeLeaf);
     }
 }

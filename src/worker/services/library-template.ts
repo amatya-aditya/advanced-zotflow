@@ -18,6 +18,8 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { getAnnotationJson } from "db/annotation";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { DbHelperService } from "./db-helper";
+import type { ConvertService } from "./convert";
+import type { Html2MdOptions } from "worker/convert";
 import type { NotePathService } from "./note-path";
 import type { CitationTemplateInput } from "services/citation-service";
 
@@ -118,6 +120,7 @@ export class LibraryTemplateService {
         private parentHost: IParentProxy,
         private dbHelper: DbHelperService,
         private notePathService: NotePathService,
+        private convertService: ConvertService,
     ) {
         this.initialize();
     }
@@ -135,6 +138,24 @@ export class LibraryTemplateService {
                 annotationID: input,
             };
             return encodeURIComponent(JSON.stringify(navInfo));
+        });
+        this.engine.registerFilter(
+            "wrap_editable",
+            (input: string, type: string, key: string) => {
+                if (!type || !key) return input;
+                return `<!-- ZF_${type}_BEG_${key} -->\n${input}\n<!-- ZF_${type}_END_${key} -->`;
+            },
+        );
+        this.engine.registerFilter("html2md", async (input: string) => {
+            if (!input) return "";
+            const vaultConfig = await this.parentHost.getVaultConfig();
+            const opts: Html2MdOptions = {
+                annotationImageFolder:
+                    this.settings.annotationImageFolder.replace(/\/$/, "") ||
+                    undefined,
+                strictLineBreaks: vaultConfig.strictLineBreaks,
+            };
+            return await this.convertService.html2md(input, opts);
         });
     }
 
@@ -201,6 +222,7 @@ export class LibraryTemplateService {
             finalFrontmatter["zotflow-locked"] = true;
             finalFrontmatter["zotero-key"] = item.key;
             finalFrontmatter["item-version"] = item.version;
+            finalFrontmatter["library-id"] = item.libraryID;
 
             // Stringify Frontmatter
             const frontmatterString =
@@ -495,7 +517,7 @@ export class LibraryTemplateService {
             type: annotation.type,
             authorName: annotation.authorName,
             text: this.sanitizeQuotesString(annotation.text || ""),
-            comment: this.sanitizeQuotesString(annotation.comment || ""),
+            comment: this.convertService.annoHtml2md(annotation.comment || ""),
             color: annotation.color,
             pageLabel: annotation.pageLabel,
             tags: annotation.tags?.map((t) => ({ tag: t.name })) || [],
