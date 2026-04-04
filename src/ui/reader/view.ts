@@ -33,6 +33,7 @@ export class ZoteroReaderView extends ItemView {
     private bridge?: IframeReaderBridge;
     private colorScheme: ColorScheme = "light"; // Default to light
     private unsubscribeTaskMonitor?: () => void;
+    private unsubscribeAnnotationChanged?: () => void;
     private lastSyncTaskStatuses = new Map<string, ITaskInfo["status"]>();
     /** MD5 of the file blob used to init the reader, for extraction skip check. */
     private fileBlobMD5?: string;
@@ -291,6 +292,11 @@ export class ZoteroReaderView extends ItemView {
                         savedViewState?.darkTheme ?? themeDefaults.darkTheme,
                 };
 
+                const libraryConfig =
+                    services.settings.librariesConfig[
+                        String(this.attachmentItem.libraryID)
+                    ];
+                const isReadOnly = libraryConfig?.mode === "readonly";
                 const isObsidianThemeMode = schemeSetting === "obsidian-theme";
                 const opts: Partial<CreateReaderOptions> = {
                     annotations: annotationJson,
@@ -299,6 +305,7 @@ export class ZoteroReaderView extends ItemView {
                     obsidianThemeMode: isObsidianThemeMode,
                     customThemes: services.viewStateService.getCustomThemes(),
                     ...themeOverrides,
+                    ...(isReadOnly ? { readOnly: true } : {}),
                 };
 
                 const contentType = this.attachmentItem.raw.data.contentType;
@@ -349,6 +356,7 @@ export class ZoteroReaderView extends ItemView {
 
                 // Subscribe to sync events for live annotation updates
                 this.subscribeToSyncEvents();
+                this.subscribeToAnnotationChanges();
 
                 // Extract external annotations
                 this.extractExternalAnnotation();
@@ -385,6 +393,7 @@ export class ZoteroReaderView extends ItemView {
 
     async onClose() {
         this.unsubscribeTaskMonitor?.();
+        this.unsubscribeAnnotationChanged?.();
         if (this.bridge) {
             await this.bridge.dispose();
         }
@@ -470,6 +479,30 @@ export class ZoteroReaderView extends ItemView {
                 }
             },
         );
+    }
+
+    /**
+     * Refresh reader annotations after source-note editable regions write back
+     * into IndexedDB through the annotation sync pipeline.
+     */
+    private subscribeToAnnotationChanges() {
+        this.unsubscribeAnnotationChanged?.();
+
+        this.unsubscribeAnnotationChanged =
+            services.taskMonitor.annotationChanged.subscribe(
+                (libraryID, _annotationKey, parentItemKey) => {
+                    if (libraryID !== this.attachmentItem.libraryID) return;
+                    if (parentItemKey !== this.attachmentItem.key) return;
+
+                    this.refreshAnnotationsFromDB().catch((error) => {
+                        services.logService.error(
+                            "Failed to refresh reader annotations after markdown edit",
+                            "ZoteroReaderView",
+                            error,
+                        );
+                    });
+                },
+            );
     }
 
     /**

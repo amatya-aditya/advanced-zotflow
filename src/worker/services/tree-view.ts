@@ -10,6 +10,7 @@ export type EntityMap = Record<
         contentType?: string;
         dateAdded?: string;
         dateModified?: string;
+        syncStatus?: string;
     }
 >;
 
@@ -185,6 +186,7 @@ export class TreeViewService {
                 contentType?: string,
                 dateAdded?: string,
                 dateModified?: string,
+                syncStatus?: string,
             ) => {
                 // Only register when the key is not registered
                 if (!entities[key]) {
@@ -197,6 +199,7 @@ export class TreeViewService {
                         contentType,
                         dateAdded,
                         dateModified,
+                        syncStatus,
                     };
                 }
             };
@@ -223,6 +226,7 @@ export class TreeViewService {
                         undefined,
                         item.dateAdded,
                         item.dateModified,
+                        item.syncStatus,
                     );
                 } else {
                     registerEntity(
@@ -235,6 +239,7 @@ export class TreeViewService {
                         undefined,
                         item.dateAdded,
                         item.dateModified,
+                        item.syncStatus,
                     );
                 }
 
@@ -264,6 +269,9 @@ export class TreeViewService {
                         libName,
                         "",
                         attContentType,
+                        undefined,
+                        undefined,
+                        att.syncStatus,
                     );
 
                     topology.push({

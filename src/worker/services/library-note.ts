@@ -210,13 +210,12 @@ export class LibraryNoteService {
 
         // Prepare data
         const item = await db.items.get({ libraryID, key });
-        const library = await db.libraries.get({ id: libraryID });
 
-        if (!item || !library) {
+        if (!item) {
             throw new ZotFlowError(
                 ZotFlowErrorCode.RESOURCE_MISSING,
                 "LibraryNoteService",
-                `Item or Library not found: ${key}`,
+                `Item not found: ${key}`,
             );
         }
 
@@ -227,10 +226,7 @@ export class LibraryNoteService {
 
             // If Cache lookup fails, resolve path from template
             if (!path) {
-                path = await this.notePathService.resolveLibraryNotePath(
-                    item,
-                    library.name,
-                );
+                path = await this.notePathService.resolveLibraryNotePath(item);
             }
 
             // Check physical file status
@@ -279,35 +275,95 @@ export class LibraryNoteService {
     }
 
     /**
+     * Fast path used by citation flows: guarantee a note path exists,
+     * creating a minimal stub immediately and scheduling a background render.
+     */
+    async ensureNotePath(libraryID: number, key: string): Promise<string> {
+        const cached = await this.parentHost.getFileByKey(key);
+        if (cached) return cached;
+
+        const item = await db.items.get({ libraryID, key });
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "LibraryNoteService",
+                `Item not found: ${key}`,
+            );
+        }
+
+        const targetPath =
+            await this.notePathService.resolveLibraryNotePath(item);
+        const fileCheck = await this.parentHost.checkFile(targetPath);
+        if (fileCheck.exists && fileCheck.frontmatter?.["zotero-key"] === key) {
+            return targetPath;
+        }
+
+        const notePath = fileCheck.exists
+            ? await this.resolveUniquePath(targetPath)
+            : targetPath;
+
+        const stub = [
+            "---",
+            "zotflow-locked: true",
+            `zotero-key: "${key}"`,
+            "item-version: 0",
+            `library-id: ${libraryID}`,
+            "---",
+            "",
+            "",
+        ].join("\n");
+        await this.parentHost.writeTextFile(notePath, stub);
+        await this.parentHost.indexFile(notePath);
+
+        this.triggerUpdate(libraryID, key, {}, true).catch((error) =>
+            this.parentHost.log(
+                "error",
+                `Background note render failed for ${key}`,
+                "LibraryNoteService",
+                error,
+            ),
+        );
+
+        return notePath;
+    }
+
+    /**
      * ============================================================
      * Execution Helpers (The Workers)
      * ============================================================
      */
 
     /**
+     * Find a unique path by appending `(N)` before `.md` when needed.
+     */
+    private async resolveUniquePath(path: string): Promise<string> {
+        let fileCheck = await this.parentHost.checkFile(path);
+        if (!fileCheck.exists) return path;
+
+        let notePath = path;
+        let counter = 1;
+        const maxRetries = 100;
+        while (fileCheck.exists && counter < maxRetries) {
+            notePath = path.replace(/\.md$/, ` (${counter}).md`);
+            fileCheck = await this.parentHost.checkFile(notePath);
+            counter++;
+        }
+        if (counter >= maxRetries) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.FILE_WRITE_FAILED,
+                "LibraryNoteService",
+                "Could not find a unique filename",
+            );
+        }
+
+        return notePath;
+    }
+
+    /**
      * Perform file creation
      */
     private async performCreate(item: AnyIDBZoteroItem, path: string) {
-        // If file exists but is not our note (collision), create a file with different name
-        let fileCheck = await this.parentHost.checkFile(path);
-        let notePath = path;
-
-        if (fileCheck.exists) {
-            let counter = 1;
-            const maxRetries = 100;
-            while (fileCheck.exists && counter < maxRetries) {
-                notePath = path.replace(/\.md$/, ` (${counter}).md`);
-                fileCheck = await this.parentHost.checkFile(notePath);
-                counter++;
-            }
-            if (counter >= maxRetries) {
-                throw new ZotFlowError(
-                    ZotFlowErrorCode.FILE_WRITE_FAILED,
-                    "LibraryNoteService",
-                    "Could not find a unique filename",
-                );
-            }
-        }
+        const notePath = await this.resolveUniquePath(path);
 
         // Create empty file first
         await this.parentHost.writeTextFile(notePath, "");
@@ -319,7 +375,7 @@ export class LibraryNoteService {
         );
 
         // Render Item may throw ZotFlowError (Template Error), let it bubble
-        const content = await this.templateService.renderItem(
+        const content = await this.templateService.renderLibrarySourceNote(
             item,
             templateContent,
             {},
@@ -353,7 +409,7 @@ export class LibraryNoteService {
                 fileCheck.path,
             );
 
-            const content = await this.templateService.renderItem(
+            const content = await this.templateService.renderLibrarySourceNote(
                 item,
                 templateContent,
                 fileCheck.frontmatter || {},

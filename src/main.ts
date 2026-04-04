@@ -28,6 +28,8 @@ import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./ui/reader/view";
 import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
 import { services } from "./services/services";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
+import { ZotFlowEditableRegionExtension } from "ui/editor/zotflow-editable-region-extension";
+import { handleEditorDrop } from "ui/editor/citation-helper";
 
 import { openAttachment } from "utils/viewer";
 import { ActivityCenterModal } from "ui/activity-center/modal";
@@ -44,7 +46,10 @@ import {
     LOCAL_ZOTERO_READER_VIEW_TYPE,
     LocalReaderView,
 } from "ui/reader/local-view";
+import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "ui/note-editor/view";
 import { ZotFlowCommentExtension } from "ui/editor/zotflow-comment-extension";
+import { ZotFlowRegionDecorationExtension } from "ui/editor/zotflow-region-decoration-extension";
+import { CitationSuggest } from "ui/editor/citation-suggest";
 import {
     WORKFLOW_VIEW_TYPE,
     WORKFLOW_EXTENSION,
@@ -70,6 +75,7 @@ export default class ZotFlow extends Plugin {
     settings: ZotFlowSettings;
     viewStates: Record<string, ViewStateEntry>;
     customThemes: CustomReaderTheme[] = [];
+    private citationSuggest!: CitationSuggest;
 
     async onload() {
         // Load settings
@@ -109,6 +115,10 @@ export default class ZotFlow extends Plugin {
             (leaf) => new LocalReaderView(leaf),
         );
         this.registerView(
+            NOTE_EDITOR_VIEW_TYPE,
+            (leaf) => new NoteEditorView(leaf),
+        );
+        this.registerView(
             WORKFLOW_VIEW_TYPE,
             (leaf) => new ZotFlowWorkflowView(leaf),
         );
@@ -145,9 +155,25 @@ export default class ZotFlow extends Plugin {
             }),
         );
 
-        // Register lock extension
-        this.registerEditorExtension([ZotFlowLockExtension()]);
+        // Register editor extensions
+        const isDefaultLocked = () => this.settings.defaultEditableRegionLocked;
+        this.registerEditorExtension([ZotFlowEditableRegionExtension()]);
+        this.registerEditorExtension([
+            ZotFlowLockExtension(isDefaultLocked),
+        ]);
         this.registerEditorExtension([ZotFlowCommentExtension()]);
+        this.registerEditorExtension([
+            ZotFlowRegionDecorationExtension(isDefaultLocked),
+        ]);
+
+        // Register drop-to-cite handler
+        this.registerEvent(
+            this.app.workspace.on("editor-drop", handleEditorDrop),
+        );
+
+        // Register citation suggest
+        this.citationSuggest = new CitationSuggest();
+        this.registerEditorSuggest(this.citationSuggest);
 
         // Register protocol handler for zotflow URIs
         // Usage: obsidian://zotflow?filePath=path/to/file.md
@@ -234,6 +260,15 @@ export default class ZotFlow extends Plugin {
 
         this.addRibbonIcon("zotero-search", "ZotFlow: Search Zotero", () => {
             new ZoteroSearchModal(this.app, this.settings).open();
+        });
+
+        this.addCommand({
+            id: "insert-citation",
+            name: "Insert Citation",
+            editorCallback: () => {
+                this.citationSuggest.triggerManually();
+            },
+            hotkeys: [{ modifiers: ["Alt"], key: "c" }],
         });
 
         this.addCommand({

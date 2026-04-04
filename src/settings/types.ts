@@ -11,7 +11,12 @@ export type ReaderColorScheme =
     | "obsidian-theme";
 
 /** Settings tab identifier. */
-export type TabSection = "sync" | "webdav" | "cache" | "general";
+export type TabSection =
+    | "sync"
+    | "webdav"
+    | "cache"
+    | "general"
+    | "citation";
 
 /** Sort order for collections in the tree view. */
 export type CollectionSortOrder = "name-asc" | "name-desc";
@@ -24,6 +29,9 @@ export type ItemSortOrder =
     | "modified-old"
     | "added-new"
     | "added-old";
+
+/** Citation insertion format. */
+export type CitationFormat = "pandoc" | "footnote" | "wikilink" | "citekey";
 
 /** Per-library sync configuration. */
 export interface LibraryConfig {
@@ -80,6 +88,13 @@ export interface ZotFlowSettings {
     recentItems: RecentItem[];
     maxRecentItems: number;
     linkedAttachmentBaseDir: string;
+    defaultEditableRegionLocked: boolean;
+    defaultCitationFormat: CitationFormat;
+    citationTrigger: string;
+    citationPandocTemplate: string;
+    citationFootnoteRefTemplate: string;
+    citationFootnoteTemplate: string;
+    citationWikilinkTemplate: string;
     baseViewFolder: string;
 }
 
@@ -131,6 +146,13 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     recentItems: [],
     maxRecentItems: 10,
     linkedAttachmentBaseDir: "",
+    defaultEditableRegionLocked: true,
+    defaultCitationFormat: "footnote",
+    citationTrigger: "@@",
+    citationPandocTemplate: "",
+    citationFootnoteRefTemplate: "",
+    citationFootnoteTemplate: "",
+    citationWikilinkTemplate: "",
     baseViewFolder: "ZotFlow/Bases",
 };
 

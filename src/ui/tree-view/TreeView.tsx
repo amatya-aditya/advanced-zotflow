@@ -46,6 +46,7 @@ export type ViewNode = {
     nodeType: "library" | "collection" | "item" | "spacer";
     dateAdded?: string;
     dateModified?: string;
+    syncStatus?: string;
 };
 
 function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
@@ -83,6 +84,7 @@ function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
             contentType: entity.contentType,
             dateAdded: entity.dateAdded,
             dateModified: entity.dateModified,
+            syncStatus: entity.syncStatus,
 
             // Initialize Children
             children: [],
@@ -648,11 +650,40 @@ export const ZotFlowTree = () => {
         loadTree();
     }, []);
 
+    // Refresh tree data when a child note is created or updated
+    useEffect(() => {
+        const refreshHandler = async () => {
+            try {
+                await workerBridge.treeView.refreshTree();
+                const flat = await workerBridge.treeView.getOptimizedTree();
+                setRawData(flat);
+            } catch (err) {
+                services.logService.error(
+                    "Failed to refresh tree after note change",
+                    "TreeView",
+                    err,
+                );
+            }
+        };
+        const unsub1 =
+            services.taskMonitor.noteChangedByEditor.subscribe(refreshHandler);
+        const unsub2 =
+            services.taskMonitor.noteChangedByNoteView.subscribe(
+                refreshHandler,
+            );
+        const unsub3 =
+            services.taskMonitor.treeChanged.subscribe(refreshHandler);
+        return () => {
+            unsub1();
+            unsub2();
+            unsub3();
+        };
+    }, []);
+
     // Prevent react-dnd from interfering with global events
     const voidElement = useMemo(() => document.createElement("div"), []);
 
     const handleRefresh = async () => {
-        setLoading(true);
         try {
             await workerBridge.treeView.refreshTree();
             const flat = await workerBridge.treeView.getOptimizedTree();
@@ -663,8 +694,6 @@ export const ZotFlowTree = () => {
                 "TreeView",
                 err,
             );
-        } finally {
-            setLoading(false);
         }
     };
 

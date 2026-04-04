@@ -3,6 +3,7 @@ import { SyncSection } from "./sections/sync-section";
 import { WebDavSection } from "./sections/webdav-section";
 import { CacheSection } from "./sections/cache-section";
 import { GeneralSection } from "./sections/general-section";
+import { CitationSection } from "./sections/citation-section";
 
 import type ZotFlow from "main";
 import type { TabSection } from "./types";
@@ -63,6 +64,13 @@ export class ZotFlowSettingTab extends PluginSettingTab {
                 );
                 generalSection.render(contentContainer);
                 break;
+            case "citation":
+                const citationSection = new CitationSection(
+                    this.plugin,
+                    refreshUI,
+                );
+                citationSection.render(contentContainer);
+                break;
         }
     }
 
@@ -80,6 +88,7 @@ export class ZotFlowSettingTab extends PluginSettingTab {
             { id: "sync", label: "Sync", icon: "user" },
             { id: "webdav", label: "WebDAV", icon: "cloud" },
             { id: "cache", label: "Cache", icon: "database" },
+            { id: "citation", label: "Citation", icon: "quote" },
         ];
 
         tabs.forEach((tab) => {

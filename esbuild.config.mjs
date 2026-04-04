@@ -41,6 +41,7 @@ const inlineWorkerPlugin = {
                 format: "iife",
                 target: "es2018",
                 minify: prod,
+                conditions: ["worker"],
                 alias: {
                     dexie: "dexie/dist/dexie.mjs",
                 },

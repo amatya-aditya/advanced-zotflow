@@ -105,6 +105,21 @@ ZotFlow caches downloaded attachment files locally for fast reopening.
 
 ---
 
+## 8. Optional: Linked Attachment Base Directory
+
+If you use Zotero's **Linked Attachment Base Directory** feature (Zotero → Preferences → Advanced → Files and Folders), you need to tell ZotFlow where those files live so it can open them.
+
+1. Go to **Settings → ZotFlow → General**.
+2. Find the **Linked Attachment Base Directory** field.
+3. Enter the **same absolute path** you configured in Zotero (e.g., `D:\Papers` on Windows or `/Users/name/Papers` on macOS).
+4. ZotFlow will now resolve any attachment whose path starts with `attachments:` by prepending this base directory.
+
+> **Example:** An attachment stored as `attachments:papers/myresearch.pdf` in Zotero will be resolved to `D:\Papers\papers\myresearch.pdf`.
+
+If you don't use linked attachments in Zotero, you can skip this step.
+
+---
+
 ## What's Next?
 
 - **[Reading & Annotating](reading-and-annotating.md)** — Open attachments in the built-in reader and start highlighting.

@@ -14,6 +14,8 @@ import { AnnotationService } from "./services/annotation";
 import { KeyService } from "./services/key";
 import { DbHelperService } from "./services/db-helper";
 import { NotePathService } from "./services/note-path";
+import { ConvertService } from "./services/convert";
+import { ItemNoteService } from "./services/item-note";
 import { TaskManager } from "./tasks/manager";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { db } from "db/db";
@@ -79,7 +81,7 @@ export interface WorkerAPI {
     webdav: WebDavService;
     treeView: TreeViewService;
     libraryNote: LibraryNoteService;
-
+    itemNote: ItemNoteService;
     localNote: LocalNoteService;
     conflict: ConflictService;
     annotation: AnnotationService;
@@ -140,7 +142,7 @@ let _sync: SyncService | undefined;
 let _treeView: TreeViewService | undefined;
 let _template: LibraryTemplateService | undefined;
 let _libraryNote: LibraryNoteService | undefined;
-
+let _itemNote: ItemNoteService | undefined;
 let _localNote: LocalNoteService | undefined;
 let _localTemplate: LocalTemplateService | undefined;
 let _conflict: ConflictService | undefined;
@@ -148,6 +150,7 @@ let _annotation: AnnotationService | undefined;
 let _key: KeyService | undefined;
 let _dbHelper: DbHelperService | undefined;
 let _notePath: NotePathService | undefined;
+let _convert: ConvertService | undefined;
 let _pdfProcessor: PDFProcessWorker | undefined;
 let _taskManager: TaskManager | undefined;
 let _currentSettings: ZotFlowSettings | undefined;
@@ -161,6 +164,7 @@ function assertInitialized() {
         !_treeView ||
         !_template ||
         !_libraryNote ||
+        !_itemNote ||
         !_pdfProcessor ||
         !_localNote ||
         !_localTemplate ||
@@ -169,6 +173,7 @@ function assertInitialized() {
         !_key ||
         !_dbHelper ||
         !_notePath ||
+        !_convert ||
         !_taskManager ||
         !_currentSettings
     ) {
@@ -240,13 +245,16 @@ const exposedApi: WorkerAPI = {
                 parentHost,
                 blobUrls,
             );
+            _notePath = new NotePathService(settings, _dbHelper);
+            _convert = new ConvertService();
 
             _template = new LibraryTemplateService(
                 settings,
                 parentHost,
                 _dbHelper,
+                _notePath,
+                _convert,
             );
-            _notePath = new NotePathService(settings, _dbHelper);
             _libraryNote = new LibraryNoteService(
                 settings,
                 _template,
@@ -254,6 +262,12 @@ const exposedApi: WorkerAPI = {
                 _attachment,
                 _pdfProcessor,
                 _notePath,
+            );
+            _itemNote = new ItemNoteService(
+                settings,
+                parentHost,
+                _convert,
+                _libraryNote,
             );
 
             _localTemplate = new LocalTemplateService(settings, parentHost);
@@ -266,7 +280,11 @@ const exposedApi: WorkerAPI = {
 
             _conflict = new ConflictService(parentHost);
 
-            _annotation = new AnnotationService(_libraryNote, parentHost);
+            _annotation = new AnnotationService(
+                _libraryNote,
+                parentHost,
+                _convert,
+            );
             _key = new KeyService(_zotero, parentHost);
 
             _taskManager = new TaskManager(parentHost);
@@ -347,6 +365,16 @@ const exposedApi: WorkerAPI = {
                 "Worker not initialized",
             );
         return Comlink.proxy(_libraryNote);
+    },
+
+    get itemNote() {
+        if (!_itemNote)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_itemNote);
     },
 
     get localNote() {
@@ -626,7 +654,7 @@ const exposedApi: WorkerAPI = {
         _treeView!.updateSettings(settings);
         _template!.updateSettings(settings);
         _libraryNote!.updateSettings(settings);
-
+        _itemNote!.updateSettings(settings);
         _localNote!.updateSettings(settings);
         _localTemplate!.updateSettings(settings);
         _notePath!.updateSettings(settings);

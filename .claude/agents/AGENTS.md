@@ -66,7 +66,7 @@ processing.
 │       │     ├── webdav.ts       (WebDAV file download)       │
 │       │     ├── library-note.ts (library source note CRUD)   │
 │       │     ├── local-note.ts   (local source note CRUD)     │
-│       │     ├── note-path.ts    (LiquidJS note path resolution) │
+│       │     ├── other-template.ts (LiquidJS path + citation templates) │
 │       │     ├── library-template.ts (LiquidJS library templates) │
 │       │     ├── local-template.ts (LiquidJS local templates) │
 │       │     ├── tree-view.ts    (tree topology builder)      │
@@ -329,7 +329,7 @@ src/
 │   │   ├── webdav.ts               # WebDavService (file download, verify)
 │   │   ├── library-note.ts         # LibraryNoteService (library source note CRUD)
 │   │   ├── local-note.ts           # LocalNoteService (local source note CRUD)
-│   │   ├── note-path.ts            # NotePathService (LiquidJS note path resolution)
+│   │   ├── other-template.ts       # OtherTemplateService (LiquidJS path + citation templates)
 │   │   ├── library-template.ts     # LibraryTemplateService (LiquidJS for library items)
 │   │   ├── local-template.ts       # LocalTemplateService (LiquidJS for local files)
 │   │   ├── tree-view.ts            # TreeViewService (builds flattened topology)

@@ -92,7 +92,6 @@ export class NotePathService {
     /** Resolve the vault path for a library (Zotero) item source note. */
     async resolveLibraryNotePath(
         item: AnyIDBZoteroItem,
-        libraryName: string,
         templateOverride?: string,
     ): Promise<string> {
         const template =
@@ -102,6 +101,9 @@ export class NotePathService {
 
         const raw = item.raw || {};
         const data = (raw.data || {}) as unknown as Record<string, unknown>;
+
+        const library = await db.libraries.get(item.libraryID);
+        const libraryName = library?.name || "Unknown";
 
         let creators: { name: string }[] = [];
         if (raw.meta?.creatorsSummary) {
@@ -213,9 +215,7 @@ export class NotePathService {
                 `Item not found: ${libraryID}/${key}`,
             );
         }
-        const library = await db.libraries.get(libraryID);
-        const libraryName = library?.name || "Unknown";
-        return this.resolveLibraryNotePath(item, libraryName, pathTemplate);
+        return this.resolveLibraryNotePath(item, pathTemplate);
     }
 
     /** Preview the resolved path for a local file with a custom path template. */

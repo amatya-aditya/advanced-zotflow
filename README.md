@@ -6,6 +6,13 @@ ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply in
 
 ## Features Added in This Fork
 
+### v0.6.0 integration
+
+- **Upstream citation system imported** — inline citation insertion now supports pandoc, wikilink, footnote, and raw citekey formats, including drag-and-drop and autocomplete.
+- **Zotero item note editing imported** — child Zotero notes can now be created, opened, edited, and deleted from inside the plugin.
+- **Reader citation actions imported** — the embedded reader now supports upstream citation-oriented annotation copy flows without removing the fork’s richer plain-text annotation drag output.
+- **Editable-region support imported** — upstream editable regions now coexist with the fork’s preserved user-content zone and companion-note workflow.
+
 ### v0.5.4
 
 - **Source note co-location** — when creating a companion note, the source note moves into a subfolder named after itself, keeping source and companion notes together. Subsequent companions reuse the same folder.

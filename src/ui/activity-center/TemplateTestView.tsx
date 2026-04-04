@@ -6,13 +6,24 @@ import { ItemPickerModal } from "ui/modals/item-picker";
 import { FilePickerModal } from "ui/modals/file-picker";
 import { createEmbeddableMarkdownEditor } from "ui/editor/markdown-editor";
 import { ObsidianIcon } from "ui/ObsidianIcon";
+import { MultiSelectDropdown } from "ui/activity-center/MultiSelectDropdown";
 
 import type { EmbeddableMarkdownEditor } from "ui/editor/markdown-editor";
+import type { MultiSelectOption } from "ui/activity-center/MultiSelectDropdown";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { TFile } from "obsidian";
+import type { AnnotationJSON } from "types/zotero-reader";
 
-type TemplateContext = "library" | "local" | "library-path" | "local-path";
+type TemplateContext =
+    | "library"
+    | "local"
+    | "library-path"
+    | "local-path"
+    | "citation-pandoc"
+    | "citation-wikilink"
+    | "citation-footnote-ref"
+    | "citation-footnote";
 type OutputMode = "preview" | "source";
 
 const CONTEXT_LABELS: Record<TemplateContext, string> = {
@@ -20,25 +31,58 @@ const CONTEXT_LABELS: Record<TemplateContext, string> = {
     local: "Local Source Note",
     "library-path": "Library Source Note Path",
     "local-path": "Local Source Note Path",
+    "citation-pandoc": "Citation Pandoc",
+    "citation-wikilink": "Citation Wikilink",
+    "citation-footnote-ref": "Citation Footnote Reference",
+    "citation-footnote": "Citation Footnote Definition",
 };
 
 function needsLibraryItem(ctx: TemplateContext): boolean {
-    return ctx === "library" || ctx === "library-path";
+    return (
+        ctx === "library" ||
+        ctx === "library-path" ||
+        ctx === "citation-pandoc" ||
+        ctx === "citation-wikilink" ||
+        ctx === "citation-footnote-ref" ||
+        ctx === "citation-footnote"
+    );
 }
 
-interface SelectedItem {
-    libraryID: number;
-    key: string;
-    title: string;
+function isCitationContext(ctx: TemplateContext): boolean {
+    return (
+        ctx === "citation-pandoc" ||
+        ctx === "citation-wikilink" ||
+        ctx === "citation-footnote-ref" ||
+        ctx === "citation-footnote"
+    );
+}
+
+const MAX_ANNOTATION_LABEL_LENGTH = 30;
+
+function annotationLabel(a: AnnotationJSON): string {
+    const text = a.text || a.comment || a.id;
+    if (text.length <= MAX_ANNOTATION_LABEL_LENGTH) return text;
+    return text.slice(0, MAX_ANNOTATION_LABEL_LENGTH) + "…";
 }
 
 /** Template testing view for the Activity Center. */
 export const TemplateTestView: React.FC = () => {
     const [context, setContext] = useState<TemplateContext>("library");
 
-    const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null);
+    const [selectedItem, setSelectedItem] = useState<AnyIDBZoteroItem | null>(
+        null,
+    );
     const [selectedFile, setSelectedFile] =
         useState<TFileWithoutParentAndVault | null>(null);
+
+    // Annotations for citation preview
+    const [availableAnnotations, setAvailableAnnotations] = useState<
+        AnnotationJSON[]
+    >([]);
+    const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<
+        string[]
+    >([]);
+    const [loadingAnnotations, setLoadingAnnotations] = useState(false);
 
     const [template, setTemplate] = useState("");
     const [rendered, setRendered] = useState("");
@@ -175,6 +219,30 @@ export const TemplateTestView: React.FC = () => {
                                 "local",
                             );
                         break;
+                    case "citation-pandoc":
+                        defaultTpl =
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                                "pandoc",
+                            );
+                        break;
+                    case "citation-wikilink":
+                        defaultTpl =
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                                "wikilink",
+                            );
+                        break;
+                    case "citation-footnote-ref":
+                        defaultTpl =
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                                "footnote-ref",
+                            );
+                        break;
+                    case "citation-footnote":
+                        defaultTpl =
+                            await workerBridge.libraryTemplate.getDefaultCitationTemplate(
+                                "footnote",
+                            );
+                        break;
                 }
                 setTemplate(defaultTpl);
             } catch {
@@ -189,16 +257,49 @@ export const TemplateTestView: React.FC = () => {
     useEffect(() => {
         setSelectedItem(null);
         setSelectedFile(null);
+        setAvailableAnnotations([]);
+        setSelectedAnnotationIds([]);
     }, [needsLibraryItem(context)]);
+
+    // Fetch annotations when a library item is picked (for citation contexts)
+    useEffect(() => {
+        if (!selectedItem) {
+            setAvailableAnnotations([]);
+            setSelectedAnnotationIds([]);
+            return;
+        }
+        let cancelled = false;
+        setLoadingAnnotations(true);
+        void (async () => {
+            try {
+                const apiKey = services.settings.zoteroapikey;
+                const annots =
+                    await workerBridge.annotation.getAllItemAnnotations(
+                        selectedItem.libraryID,
+                        selectedItem.key,
+                        apiKey,
+                    );
+                if (!cancelled) {
+                    setAvailableAnnotations(annots);
+                    setSelectedAnnotationIds([]);
+                }
+            } catch {
+                if (!cancelled) {
+                    setAvailableAnnotations([]);
+                }
+            } finally {
+                if (!cancelled) setLoadingAnnotations(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedItem]);
 
     const handlePick = useCallback(() => {
         if (needsLibraryItem(context)) {
             new ItemPickerModal(services.app, (item: AnyIDBZoteroItem) => {
-                setSelectedItem({
-                    libraryID: item.libraryID,
-                    key: item.key,
-                    title: item.title || "Untitled",
-                });
+                setSelectedItem(item);
                 setRendered("");
                 setError("");
             }).open();
@@ -232,17 +333,37 @@ export const TemplateTestView: React.FC = () => {
                     return;
                 }
                 if (context === "library") {
-                    result = await workerBridge.libraryTemplate.previewItem(
-                        selectedItem.libraryID,
-                        selectedItem.key,
-                        currentTemplate,
-                    );
-                } else {
+                    result =
+                        await workerBridge.libraryTemplate.previewLibrarySourceNote(
+                            selectedItem.libraryID,
+                            selectedItem.key,
+                            currentTemplate,
+                        );
+                } else if (context === "library-path") {
                     result = await workerBridge.notePath.previewLibraryNotePath(
                         selectedItem.libraryID,
                         selectedItem.key,
                         currentTemplate,
                     );
+                } else {
+                    const selectedAnnotations =
+                        selectedAnnotationIds.length > 0
+                            ? availableAnnotations.filter((a) =>
+                                  selectedAnnotationIds.includes(a.id),
+                              )
+                            : undefined;
+                    result =
+                        await workerBridge.libraryTemplate.previewCitationTemplate(
+                            {
+                                item: selectedItem,
+                                annotations:
+                                    selectedAnnotations &&
+                                    selectedAnnotations.length > 0
+                                        ? selectedAnnotations
+                                        : undefined,
+                            },
+                            currentTemplate,
+                        );
                 }
             } else {
                 if (!selectedFile) {
@@ -276,11 +397,25 @@ export const TemplateTestView: React.FC = () => {
         } finally {
             setRendering(false);
         }
-    }, [context, selectedItem, selectedFile, template]);
+    }, [
+        context,
+        selectedItem,
+        selectedFile,
+        template,
+        selectedAnnotationIds,
+        availableAnnotations,
+    ]);
 
     const selectionLabel = needsLibraryItem(context)
         ? (selectedItem?.title ?? "No item selected")
         : (selectedFile?.path ?? "No file selected");
+
+    const annotationOptions: MultiSelectOption[] = availableAnnotations.map(
+        (a) => ({
+            value: a.id,
+            label: `[${a.type}] ${annotationLabel(a)}`,
+        }),
+    );
 
     return (
         <div className="zotflow-template-test">
@@ -320,6 +455,23 @@ export const TemplateTestView: React.FC = () => {
                         {selectionLabel}
                     </span>
                 </div>
+
+                {/* Annotation picker for citation contexts */}
+                {isCitationContext(context) && selectedItem && (
+                    <div className="zotflow-template-test-annotation-row">
+                        <MultiSelectDropdown
+                            options={annotationOptions}
+                            selected={selectedAnnotationIds}
+                            onChange={setSelectedAnnotationIds}
+                            placeholder={
+                                loadingAnnotations
+                                    ? "Loading…"
+                                    : "Annotations (optional)"
+                            }
+                            disabled={loadingAnnotations}
+                        />
+                    </div>
+                )}
             </div>
 
             {/* ── Side-by-side panels ── */}

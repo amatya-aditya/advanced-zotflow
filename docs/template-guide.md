@@ -1,6 +1,6 @@
 # ZotFlow — Template Guide
 
-ZotFlow uses [LiquidJS](https://liquidjs.com) templates to render **source notes** — Obsidian markdown files generated from Zotero items or local attachments. This document covers both template types, all available variables, built-in filters, and the rendering pipeline.
+ZotFlow uses [LiquidJS](https://liquidjs.com) templates across four systems: **source notes** (Zotero and local), **citation formatting**, and **note path resolution**. This guide covers all template types, their context variables, built-in filters, and the rendering pipeline.
 
 ---
 
@@ -15,6 +15,14 @@ ZotFlow uses [LiquidJS](https://liquidjs.com) templates to render **source notes
 - [Local Source Note Template](#local-source-note-template)
     - [Context Variables](#local-context-variables)
     - [Default Template](#default-local-template)
+- [Citation Templates](#citation-templates)
+    - [Citation Context Variables](#citation-context-variables)
+    - [Default Citation Templates](#default-citation-templates)
+- [Path Templates](#path-templates)
+    - [Library Path Variables](#library-path-variables)
+    - [Local Path Variables](#local-path-variables)
+    - [Default Path Templates](#default-path-templates)
+- [Template Preview](#template-preview)
 - [Custom Filters](#custom-filters)
 - [Frontmatter Handling](#frontmatter-handling)
 - [Tips & Examples](#tips--examples)
@@ -23,12 +31,14 @@ ZotFlow uses [LiquidJS](https://liquidjs.com) templates to render **source notes
 
 ## Overview
 
-There are **two independent template systems**:
+ZotFlow has **four template systems**:
 
-| Template Type          | Service                | Renders notes for…                                  |
-| ---------------------- | ---------------------- | --------------------------------------------------- |
-| **Zotero Source Note** | `TemplateService`      | Items synced from Zotero (books, papers, etc.)      |
-| **Local Source Note**  | `LocalTemplateService` | Local vault files opened in the Local Zotero Reader |
+| Template Type          | Purpose                                               |
+| ---------------------- | ----------------------------------------------------- |
+| **Zotero Source Note** | Content of source notes for Zotero library items      |
+| **Local Source Note**  | Content of source notes for local vault files         |
+| **Citation Templates** | Inline citations (pandoc, wikilink, footnote formats) |
+| **Path Templates**     | File paths for where source notes are created         |
 
 Both use the same LiquidJS engine, but expose different context variables. If no custom template file is configured, a built-in default template is used.
 
@@ -36,16 +46,29 @@ Both use the same LiquidJS engine, but expose different context variables. If no
 
 ## Settings
 
-Configure templates in **Settings → General**:
+Configure templates in **Settings → General** and **Settings → Citation**:
 
-| Setting                           | Description                                                       | Example                                |
-| --------------------------------- | ----------------------------------------------------------------- | -------------------------------------- |
-| **Template Path**                 | Vault-relative path to a Zotero source note template file         | `templates/SourceNoteTemplate.md`      |
-| **Default Source Note Folder**    | Folder where Zotero source notes are created                      | `Source/ZotFlow`                       |
-| **Local Source Note Template**    | Vault-relative path to a local source note template file          | `templates/LocalSourceNoteTemplate.md` |
-| **Local Source Note Folder**      | Folder where local source notes are created                       | `Source/ZotFlow/Local`                 |
-| **Auto Import Annotation Images** | Extract area/ink annotation images from PDFs during note creation | Toggle                                 |
-| **Annotation Image Folder**       | Folder where extracted annotation images are saved                | `Attachments/ZotFlow`                  |
+### Source Note Settings (General)
+
+| Setting                           | Description                                                       | Example                                   |
+| --------------------------------- | ----------------------------------------------------------------- | ----------------------------------------- |
+| **Template Path**                 | Vault-relative path to a Zotero source note template file         | `templates/SourceNoteTemplate.md`         |
+| **Note Path Template**            | LiquidJS template for Zotero source note file paths               | `Source/{{libraryName}}/@{{citationKey}}` |
+| **Local Source Note Template**    | Vault-relative path to a local source note template file          | `templates/LocalSourceNoteTemplate.md`    |
+| **Local Note Path Template**      | LiquidJS template for local source note file paths                | `Source/Local/@{{basename}}`              |
+| **Auto Import Annotation Images** | Extract area/ink annotation images from PDFs during note creation | Toggle                                    |
+| **Annotation Image Folder**       | Folder where extracted annotation images are saved                | `Attachments/ZotFlow`                     |
+
+### Citation Settings
+
+| Setting                          | Description                                                | Default      |
+| -------------------------------- | ---------------------------------------------------------- | ------------ |
+| **Default Citation Format**      | Format used when no modifier key is held                   | `footnote`   |
+| **Trigger Character**            | String that opens the citation suggest popup in the editor | `@@`         |
+| **Pandoc Template**              | LiquidJS template for pandoc citations                     | _(built-in)_ |
+| **Footnote Reference Template**  | Template for the inline `[^key]` marker                    | _(built-in)_ |
+| **Footnote Definition Template** | Template for the footnote definition text                  | _(built-in)_ |
+| **Wikilink Template**            | Template for wikilink citations                            | _(built-in)_ |
 
 If **Template Path** or **Local Source Note Template** is left empty, the built-in default template is used.
 
@@ -93,6 +116,7 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `item.date`                  | `string \| null`          | Publication date string (as entered in Zotero)                        |
 | `item.dateAdded`             | `string`                  | ISO timestamp when item was added to Zotero                           |
 | `item.dateModified`          | `string`                  | ISO timestamp when item was last modified                             |
+| `item.accessDate`            | `string \| null`          | Date the item was last accessed                                       |
 | `item.abstractNote`          | `string \| undefined`     | Abstract text                                                         |
 | `item.publicationTitle`      | `string \| undefined`     | Journal/conference name                                               |
 | `item.publisher`             | `string \| undefined`     | Publisher name                                                        |
@@ -108,6 +132,7 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `item.ISBN`                  | `string \| undefined`     | ISBN                                                                  |
 | `item.ISSN`                  | `string \| undefined`     | ISSN                                                                  |
 | `item.tags`                  | `Array<{ tag, type? }>`   | Tags attached to the item                                             |
+| `item.itemPaths`             | `string[]`                | Collection paths for the item (e.g., `["Research/ML"]`)               |
 | `item.attachments`           | `AttachmentContext[]`     | Child attachment items (PDFs, etc.) — see below                       |
 | `item.annotations`           | `AnnotationContext[]`     | Direct child annotations (for standalone attachment items)            |
 | `item.attachmentAnnotations` | `AnnotationContext[]`     | All annotations across all attachments (flattened)                    |
@@ -151,8 +176,9 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `annotation.color`        | `string \| undefined`   | Hex color code (e.g., `"#ffd400"`)                           |
 | `annotation.pageLabel`    | `string \| undefined`   | Page label where the annotation appears                      |
 | `annotation.tags`         | `Array<{ tag, type? }>` | Tags                                                         |
-| `annotation.dateCreated`  | `string`                | ISO timestamp                                                |
-| `annotation.dateModified` | `string`                | ISO timestamp                                                |
+| `annotation.dateAdded`    | `string`                | ISO timestamp when annotation was created                    |
+| `annotation.dateModified` | `string`                | ISO timestamp when annotation was last modified              |
+| `annotation.raw`          | `AnnotationJSON`        | Raw annotation object (for advanced use with filters)        |
 
 #### `settings` — Plugin Settings
 
@@ -258,8 +284,8 @@ The template context has three top-level keys: `item`, `settings`, and `path`.
 | `annotation.color`        | `string \| undefined`   | Hex color code                                                               |
 | `annotation.pageLabel`    | `string \| undefined`   | Page label                                                                   |
 | `annotation.tags`         | `Array<{ tag, type? }>` | Tags                                                                         |
-| `annotation.dateCreated`  | `string \| undefined`   | ISO timestamp                                                                |
-| `annotation.dateModified` | `string \| undefined`   | ISO timestamp                                                                |
+| `annotation.dateAdded`    | `string \| undefined`   | ISO timestamp when annotation was created                                    |
+| `annotation.dateModified` | `string \| undefined`   | ISO timestamp when annotation was last modified                              |
 | `annotation.raw`          | `AnnotationJSON`        | Raw annotation object (for advanced use with `process_raw_anno_json` filter) |
 
 #### `path` — Top-Level Variable
@@ -276,7 +302,7 @@ Same as the Zotero template. `settings.annotationImageFolder` is the most common
 
 ```liquid
 ---
-zotflow-locked: true
+zotflow-locked: {{true}}
 zotflow-local-attachment: [[{{ path }}]]
 ---
 {%- capture quote_string %}{{ newline }}> {% endcapture -%}
@@ -285,7 +311,7 @@ zotflow-local-attachment: [[{{ path }}]]
 {%- if item.annotations.length > 0 -%}
 ## Annotations
 {%- for annotation in item.annotations -%}
-%% ZOTFLOW_ANNO_{{ annotation.key }}_BEG {{ annotation.raw | process_raw_anno_json }} %%
+
 > [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [[{{item.path}}#page={{ annotation.pageLabel }}#annotation={{ annotation.key | process_nav_info }}|{{ item.name }}, p.{{ annotation.pageLabel }}]]
 {%- if annotation.type == "ink" or annotation.type == "image"-%}
 > > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
@@ -298,13 +324,202 @@ zotflow-local-attachment: [[{{ path }}]]
 {%- endif -%}
 ^{{ annotation.key }}
 
-%% ZOTFLOW_ANNO_{{ annotation.key }}_END %%
-
 {%- endfor -%}
 {%- endif -%}
 ```
 
-> **Important:** The `%% ZOTFLOW_ANNO_..._BEG %%` and `%% ZOTFLOW_ANNO_..._END %%` comment markers are **mandatory** in local source note templates. They are used internally by the local annotation system to track and round-trip annotation data — the raw annotation JSON is encoded inside the `_BEG` marker so annotations can be reconstructed when the note is re-read. If you omit these markers in a custom local template, ZotFlow will not be able to parse annotations back from the note, and annotation syncing between the reader and the note will break.
+---
+
+## Citation Templates
+
+Citation templates control how inline citations are rendered when you drag items, use the suggest popup, or copy from the reader. There are four citation template slots — one for each format. See the [Citation Guide](citation-guide.md) for how to insert citations.
+
+### Citation Context Variables
+
+All citation templates share the same context:
+
+| Variable                | Type                  | Description                                                              |
+| ----------------------- | --------------------- | ------------------------------------------------------------------------ |
+| `item.key`              | `string`              | Zotero item key                                                          |
+| `item.citationKey`      | `string`              | Citation key (e.g., from Better BibTeX), or empty                        |
+| `item.title`            | `string`              | Item title                                                               |
+| `item.creators`         | `Array<{ name }>`     | Creator list with combined `name` field                                  |
+| `item.date`             | `string`              | Publication date string                                                  |
+| `item.itemType`         | `string`              | Item type (e.g., `"journalArticle"`)                                     |
+| `item.url`              | `string \| undefined` | URL                                                                      |
+| `item.DOI`              | `string \| undefined` | DOI                                                                      |
+| `item.publicationTitle` | `string \| undefined` | Journal/conference name                                                  |
+| `item.publisher`        | `string \| undefined` | Publisher                                                                |
+| `item.volume`           | `string \| undefined` | Volume                                                                   |
+| `item.issue`            | `string \| undefined` | Issue                                                                    |
+| `item.pages`            | `string \| undefined` | Page range                                                               |
+| `item.tags`             | `Array<{ tag }>`      | Tags                                                                     |
+| `item.*`                |                       | All other Zotero item metadata fields are also available                 |
+| `notePath`              | `string`              | Vault-relative path to the source note (e.g., `"Source/@smith2024"`)     |
+| `annotations`           | `Array`               | Selected annotations (empty array if none). See annotation fields below. |
+
+#### `annotations[]` — Selected Annotations
+
+When a citation is copied with annotations selected, the annotation data is available:
+
+| Variable                  | Type                  | Description                                 |
+| ------------------------- | --------------------- | ------------------------------------------- |
+| `annotation.key`          | `string`              | Annotation ID / item key                    |
+| `annotation.type`         | `string`              | `"highlight"`, `"note"`, `"image"`, `"ink"` |
+| `annotation.text`         | `string \| null`      | Highlighted text                            |
+| `annotation.comment`      | `string \| undefined` | User comment                                |
+| `annotation.color`        | `string \| undefined` | Hex color code                              |
+| `annotation.pageLabel`    | `string \| undefined` | Page number                                 |
+| `annotation.tags`         | `Array<{ tag }>`      | Tags                                        |
+| `annotation.dateAdded`    | `string`              | ISO timestamp                               |
+| `annotation.dateModified` | `string`              | ISO timestamp                               |
+
+Use `annotations.size` to check if annotations were included, and `annotations | map: 'pageLabel'` to extract page numbers.
+
+### Default Citation Templates
+
+#### Pandoc
+
+```liquid
+[@{{ item.citationKey | default: item.key }}{% if annotations.size > 0 %}{% assign pages = annotations | map: 'pageLabel' | compact | uniq | join: ', ' %}{% if pages != empty %}, pp. {{ pages }}{% endif %}{% endif %}]
+```
+
+**Output example:** `[@smith2024, pp. 3, 7]`
+
+#### Footnote Reference (inline marker)
+
+```liquid
+[^{{ item.citationKey | default: item.key }}]
+```
+
+**Output example:** `[^smith2024]`
+
+#### Footnote Definition (appended to document)
+
+```liquid
+{%- if item.creators.length > 1 -%}
+{{ item.creators[0].name }} et al.
+{%- elsif item.creators.length == 1 -%}
+{{ item.creators[0].name }}
+{%- else -%}
+Unknown Author
+{%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}).
+```
+
+**Output example:** `Smith et al., *Deep Learning for NLP* (2024).`
+
+#### Wikilink
+
+```liquid
+{%- if annotations.size > 0 -%}
+{%- for annotation in annotations -%}
+[[{{ notePath }}#^{{ annotation.key }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }}), p. {{ annotation.pageLabel }}]]
+{%- if forloop.last == false %}, {% endif -%}
+{%- endfor -%}
+{%- else -%}
+[[{{ notePath }}|{{ item.creators[0].name | default: "Unknown" }} ({{ item.date | slice: 0, 4 }})]]
+{%- endif -%}
+```
+
+**Output examples:**
+
+- Without annotations: `[[Source/@smith2024|Smith (2024)]]`
+- With annotations: `[[Source/@smith2024#^ABC123|Smith (2024), p. 3]], [[Source/@smith2024#^DEF456|Smith (2024), p. 7]]`
+
+---
+
+## Path Templates
+
+Path templates determine the file path where source notes are created. They use the same LiquidJS syntax but produce a **file path** instead of note content. Each path segment is sanitized (illegal characters removed, reserved names handled).
+
+### Library Path Variables
+
+| Variable           | Type              | Description                           |
+| ------------------ | ----------------- | ------------------------------------- |
+| `key`              | `string`          | Zotero item key                       |
+| `citationKey`      | `string`          | Citation key (e.g., `"smith2024"`)    |
+| `libraryID`        | `number`          | Library ID                            |
+| `itemType`         | `string`          | Item type                             |
+| `title`            | `string`          | Item title                            |
+| `creators`         | `Array<{ name }>` | Creator list                          |
+| `date`             | `string`          | Publication date                      |
+| `year`             | `string`          | 4-digit year extracted from date      |
+| `libraryName`      | `string`          | Library display name                  |
+| `publicationTitle` | `string`          | Journal/conference name               |
+| `publisher`        | `string`          | Publisher                             |
+| `tags`             | `Array<{ tag }>`  | Tags                                  |
+| `itemPaths`        | `string[]`        | Collection paths for the item         |
+| `*`                |                   | All other Zotero item metadata fields |
+
+### Local Path Variables
+
+| Variable    | Type     | Description                                        |
+| ----------- | -------- | -------------------------------------------------- |
+| `basename`  | `string` | Filename without extension (e.g., `"myPaper"`)     |
+| `name`      | `string` | Full filename (e.g., `"myPaper.pdf"`)              |
+| `path`      | `string` | Vault-relative path (e.g., `"Papers/myPaper.pdf"`) |
+| `extension` | `string` | File extension without dot (e.g., `"pdf"`)         |
+
+### Default Path Templates
+
+**Library:**
+
+```liquid
+Source/{{libraryName}}/@{{citationKey | default: title | default: key}}
+```
+
+**Output example:** `Source/My Library/@smith2024`
+
+**Local:**
+
+```liquid
+Source/Local/@{{basename}}
+```
+
+**Output example:** `Source/Local/@myPaper`
+
+### Path Template Tips
+
+- Use `/` to create folder hierarchies: `References/{{year}}/{{citationKey}}`
+- The `@` prefix is a convention to visually distinguish source notes — it's optional.
+- `| default:` chains provide fallbacks: `{{citationKey | default: title | default: key}}`
+- Collection paths: `{{itemPaths[0]}}` gives the first collection path (e.g., `"Research/ML"`)
+
+---
+
+## Template Preview
+
+The **Activity Center** (ribbon icon or `ZotFlow: Open Activity Center` command) includes a **Template Test** tab where you can edit and preview any template in real time — no need to create actual notes to see the output.
+
+### How to Use
+
+1. Open the Activity Center and switch to the **Template Test** tab.
+2. Select a **template context** from the dropdown. There are eight options:
+
+| Context                          | Description                            |
+| -------------------------------- | -------------------------------------- |
+| **Library Source Note**          | Zotero source note template            |
+| **Local Source Note**            | Local source note template             |
+| **Library Source Note Path**     | Path template for Zotero source notes  |
+| **Local Source Note Path**       | Path template for local source notes   |
+| **Citation Pandoc**              | Pandoc citation template               |
+| **Citation Wikilink**            | Wikilink citation template             |
+| **Citation Footnote Reference**  | Footnote reference (`[^key]`) template |
+| **Citation Footnote Definition** | Footnote definition template           |
+
+3. Click **Pick Zotero Item** (for library contexts) or **Pick Local File** (for local contexts) to select the item the template will render against. The selected item/file name appears below the button.
+4. For citation contexts, an **annotation selector** dropdown appears once an item is picked. Use the toggle-all checkbox or individual checkboxes to select which annotations to include in the citation render.
+5. The left panel contains a **template editor** (CodeMirror). When you switch contexts, it loads the default template for that context. Edit it freely — changes stay within the preview and don't affect your saved templates.
+6. Click **Render** to generate the output. The right panel shows the result in two modes:
+    - **Source** — raw rendered Markdown text (read-only editor)
+    - **Preview** — styled Markdown preview (rendered via Obsidian's `MarkdownRenderer`)
+7. Use the **Copy** button on the template panel header to copy the template to your clipboard.
+
+### Tips
+
+- Use Template Preview to experiment with LiquidJS syntax and see how variables resolve for a real item before committing to a custom template file.
+- The annotation multi-select dropdown is only shown for citation contexts and lets you test how citation templates behave with zero, one, or multiple annotations.
+- If rendering fails, an error message appears below the output panel describing the issue (e.g., LiquidJS syntax errors, missing variables).
 
 ---
 
@@ -464,3 +679,33 @@ If you want all annotations regardless of which attachment they belong to:
 - {{ annotation.text }} ({{ annotation.color }})
 {%- endfor -%}
 ```
+
+### Custom Pandoc Citation with Annotation Text
+
+Include the highlighted text snippet directly in a pandoc citation:
+
+```liquid
+[@{{ item.citationKey | default: item.key }}{% if annotations.size > 0 %}, "{{ annotations[0].text | truncate: 40 }}"{% endif %}]
+```
+
+**Output:** `[@smith2024, "The model achieves state-of-the-art…"]`
+
+### Wikilink Citation That Links to Each Annotation
+
+```liquid
+{%- for annotation in annotations -%}
+[[{{ notePath }}#^{{ annotation.key }}|p. {{ annotation.pageLabel }}]]{% unless forloop.last %} {% endunless %}
+{%- endfor -%}
+```
+
+**Output:** `[[Source/@smith2024#^ABC123|p. 3]] [[Source/@smith2024#^DEF456|p. 7]]`
+
+### Path Template Using Collection Hierarchy
+
+Organize source notes by Zotero collection structure:
+
+```liquid
+References/{{ itemPaths[0] | default: "Unsorted" }}/@{{ citationKey | default: key }}
+```
+
+**Output:** `References/Research/Machine Learning/@smith2024`

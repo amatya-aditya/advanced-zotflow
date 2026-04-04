@@ -3,6 +3,7 @@ import { LogService } from "./log-service";
 import { NotificationService } from "./notification-service";
 import { ViewStateService } from "./view-state-service";
 import { TaskMonitor } from "./task-monitor";
+import { CitationService } from "./citation-service";
 import { WorkflowService } from "./workflow-service";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -25,6 +26,7 @@ class ServiceLocator {
     private _notificationService: NotificationService;
     private _viewStateService: ViewStateService;
     private _taskMonitor: TaskMonitor;
+    private _citationService: CitationService;
     private _workflowService: WorkflowService;
 
     private _onBookmarksChanged: Set<() => void> = new Set();
@@ -46,6 +48,7 @@ class ServiceLocator {
         this._indexService.load();
 
         this._taskMonitor = new TaskMonitor(this._app);
+        this._citationService = new CitationService();
         this._workflowService = new WorkflowService(this._logService);
 
         this._initialized = true;
@@ -203,6 +206,11 @@ class ServiceLocator {
     get taskMonitor() {
         this.assertInitialized();
         return this._taskMonitor;
+    }
+
+    get citationService() {
+        this.assertInitialized();
+        return this._citationService;
     }
 
     get workflowService() {

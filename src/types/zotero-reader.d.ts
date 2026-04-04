@@ -27,6 +27,7 @@ export interface CreateReaderOptions {
     sidebarWidth?: number;
     primaryViewState?: Record<string, unknown>;
     secondaryViewState?: Record<string, unknown>;
+    readOnly?: boolean;
 }
 
 /** Discriminated union of all events the reader iframe can emit to the parent. */
@@ -72,6 +73,7 @@ export type ParentAPI = {
     getBlobUrlMap: () => Record<string, string>;
     handleEvent: (evt: ChildEvents) => void;
     isAndroidApp: () => boolean;
+    isLocalReader: () => boolean;
     getOrigin: () => string;
     getMathJaxConfig: () => any;
     getStyleSheets: () => StyleSheetList;
@@ -83,6 +85,10 @@ export type ParentAPI = {
         dataTransfer: DataTransfer,
         annotations: AnnotationJSON[],
         fromText?: boolean,
+    ) => void;
+    copyAnnotationCitation: (
+        annotations: AnnotationJSON[],
+        format: string,
     ) => void;
     createAnnotationEditor: (
         container: HTMLElement,

@@ -1,3 +1,6 @@
 [submodule "reader/reader"]
 	path = reader/reader
 	url = https://github.com/amatya-aditya/obsidian-zotero-reader.git
+[submodule "note-editor"]
+	path = note-editor/note-editor
+	url = https://github.com/duanxianpi/note-editor.git

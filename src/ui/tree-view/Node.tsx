@@ -6,9 +6,12 @@ import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
 import { services } from "services/services";
 import { workerBridge } from "bridge";
 
-import { openAttachment } from "utils/viewer";
-import { getNotePath } from "utils/utils";
+import { openAttachment, openItemNote } from "utils/viewer";
 import { generateBaseView } from "utils/base-generator";
+import {
+    ZOTFLOW_CITATION_MIME,
+    type ZotFlowCitationPayload,
+} from "ui/editor/citation-helper";
 
 /** Pixel indentation per tree depth level. */
 export const INDENT_SIZE = 20;
@@ -85,6 +88,12 @@ export const NodeItem = ({
             });
             // Attachment: Open PDF
             await openAttachment(
+                node.data.libraryID,
+                node.data.key,
+                services.app,
+            );
+        } else if (nodeType === "item" && node.data.itemType === "note") {
+            await openItemNote(
                 node.data.libraryID,
                 node.data.key,
                 services.app,
@@ -390,25 +399,87 @@ export const NodeItem = ({
                         }
                     });
             });
+
+            if (node.data.itemType !== "attachment") {
+                menu.addItem((item) => {
+                    item.setTitle("Create child note")
+                        .setIcon("sticky-note")
+                        .onClick(async () => {
+                            try {
+                                const noteKey =
+                                    await workerBridge.itemNote.createChildNote(
+                                        node.data.libraryID,
+                                        node.data.key,
+                                    );
+                                await openItemNote(
+                                    node.data.libraryID,
+                                    noteKey,
+                                    services.app,
+                                );
+                            } catch (err) {
+                                services.logService.error(
+                                    "Failed to create child note",
+                                    "TreeView",
+                                    err,
+                                );
+                                services.notificationService.notify(
+                                    "error",
+                                    "Failed to create child note.",
+                                );
+                            }
+                        });
+                });
+            }
+        } else if (nodeType === "item" && node.data.itemType === "note") {
+            menu.addItem((item) => {
+                item.setTitle("Delete note")
+                    .setIcon("trash-2")
+                    .onClick(async () => {
+                        try {
+                            await workerBridge.itemNote.deleteNote(
+                                node.data.libraryID,
+                                node.data.key,
+                            );
+                            services.taskMonitor.treeChanged.emit();
+                            services.notificationService.notify(
+                                "success",
+                                "Note deleted.",
+                            );
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to delete note",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to delete note.",
+                            );
+                        }
+                    });
+            });
         }
 
         if (
             nodeType === "collection" ||
             nodeType === "library" ||
-            (isTopLevelItem && node.data.itemType !== "note")
+            (isTopLevelItem && node.data.itemType !== "note") ||
+            (nodeType === "item" && node.data.itemType === "note")
         ) {
             menu.showAtMouseEvent(e.nativeEvent);
         }
     };
 
     const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
-        let link = "";
-        let dragText = "";
+        const isCitationDrag =
+            nodeType === "item" && node.data.itemType !== "attachment";
+        let plainText = node.data.name || "Untitled";
+        let dragText = node.data.name || "Untitled";
+
         if (node.data.itemType === "attachment") {
             const url = `obsidian://zotflow?type=open-attachment&libraryID=${node.data.libraryID}&key=${node.data.key}`;
-            link = `[${node.data.name}](${url})`;
-            dragText = node.data.name;
-        } else if (nodeType === "item" && node.data.itemType !== "attachment") {
+            plainText = `[${node.data.name}](${url})`;
+        } else if (isCitationDrag) {
             // Try force update the source note
             workerBridge.libraryNote
                 .triggerUpdate(node.data.libraryID, node.data.key)
@@ -420,27 +491,25 @@ export const NodeItem = ({
                     ),
                 );
 
+            const citationPayload: ZotFlowCitationPayload = {
+                type: "zotflow-citation",
+                libraryID: node.data.libraryID,
+                key: node.data.key,
+            };
+            e.dataTransfer.setData(
+                ZOTFLOW_CITATION_MIME,
+                JSON.stringify(citationPayload),
+            );
+
             const file = services.indexService.getFileByKey(node.data.key);
             if (file) {
-                link = services.app.fileManager.generateMarkdownLink(
+                plainText = services.app.fileManager.generateMarkdownLink(
                     file,
                     "",
                     "",
                     file.name.split(".").shift(),
                 );
                 dragText = file.name;
-            } else {
-                // const path = getNotePath({
-                //     citationKey: node.data.citationKey,
-                //     title: node.data.name,
-                //     key: node.data.key,
-                //     sourceNoteFolder: services.settings.sourceNoteFolder,
-                //     libraryName: node.data.libraryName,
-                // });
-                // const filename = path.split("/").pop()!;
-                // const alias = filename.split(".").shift()!;
-                // link = `[[${path}|${alias}]]`;
-                // dragText = filename;
             }
         }
 
@@ -469,7 +538,9 @@ export const NodeItem = ({
 
         const action = document.createElement("div");
         action.addClass("drag-ghost-action");
-        action.textContent = "Insert link here";
+        action.textContent = isCitationDrag
+            ? "Insert citation here"
+            : "Insert link here";
 
         ghost.appendChild(self);
         ghost.appendChild(action);
@@ -477,7 +548,7 @@ export const NodeItem = ({
         document.body.appendChild(ghost);
 
         // Set data for drag
-        e.dataTransfer.setData("text/plain", link);
+        e.dataTransfer.setData("text/plain", plainText);
         e.dataTransfer.setDragImage(ghost, 0, 0);
         e.dataTransfer.effectAllowed = "copy";
 

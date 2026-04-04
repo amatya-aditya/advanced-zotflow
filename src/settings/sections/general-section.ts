@@ -51,6 +51,24 @@ export class GeneralSection {
                 });
         });
 
+        zoteroSourceNote.addSetting((setting) => {
+            setting
+                .setName("Lock Editable Regions by Default")
+                .setDesc(
+                    "When enabled, editable regions in source notes start locked. Click the lock icon on a region to unlock it for editing.",
+                )
+                .addToggle((toggle) => {
+                    toggle.setValue(
+                        this.plugin.settings.defaultEditableRegionLocked,
+                    );
+                    toggle.onChange(async (value) => {
+                        this.plugin.settings.defaultEditableRegionLocked =
+                            value;
+                        await this.plugin.saveSettings();
+                    });
+                });
+        });
+
         const localSourceNote = new SettingGroup(containerEl);
         localSourceNote.setHeading("Local Attachment Source Note");
 

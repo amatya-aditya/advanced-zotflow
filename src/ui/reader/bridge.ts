@@ -21,6 +21,12 @@ import type { LocalDataManager } from "./local-data-manager";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { getLinkedLocalSourceNote } from "utils/file";
 import type { TFile } from "obsidian";
+import type { CitationFormat } from "settings/types";
+import {
+    ZOTFLOW_CITATION_MIME,
+    stripAnnotationForPayload,
+    type ZotFlowCitationPayload,
+} from "ui/editor/citation-helper";
 import {
     createEmbeddableMarkdownEditor,
     EmbeddableMarkdownEditor,
@@ -166,11 +172,31 @@ export class IframeReaderBridge {
         }
     }
 
+    private getParentItemKey(): string | undefined {
+        if (!this.attachmentItem) return undefined;
+        return this.attachmentItem.parentItem === ""
+            ? this.attachmentItem.key
+            : this.attachmentItem.parentItem;
+    }
+
+    private getReaderSourceNotePath(): string | undefined {
+        if (this.isLocal && this.localAttachment) {
+            return getLinkedLocalSourceNote(services.app, this.localAttachment)
+                ?.path;
+        }
+        const parentKey = this.getParentItemKey();
+        return parentKey
+            ? services.indexService.getFileByKey(parentKey)?.path
+            : undefined;
+    }
+
     private buildParentAPI(): ParentAPI {
         return {
             getBlobUrlMap: () => getBlobUrls(),
 
             isAndroidApp: () => Platform.isAndroidApp,
+
+            isLocalReader: () => this.isLocal,
 
             handleEvent: (evt) => {
                 // Forward hotkeys to Obsidian's document so its Keymap
@@ -305,59 +331,164 @@ export class IframeReaderBridge {
                 if (fromText) {
                     dataTransfer.setData(
                         "text/plain",
-                        annotations.map((a) => a.text).join("\n"),
+                        annotations
+                            .map((a) => a.text || "")
+                            .join("\n")
+                            .trim(),
                     );
                     return;
-                } else {
-                    if (this.isLocal && this.localAttachment) {
-                        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                        const note: TFileWithoutParentAndVault | null =
-                            getLinkedLocalSourceNote(
-                                services.app,
-                                this.localAttachment,
-                            );
+                }
 
-                        if (note) {
-                            const filePath = this.localAttachment.path;
-                            const fileName = this.localAttachment.name;
-                            const imgFolder = services.settings.annotationImageFolder.replace(/\/$/, "");
-                            const content = annotations.reduce((acc, anno) => {
-                                if (!anno.id) {
-                                    return acc + (anno.text || "") + "\n\n";
-                                }
-                                return acc + formatAnnotationCallout(
-                                    anno, fileName, imgFolder,
-                                    buildLocalLink(filePath, fileName, anno),
-                                ) + "\n\n";
-                            }, "");
-                            dataTransfer.setData("text/plain", content);
-                            return;
-                        }
-                    } else if (!this.isLocal && this.attachmentItem) {
-                        const note = services.indexService.getFileByKey(
-                            this.attachmentItem.parentItem === ""
-                                ? this.attachmentItem.key
-                                : this.attachmentItem.parentItem,
+                if (!this.isLocal && this.attachmentItem && annotations.length) {
+                    const parentKey = this.getParentItemKey();
+                    if (parentKey) {
+                        const payload: ZotFlowCitationPayload = {
+                            type: "zotflow-citation",
+                            libraryID: this.attachmentItem.libraryID,
+                            key: parentKey,
+                            annotations: annotations.map((annotation) =>
+                                stripAnnotationForPayload(annotation),
+                            ),
+                        };
+                        dataTransfer.setData(
+                            ZOTFLOW_CITATION_MIME,
+                            JSON.stringify(payload),
                         );
-                        if (note) {
-                            const att = this.attachmentItem;
-                            const fileName = att.title || att.key;
-                            const imgFolder = services.settings.annotationImageFolder.replace(/\/$/, "");
-                            const content = annotations.reduce((acc, anno) => {
-                                if (!anno.id) {
-                                    return acc + (anno.text || "") + "\n\n";
-                                }
-                                return acc + formatAnnotationCallout(
-                                    anno, fileName, imgFolder,
-                                    buildLibraryLink(fileName, att.libraryID, att.key, anno),
-                                ) + "\n\n";
-                            }, "");
-                            dataTransfer.setData("text/plain", content);
-                            return;
-                        }
                     }
                 }
+
+                if (this.isLocal && this.localAttachment) {
+                    const note: TFileWithoutParentAndVault | null =
+                        getLinkedLocalSourceNote(
+                            services.app,
+                            this.localAttachment,
+                        );
+
+                    if (note) {
+                        const filePath = this.localAttachment.path;
+                        const fileName = this.localAttachment.name;
+                        const imgFolder =
+                            services.settings.annotationImageFolder.replace(
+                                /\/$/,
+                                "",
+                            );
+                        const content = annotations.reduce((acc, anno) => {
+                            if (!anno.id) {
+                                return acc + (anno.text || "") + "\n\n";
+                            }
+                            return (
+                                acc +
+                                formatAnnotationCallout(
+                                    anno,
+                                    fileName,
+                                    imgFolder,
+                                    buildLocalLink(filePath, fileName, anno),
+                                ) +
+                                "\n\n"
+                            );
+                        }, "");
+                        dataTransfer.setData("text/plain", content.trim());
+                        return;
+                    }
+                } else if (!this.isLocal && this.attachmentItem) {
+                    const notePath = this.getReaderSourceNotePath();
+                    if (notePath) {
+                        const attachment = this.attachmentItem;
+                        const fileName = attachment.title || attachment.key;
+                        const imgFolder =
+                            services.settings.annotationImageFolder.replace(
+                                /\/$/,
+                                "",
+                            );
+                        const content = annotations.reduce((acc, anno) => {
+                            if (!anno.id) {
+                                return acc + (anno.text || "") + "\n\n";
+                            }
+                            return (
+                                acc +
+                                formatAnnotationCallout(
+                                    anno,
+                                    fileName,
+                                    imgFolder,
+                                    buildLibraryLink(
+                                        fileName,
+                                        attachment.libraryID,
+                                        attachment.key,
+                                        anno,
+                                    ),
+                                ) +
+                                "\n\n"
+                            );
+                        }, "");
+                        dataTransfer.setData("text/plain", content.trim());
+                        return;
+                    }
+                }
+
                 dataTransfer.setData("text/plain", " ");
+            },
+
+            copyAnnotationCitation: (
+                annotations: AnnotationJSON[],
+                format: string,
+            ) => {
+                void (async () => {
+                    try {
+                        if (format === "text") {
+                            const text = annotations
+                                .map((annotation) => annotation.text)
+                                .filter(Boolean)
+                                .join("\n");
+                            await navigator.clipboard.writeText(text.trim());
+                            return;
+                        }
+
+                        if (format === "embed") {
+                            const notePath = this.getReaderSourceNotePath();
+                            if (notePath) {
+                                const text = annotations
+                                    .map(
+                                        (annotation) =>
+                                            `![[${notePath}#^${annotation.id}]]`,
+                                    )
+                                    .join("\n");
+                                await navigator.clipboard.writeText(text);
+                            }
+                            return;
+                        }
+
+                        const parentKey = this.getParentItemKey();
+                        if (!this.attachmentItem || !parentKey) return;
+
+                        const citationFormat =
+                            format === "default"
+                                ? services.settings.defaultCitationFormat
+                                : (format as CitationFormat);
+                        const result = await services.citationService.resolve(
+                            {
+                                libraryID: this.attachmentItem.libraryID,
+                                key: parentKey,
+                                annotations: annotations.map((annotation) =>
+                                    stripAnnotationForPayload(annotation),
+                                ),
+                            },
+                            citationFormat,
+                        );
+                        if (!result) return;
+
+                        let text = result.citation;
+                        if (result.footnoteDef) {
+                            text += `\n${result.footnoteDef}`;
+                        }
+                        await navigator.clipboard.writeText(text);
+                    } catch (error) {
+                        services.logService.error(
+                            "Failed to copy annotation citation",
+                            "IframeReaderBridge",
+                            error,
+                        );
+                    }
+                })();
             },
 
             createAnnotationEditor: (
