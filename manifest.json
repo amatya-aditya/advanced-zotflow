@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-zotflow",
 	"name": "Obsidian ZotFlow",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"minAppVersion": "1.11.4",
 	"description": "Keep your research in flow!",
 	"author": "Xianpi Duan",
