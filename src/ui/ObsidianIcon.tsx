@@ -12,7 +12,7 @@ interface ObsidianIconProps {
 /** React wrapper that renders an Obsidian icon via `setIcon()` inside a ref-managed div. */
 export const ObsidianIcon = React.forwardRef<HTMLDivElement, ObsidianIconProps>(
     ({ icon, className, containerStyle, iconStyle, onClick }, forwardedRef) => {
-        const localRef = useRef<HTMLDivElement>(null);
+        const localRef = useRef<HTMLDivElement | null>(null);
 
         const setRefs = useCallback(
             (node: HTMLDivElement | null) => {
