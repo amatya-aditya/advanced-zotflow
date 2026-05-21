@@ -1,11 +1,13 @@
 import { db } from "db/db";
 import { ZoteroAPIService } from "./zotero";
+import { LibraryService } from "./library";
 import { normalizeItem, normalizeCollection, toZoteroDate } from "db/normalize";
 import pLimit from "p-limit";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
+import type { ItemIdentifier } from "worker/tasks/impl/batch-extract-images-task";
 
 const PULL_BULK_SIZE = 100;
 const UPDATE_BULK_SIZE = 50;
@@ -13,12 +15,11 @@ const MAX_PUSH_RETRIES = 3;
 
 /** Bidirectional sync engine — pulls items/collections from Zotero and pushes local changes. */
 export class SyncService {
-    private syncing = false;
-
     constructor(
         private zotero: ZoteroAPIService,
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
+        private library: LibraryService,
     ) {}
 
     public updateSettings(settings: ZotFlowSettings) {
@@ -37,14 +38,13 @@ export class SyncService {
             message: string,
         ) => void,
         libraryId?: number,
-    ): Promise<{ successCount: number; failCount: number }> {
-        if (this.syncing) {
-            this.parentHost.log(
-                "warn",
-                "Sync requested but already running.",
-                "SyncService",
-            );
-            return { successCount: 0, failCount: 0 };
+    ): Promise<{
+        successCount: number;
+        failCount: number;
+        changedItems: ItemIdentifier[];
+    }> {
+        if (signal?.aborted) {
+            return { successCount: 0, failCount: 0, changedItems: [] };
         }
 
         if (!navigator.onLine) {
@@ -95,11 +95,8 @@ export class SyncService {
                 "No libraries configured for sync.",
                 "SyncService",
             );
-            return { successCount: 0, failCount: 0 };
+            return { successCount: 0, failCount: 0, changedItems: [] };
         }
-
-        this.syncing = true;
-        this.parentHost.log("debug", "Starting sync", "SyncService");
 
         // Build the active library list for progress reporting
         const activeLibraries: number[] = [];
@@ -111,13 +108,12 @@ export class SyncService {
             if (lib && libConfig && libConfig.mode !== "ignored") {
                 activeLibraries.push(libraryId);
             } else {
-                this.syncing = false;
                 this.parentHost.log(
                     "warn",
                     `Library ${libraryId} is ignored or not found.`,
                     "SyncService",
                 );
-                return { successCount: 0, failCount: 0 };
+                return { successCount: 0, failCount: 0, changedItems: [] };
             }
         } else {
             for (const libKey of libraries) {
@@ -131,6 +127,9 @@ export class SyncService {
 
         let successCount = 0;
         let failCount = 0;
+        const changedItems: ItemIdentifier[] = [];
+
+        this.parentHost.log("debug", "Starting sync", "SyncService");
 
         try {
             const totalLibs = activeLibraries.length;
@@ -150,7 +149,7 @@ export class SyncService {
                 try {
                     // Logic: Pull Collections -> Pull Items -> Push Changes (if bidirectional)
                     await this.pullCollections(lib.type, libKey);
-                    await this.pullItems(lib.type, libKey);
+                    await this.pullItems(lib.type, libKey, changedItems);
 
                     if (libConfig.mode === "bidirectional") {
                         for (
@@ -169,7 +168,11 @@ export class SyncService {
                                 `Push returned 412 (attempt ${attempt + 1}/${MAX_PUSH_RETRIES}). Re-pulling before retry...`,
                                 "SyncService",
                             );
-                            await this.pullItems(lib.type, libKey);
+                            await this.pullItems(
+                                lib.type,
+                                libKey,
+                                changedItems,
+                            );
 
                             if (attempt === MAX_PUSH_RETRIES - 1) {
                                 this.parentHost.log(
@@ -180,6 +183,13 @@ export class SyncService {
                             }
                         }
                     }
+
+                    // Stamp the library's last-sync timestamp on success so
+                    // the Activity Center reflects the most recent run.
+                    await db.libraries.update(libKey, {
+                        syncedAt: new Date().toISOString().split(".")[0] + "Z",
+                    });
+
                     successCount++;
                 } catch (error: unknown) {
                     failCount++;
@@ -209,7 +219,7 @@ export class SyncService {
                 );
             }
 
-            return { successCount, failCount };
+            return { successCount, failCount, changedItems };
         } catch (error: any) {
             // Catastrophic failure (e.g., DB crash)
             this.parentHost.log("error", error.message, "SyncService", error);
@@ -220,7 +230,6 @@ export class SyncService {
             );
             throw error; // Re-throw so TaskLayer can track it as failed
         } finally {
-            this.syncing = false;
             this.parentHost.log("info", "Sync finished.", "SyncService");
         }
     }
@@ -485,7 +494,11 @@ export class SyncService {
     /* ================================================================ */
     /*  Item Pull                                                      */
     /* ================================================================ */
-    private async pullItems(libraryType: "user" | "group", libraryID: number) {
+    private async pullItems(
+        libraryType: "user" | "group",
+        libraryID: number,
+        changedItems?: ItemIdentifier[],
+    ) {
         if (!this.zotero) return;
 
         try {
@@ -575,6 +588,10 @@ export class SyncService {
                             const cleanItem = normalizeItem(newItem, libraryID);
                             cleanItem.syncStatus = "synced";
                             await db.items.put(cleanItem);
+                            changedItems?.push({
+                                libraryID,
+                                itemKey: cleanItem.key,
+                            });
                         }),
                     );
 
@@ -594,7 +611,11 @@ export class SyncService {
                 const deletedKeys = delResponse.getData().items;
 
                 if (deletedKeys && deletedKeys.length > 0) {
-                    await this.handlePullDeletions(libraryID, deletedKeys);
+                    await this.handlePullDeletions(
+                        libraryID,
+                        deletedKeys,
+                        changedItems,
+                    );
                 }
             }
 
@@ -622,6 +643,7 @@ export class SyncService {
     private async handlePullDeletions(
         libraryID: number,
         keysToDelete: string[],
+        changedItems?: ItemIdentifier[],
     ) {
         if (keysToDelete.length === 0) return;
 
@@ -656,6 +678,42 @@ export class SyncService {
                         serverCopyRaw: undefined,
                     });
                 } else {
+                    // Capture surviving top-level ancestor for post-sync
+                    // source-note refresh. Deleted annotations/notes/
+                    // attachments do not bump the parent's version, so
+                    // without this the parent's note would never refresh.
+                    if (changedItems && targetItem.parentItem) {
+                        const CHILD_TYPES = new Set([
+                            "annotation",
+                            "attachment",
+                            "note",
+                        ]);
+                        const MAX_DEPTH = 5;
+                        let ancestor = await db.items.get([
+                            libraryID,
+                            targetItem.parentItem,
+                        ]);
+                        let depth = 0;
+                        while (
+                            ancestor &&
+                            CHILD_TYPES.has(ancestor.itemType) &&
+                            ancestor.parentItem &&
+                            depth < MAX_DEPTH
+                        ) {
+                            ancestor = await db.items.get([
+                                libraryID,
+                                ancestor.parentItem,
+                            ]);
+                            depth++;
+                        }
+                        if (ancestor && !CHILD_TYPES.has(ancestor.itemType)) {
+                            changedItems.push({
+                                libraryID,
+                                itemKey: ancestor.key,
+                            });
+                        }
+                    }
+
                     const keysToRemove = family.map((i) => i.key);
                     await db.items.bulkDelete(
                         keysToRemove.map((k) => [libraryID, k]),
@@ -729,16 +787,35 @@ export class SyncService {
             .anyOf(dirtyParams)
             .toArray();
 
+        // When the API key lacks notes write permission for this library,
+        // skip note items on push — Zotero would 403 anyway. Locally-modified
+        // notes stay dirty so they can sync later if permissions change.
+        const hasNotesAccess = await this.library.hasNotesAccess(libraryID);
+        let filteredItems = dirtyItems;
+        if (!hasNotesAccess) {
+            filteredItems = dirtyItems.filter((i) => i.itemType !== "note");
+            const skipped = dirtyItems.length - filteredItems.length;
+            if (skipped > 0) {
+                this.parentHost.log(
+                    "warn",
+                    `Skipping ${skipped} dirty note item(s) on push for library ${libraryID} (no notes permission).`,
+                    "SyncService",
+                );
+            }
+        }
+
         this.parentHost.log(
             "debug",
-            `Dirty items to push: ${dirtyItems.length}`,
+            `Dirty items to push: ${filteredItems.length}`,
             "SyncService",
         );
 
-        if (dirtyItems.length === 0) return { retryNeeded: false };
+        if (filteredItems.length === 0) return { retryNeeded: false };
 
-        const deletions = dirtyItems.filter((i) => i.syncStatus === "deleted");
-        const upserts = dirtyItems.filter(
+        const deletions = filteredItems.filter(
+            (i) => i.syncStatus === "deleted",
+        );
+        const upserts = filteredItems.filter(
             (i) => i.syncStatus === "created" || i.syncStatus === "updated",
         );
 
@@ -826,8 +903,9 @@ export class SyncService {
                     );
 
                     if (item.syncStatus === "created") {
-                        delete itemRawData.key;
-                        delete itemRawData.data.key;
+                        // Keep client-provided key so the server adopts it
+                        itemRawData.key = item.key;
+                        itemRawData.data.key = item.key;
                         delete itemRawData.version;
                         delete itemRawData.data.version;
                     } else {
@@ -906,15 +984,22 @@ export class SyncService {
 
                             if (serverResponseItem.data) {
                                 newItem.raw = serverResponseItem;
-                                // If successful, update item with server response
-                                if (item.syncStatus === "created") {
+                                // For created items the server should echo
+                                // back our client-provided key. If it differs
+                                // (edge case), fall back to delete-old/insert-new.
+                                if (
+                                    item.syncStatus === "created" &&
+                                    serverResponseItem.key !== item.key
+                                ) {
                                     newItem.key = serverResponseItem.key;
                                     newItem.raw.key = serverResponseItem.key;
                                     idsToDelete.push(item.key);
                                 }
                             } else if (!serverResponseItem.isUnchanged) {
-                                // If unchanged, update item with unchanged data
-                                if (item.syncStatus === "created") {
+                                if (
+                                    item.syncStatus === "created" &&
+                                    serverResponseItem.key !== item.key
+                                ) {
                                     newItem.key = serverResponseItem.key;
                                     idsToDelete.push(item.key);
                                 }

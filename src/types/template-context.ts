@@ -52,6 +52,27 @@ export interface ItemTemplateContext {
     annotations: AnnotationTemplateContext[];
     attachmentAnnotations: AnnotationTemplateContext[];
     notes: NoteTemplateContext[];
+
+    // Cross-references (Zotero "Related" tab — dc:relation)
+    relatedItems: RelatedItemTemplateContext[];
+}
+
+/** Template rendering context for a Zotero "related" item (dc:relation). */
+export interface RelatedItemTemplateContext {
+    /** Item key (always present — parsed from the URI even if unresolved). */
+    key: string;
+    /** Library ID (always present — parsed from the URI). */
+    libraryID: number;
+    /** True when the related item was found in the local DB. */
+    resolved: boolean;
+    /** Title of the related item. Undefined when unresolved. */
+    title?: string;
+    /** Zotero item type. Undefined when unresolved. */
+    itemType?: string;
+    /** Citation key (e.g. Better BibTeX). Empty string or undefined when unresolved. */
+    citationKey?: string;
+    /** Vault path of that item's ZotFlow source note. Undefined when unresolved. */
+    notePath?: string;
 }
 
 /** Template rendering context for a Zotero attachment. */
@@ -95,5 +116,9 @@ export interface AnnotationTemplateContext {
     tags: Array<{ tag: string; type?: number }>;
     dateAdded: string;
     dateModified: string;
+    /** True for external annotations extracted from the embedded PDF. */
+    isExternal: boolean;
+    /** True when the annotation is read-only (external, or not authored by the user). */
+    readOnly: boolean;
     raw: AnnotationJSON;
 }

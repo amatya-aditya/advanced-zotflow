@@ -99,12 +99,6 @@ export class IndexService {
         }
     }
 
-    /** Return all indexed files (files with zotero-key frontmatter). */
-    public getAllIndexedFiles(): TFile[] {
-        if (!this._initialized) return [];
-        return Array.from(this.keyToFileMap.values());
-    }
-
     // Public query API
     public getFileByKey(key: string): TFile | undefined {
         if (!this._initialized) {
@@ -120,5 +114,16 @@ export class IndexService {
             );
         }
         return this.keyToFileMap.get(key);
+    }
+
+    /** Return all indexed files (files with zotero-key frontmatter). */
+    public getAllIndexedFiles(): TFile[] {
+        if (!this._initialized) return [];
+        return Array.from(this.keyToFileMap.values());
+    }
+
+    /** Return the raw zotero-key → TFile map for callers that need keyed access. */
+    public getIndexedFileMap(): ReadonlyMap<string, TFile> {
+        return this.keyToFileMap;
     }
 }

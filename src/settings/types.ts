@@ -33,6 +33,9 @@ export type ItemSortOrder =
 /** Citation insertion format. */
 export type CitationFormat = "pandoc" | "footnote" | "wikilink" | "citekey";
 
+/** Auto-copy mode applied when a new annotation is created in the reader. */
+export type AutoCopyAnnotationMode = "off" | "embed" | "text" | "citation";
+
 /** Per-library sync configuration. */
 export interface LibraryConfig {
     mode: LibrarySyncMode;
@@ -73,6 +76,7 @@ export interface ZotFlowSettings {
     librarySourceNoteTemplatePath: string;
     localSourceNoteTemplatePath: string;
     localSourceNoteFolder: string;
+    localSidecarFolder: string;
     sourceNoteFolder: string;
     librarySourceNotePathTemplate: string;
     localSourceNotePathTemplate: string;
@@ -89,6 +93,7 @@ export interface ZotFlowSettings {
     maxRecentItems: number;
     linkedAttachmentBaseDir: string;
     defaultEditableRegionLocked: boolean;
+    hideEditableRegionMarkers: boolean;
     defaultCitationFormat: CitationFormat;
     citationTrigger: string;
     citationPandocTemplate: string;
@@ -96,6 +101,10 @@ export interface ZotFlowSettings {
     citationFootnoteTemplate: string;
     citationWikilinkTemplate: string;
     baseViewFolder: string;
+    autoCopyAnnotation: AutoCopyAnnotationMode;
+    autoUpdateSourceNotesAfterSync: boolean;
+    autoDisableNoteImageTextTools: boolean;
+    epubFontFamily: string;
 }
 
 /** Persisted reader view state for a single attachment (local or zotero). */
@@ -133,6 +142,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
         "Source/{{libraryName}}/@{{citationKey | default: title | default: key}}",
     localSourceNoteTemplatePath: "",
     localSourceNoteFolder: "",
+    localSidecarFolder: "",
     localSourceNotePathTemplate: "Source/Local/@{{basename}}",
     autoImportAnnotationImages: false,
     annotationImageFolder: "",
@@ -147,6 +157,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     maxRecentItems: 10,
     linkedAttachmentBaseDir: "",
     defaultEditableRegionLocked: true,
+    hideEditableRegionMarkers: false,
     defaultCitationFormat: "footnote",
     citationTrigger: "@@",
     citationPandocTemplate: "",
@@ -154,6 +165,10 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     citationFootnoteTemplate: "",
     citationWikilinkTemplate: "",
     baseViewFolder: "ZotFlow/Bases",
+    autoCopyAnnotation: "off",
+    autoUpdateSourceNotesAfterSync: true,
+    autoDisableNoteImageTextTools: true,
+    epubFontFamily: "",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

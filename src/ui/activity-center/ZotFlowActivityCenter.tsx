@@ -4,8 +4,9 @@ import { SyncView } from "./SyncView";
 import { TasksView } from "./TasksView";
 import { TelemetryView } from "./TelemetryView";
 import { TemplateTestView } from "./TemplateTestView";
+import { RepairView } from "./RepairView";
 
-/** Tab container React component with Sync, Tasks, Telemetry, and Template tabs. */
+/** Tab container React component with Sync, Tasks, Telemetry, Template, and Repair tabs. */
 export const ZotFlowActivityCenter: React.FC = () => {
     const [activeTab, setActiveTab] = useState("sync");
 
@@ -13,6 +14,7 @@ export const ZotFlowActivityCenter: React.FC = () => {
         { id: "sync", label: "Sync", icon: "refresh-cw" },
         { id: "tasks", label: "Tasks", icon: "list" },
         { id: "template", label: "Template", icon: "code" },
+        { id: "repair", label: "Repair", icon: "wrench" },
         { id: "telemetry", label: "Telemetry", icon: "activity" },
     ];
 
@@ -41,6 +43,7 @@ export const ZotFlowActivityCenter: React.FC = () => {
                 {activeTab === "tasks" && <TasksView />}
                 {activeTab === "telemetry" && <TelemetryView />}
                 {activeTab === "template" && <TemplateTestView />}
+                {activeTab === "repair" && <RepairView />}
             </div>
         </>
     );

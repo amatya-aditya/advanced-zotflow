@@ -72,6 +72,7 @@ export interface MarkdownEditorProps {
     readOnly?: boolean;
     sourceMode?: boolean;
     showLineNumbers?: boolean;
+    readableLineLength?: boolean;
 
     onEnter: (
         editor: EmbeddableMarkdownEditor,
@@ -92,6 +93,7 @@ const defaultProperties: MarkdownEditorProps = {
     readOnly: false,
     sourceMode: false,
     showLineNumbers: false,
+    readableLineLength: false,
     cls: "",
     placeholder: "",
 
@@ -314,6 +316,22 @@ export class EmbeddableMarkdownEditor {
 
                         if (self.options.showLineNumbers) {
                             extensions.push(lineNumbers());
+                        } else {
+                            extensions.push(
+                                lineNumbers({ formatNumber: () => "" }),
+                            );
+                            extensions.push(
+                                EditorView.theme({
+                                    ".cm-gutters .cm-lineNumbers": {
+                                        display: "none !important",
+                                    },
+
+                                    ".cm-gutters:has(> .cm-gutter:only-child.cm-lineNumbers)":
+                                        {
+                                            display: "none !important",
+                                        },
+                                }),
+                            );
                         }
                     }
 
@@ -373,8 +391,11 @@ export class EmbeddableMarkdownEditor {
             this.editorEl.classList.add(options.cls);
         }
 
-        // Match Obsidian's default readable line width styling
-        if (app.vault.getConfig("readableLineLength") ?? true) {
+        // Match Obsidian's readable line width styling when opted in
+        if (
+            self.options.readableLineLength &&
+            (app.vault.getConfig("readableLineLength") ?? true)
+        ) {
             this.editorEl.classList.add("is-readable-line-width");
         }
 

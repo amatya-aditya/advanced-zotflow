@@ -3,6 +3,7 @@ import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { IParentProxy } from "bridge/types";
+import type { LibraryService } from "./library";
 import type {
     AnyIDBZoteroItem,
     IDBZoteroItem,
@@ -19,6 +20,7 @@ export class DbHelperService {
     constructor(
         public settings: ZotFlowSettings,
         private parentHost: IParentProxy,
+        private library: LibraryService,
     ) {}
 
     updateSettings(settings: ZotFlowSettings) {
@@ -36,36 +38,36 @@ export class DbHelperService {
                 "API Key is missing in settings",
             );
         }
+        return this.library.getActiveLibraryIDs();
+    }
 
-        let keyInfo;
-        try {
-            keyInfo = await db.keys.get(this.settings.zoteroapikey);
-        } catch (e) {
-            throw ZotFlowError.wrap(
-                e,
-                ZotFlowErrorCode.DB_OPEN_FAILED,
-                "DbHelperService",
-                "Failed to read Key DB",
-            );
-        }
+    /**
+     * Get { libraryID, itemKey } for every non-trashed top-level item across
+     * the currently active libraries. Used by batch commands that need to
+     * enumerate every source-note-bearing item.
+     */
+    async getAllTopLevelItemIdentifiers(): Promise<
+        { libraryID: number; itemKey: string }[]
+    > {
+        const libraryIDs = await this.getFilteredLibraryIDs();
+        if (libraryIDs.length === 0) return [];
 
-        if (!keyInfo) {
-            throw new ZotFlowError(
-                ZotFlowErrorCode.AUTH_INVALID,
-                "DbHelperService",
-                "Invalid Zotero API key (not found in DB).",
-                { api_key: this.settings.zoteroapikey },
-            );
-        }
+        const isValidTopLevel = (type: string) =>
+            !(["note", "annotation", "attachment"] as string[]).includes(type);
+        const validTopLevelTypeList = Zotero_Item_Types.filter((type) =>
+            isValidTopLevel(type),
+        );
 
-        const filteredLibraryIDs = keyInfo.joinedGroups
-            .concat([keyInfo.userID])
-            .filter((id) => {
-                const mode = this.settings.librariesConfig[id]?.mode;
-                return mode && mode !== "ignored";
-            });
+        const items = await db.items
+            .where(["libraryID", "itemType", "trashed"])
+            .anyOf(getCombinations([libraryIDs, validTopLevelTypeList, [0]]))
+            .filter((item: AnyIDBZoteroItem) => !item.parentItem)
+            .toArray();
 
-        return filteredLibraryIDs;
+        return items.map((i) => ({
+            libraryID: i.libraryID,
+            itemKey: i.key,
+        }));
     }
 
     /**
@@ -378,5 +380,78 @@ export class DbHelperService {
             .where(["libraryID", "parentItem", "itemType", "trashed"])
             .equals([libraryID, parentKey, "attachment", 0])
             .toArray();
+    }
+
+    /**
+     * Get lightweight annotation candidates for the repair view.
+     * Returns all annotations under a parent item (across all its attachments),
+     * keyed by annotation key.
+     *
+     * If `libraryID` is omitted, the item is looked up by key alone across all
+     * libraries (keys are unique in practice).
+     */
+    async getAnnotationCandidates(
+        libraryID: number | null,
+        parentKey: string,
+    ): Promise<
+        { key: string; pageLabel: string; text: string; type: string }[]
+    > {
+        // Resolve libraryID if not provided — try each filtered library
+        let resolvedLibraryID = libraryID;
+        if (resolvedLibraryID == null) {
+            const libraryIDs = await this.getFilteredLibraryIDs();
+            for (const lid of libraryIDs) {
+                const match = await db.items.get([lid, parentKey]);
+                if (match) {
+                    resolvedLibraryID = lid;
+                    break;
+                }
+            }
+            if (resolvedLibraryID == null) return [];
+        }
+
+        // Get child attachments
+        const attachments = await db.items
+            .where(["libraryID", "parentItem", "itemType", "trashed"])
+            .equals([resolvedLibraryID, parentKey, "attachment", 0])
+            .toArray();
+
+        // Also check if the item itself is a standalone attachment
+        const item = await db.items.get([resolvedLibraryID, parentKey]);
+        const attachmentKeys = attachments.map((a) => a.key);
+        if (item?.itemType === "attachment") {
+            attachmentKeys.push(parentKey);
+        }
+
+        // Get all annotations under these attachments
+        const results: {
+            key: string;
+            pageLabel: string;
+            text: string;
+            type: string;
+        }[] = [];
+
+        for (const attKey of attachmentKeys) {
+            const annotations = await db.items
+                .where(["libraryID", "parentItem", "itemType", "trashed"])
+                .equals([resolvedLibraryID, attKey, "annotation", 0])
+                .toArray();
+
+            for (const ann of annotations) {
+                const data = ann.raw?.data as unknown as Record<
+                    string,
+                    unknown
+                >;
+                if (!data) continue;
+                results.push({
+                    key: ann.key,
+                    pageLabel: (data.annotationPageLabel as string) ?? "",
+                    text: (data.annotationText as string) ?? "",
+                    type: (data.annotationType as string) ?? "",
+                });
+            }
+        }
+
+        return results;
     }
 }

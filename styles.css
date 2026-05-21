@@ -935,8 +935,8 @@
 } */
 
 /* Suggestion Header */
-.suggestion-item.zotflow-suggestion-header {
-    background-color: transparent !important;
+.prompt-results .suggestion-item.zotflow-suggestion-header {
+    background-color: transparent;
     padding: var(--size-2-2) var(--size-4-3);
     font-size: var(--font-ui-smaller);
     font-weight: var(--font-semibold);
@@ -952,8 +952,8 @@
 }
 
 /* Empty State */
-.suggestion-item.zotflow-suggestion-empty {
-    background-color: transparent !important;
+.prompt-results .suggestion-item.zotflow-suggestion-empty {
+    background-color: transparent;
     font-size: var(--font-ui-smaller);
     pointer-events: none;
     border-bottom: none;
@@ -1018,8 +1018,8 @@
    Settings
    ============================================================ */
 
-.vertical-tab-content:has(.zotflow-settings-container) {
-    padding-bottom: 0 !important;
+.vertical-tab-content.zotflow-settings-tab {
+    padding-bottom: 0;
 }
 
 .zotflow-settings-title {
@@ -1096,6 +1096,12 @@
     background-color: var(--background-modifier-border);
 }
 
+.zotflow-settings-access-notes {
+    margin-top: 2px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
 .zotflow-settings-lib-select {
     width: 100%;
 }
@@ -1166,8 +1172,7 @@
    ============================================================ */
 
 .zotflow-tree {
-    padding: 10px;
-    padding-bottom: 0 !important;
+    padding: 10px 10px 0;
 }
 
 .zotflow-tree-view-layout {
@@ -1209,7 +1214,6 @@
     margin-inline-end: 6px;
     margin-bottom: var(--nav-item-margin-bottom);
     border-radius: var(--nav-item-radius);
-    cursor: var(--cursor);
     color: var(--nav-item-color);
     font-size: var(--nav-item-size);
     font-weight: var(--nav-item-weight);
@@ -1853,10 +1857,10 @@
     color: var(--text-faint);
 }
 
-.zotflow-sync-time-cell {
+.zotflow-sync-lib-table td.zotflow-sync-time-cell {
     font-family: var(--font-monospace);
-    font-size: var(--font-ui-smaller) !important;
-    color: var(--text-faint) !important;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
     white-space: nowrap;
 }
 
@@ -2120,6 +2124,217 @@
     border-radius: var(--radius-s);
     font-size: var(--font-ui-small);
     color: var(--text-accent);
+}
+
+/* ============================================================
+   Activity Center: Repair View
+   ============================================================ */
+
+.zotflow-repair-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    height: 100%;
+}
+
+.zotflow-repair-header {
+    flex-shrink: 0;
+}
+
+.zotflow-repair-title {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    font-weight: var(--font-semibold);
+    font-size: var(--font-ui-medium);
+    margin-bottom: var(--size-4-1);
+}
+
+.zotflow-repair-description {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.zotflow-repair-controls {
+    display: flex;
+    gap: var(--size-4-2);
+    flex-shrink: 0;
+}
+
+.zotflow-repair-controls button {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+}
+
+.zotflow-repair-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-3);
+    font-size: var(--font-ui-small);
+    flex-shrink: 0;
+}
+
+.zotflow-repair-summary-ok {
+    color: var(--text-success);
+}
+
+.zotflow-repair-summary-fail {
+    color: var(--text-error);
+}
+
+.zotflow-repair-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--size-4-8) 0;
+    color: var(--text-faint);
+    gap: var(--size-4-2);
+    font-size: var(--font-ui-small);
+}
+
+.zotflow-repair-auto-badge {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-success);
+    margin-bottom: var(--size-4-1);
+}
+
+.zotflow-repair-table-wrapper {
+    flex: 1 1 auto;
+    overflow: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+}
+
+.zotflow-repair-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-ui-small);
+}
+
+.zotflow-repair-table thead {
+    position: sticky;
+    top: 0;
+    background: var(--background-secondary);
+    z-index: 1;
+}
+
+.zotflow-repair-table th {
+    text-align: left;
+    padding: var(--size-4-2) var(--size-4-3);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.zotflow-repair-table td {
+    padding: var(--size-4-2) var(--size-4-3);
+    vertical-align: top;
+}
+
+.zotflow-repair-table tbody tr + tr {
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.zotflow-repair-row-auto {
+    background: var(--background-modifier-success);
+}
+
+.zotflow-repair-cell-file {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-repair-cell-line {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+
+.zotflow-repair-cell-ref code {
+    font-size: var(--font-ui-smaller);
+    background: rgba(var(--color-red-rgb), 0.15);
+    color: var(--text-error);
+    padding: 1px 4px;
+    border-radius: var(--radius-s);
+}
+
+.zotflow-repair-cell-display {
+    display: block;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    margin-top: 2px;
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-repair-cell-context {
+    display: block;
+    margin: 6px 0 0;
+    padding: 6px 8px 6px 10px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    line-height: 1.5;
+    color: var(--text-muted);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.zotflow-repair-cell-context > div {
+    white-space: pre;
+}
+
+.zotflow-repair-context-target {
+    background: rgba(var(--color-red-rgb), 0.08);
+    border-left: 2px solid var(--text-error);
+    padding-left: 4px;
+    margin-left: -4px;
+    color: var(--text-normal);
+}
+
+.zotflow-repair-context-linenum {
+    display: inline-block;
+    width: 3em;
+    text-align: right;
+    margin-right: 8px;
+    color: var(--text-faint);
+    user-select: none;
+}
+
+.zotflow-repair-cell-fix select {
+    max-width: 250px;
+}
+
+.zotflow-repair-cell-fix code {
+    font-size: var(--font-ui-smaller);
+    background: var(--background-modifier-success);
+    padding: 1px 4px;
+    border-radius: var(--radius-s);
+}
+
+.zotflow-repair-no-match {
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+.zotflow-repair-single .u-muted {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+.zotflow-repair-cell-action {
+    width: 40px;
+    text-align: center;
 }
 
 /* ============================================================
@@ -4026,4 +4241,20 @@ svg.react-flow__connectionline {
     color: var(--text-muted);
     text-align: center;
     font-style: italic;
+}
+
+/* ================================================================ */
+/*  Editable Region Markers                                         */
+/* ================================================================ */
+
+body.zotflow-hide-region-markers .cm-zotflow-tag-text-note {
+    display: none;
+}
+
+body.zotflow-hide-region-markers .cm-zotflow-end-line-note {
+    display: none;
+}
+
+body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
+    display: none;
 }

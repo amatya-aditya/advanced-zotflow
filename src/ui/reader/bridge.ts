@@ -507,6 +507,7 @@ export class IframeReaderBridge {
                                 }),
                             });
                         },
+                        showLineNumbers: false,
                     },
                 );
                 this.editorList.push(editor);

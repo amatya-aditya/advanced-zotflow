@@ -2,6 +2,9 @@ import { FileView, WorkspaceLeaf, TFile, ItemView } from "obsidian";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
 import { LocalDataManager } from "./local-data-manager";
+import { copyAnnotationOnCreate } from "./auto-copy";
+import { getLinkedLocalSourceNote } from "utils/file";
+import { openSourceNote } from "utils/viewer";
 
 import type {
     CreateReaderOptions,
@@ -21,9 +24,39 @@ export class LocalReaderView extends ItemView {
     private colorScheme: ColorScheme = "light"; // Default to light
     private readerOptions: Partial<CreateReaderOptions> = {};
     private dataManager?: LocalDataManager;
+    private knownAnnotationIds = new Set<string>();
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
+        this.addAction(
+            "notebook-text",
+            "Open source note",
+            this.handleOpenSourceNote.bind(this),
+        );
+    }
+
+    /**
+     * Resolve and open the source note linked to this local attachment.
+     */
+    private async handleOpenSourceNote() {
+        if (!this.file) return;
+        const linked = getLinkedLocalSourceNote(services.app, this.file);
+        if (!linked) {
+            services.notificationService.notify(
+                "warning",
+                "No source note found for this file.",
+            );
+            return;
+        }
+        const file = services.app.vault.getAbstractFileByPath(linked.path);
+        if (!(file instanceof TFile)) {
+            services.notificationService.notify(
+                "warning",
+                "Source note file is missing from the vault.",
+            );
+            return;
+        }
+        await openSourceNote(file, this.app);
     }
 
     getViewType() {
@@ -190,6 +223,11 @@ export class LocalReaderView extends ItemView {
                 })(),
             ]);
 
+            // Seed known-annotation set so the initial load isn't auto-copied.
+            this.knownAnnotationIds = new Set(
+                (loadedAnnotations ?? []).map((a: AnnotationJSON) => a.id),
+            );
+
             // Initialize Reader if ready
             if (this.bridge.state === "bridge-ready") {
                 // Read persisted view state (including saved themes)
@@ -209,6 +247,8 @@ export class LocalReaderView extends ItemView {
                     darkTheme: viewState?.darkTheme ?? themeDefaults.darkTheme,
                 };
 
+                const autoDisable =
+                    services.settings.autoDisableNoteImageTextTools;
                 const opts: Partial<CreateReaderOptions> = {
                     ...this.readerOptions,
                     annotations: loadedAnnotations,
@@ -216,6 +256,10 @@ export class LocalReaderView extends ItemView {
                     obsidianThemeMode: schemeSetting === "obsidian-theme",
                     primaryViewState: viewState?.primaryViewState,
                     customThemes: services.viewStateService.getCustomThemes(),
+                    autoDisableNoteTool: autoDisable,
+                    autoDisableTextTool: autoDisable,
+                    autoDisableImageTool: autoDisable,
+                    fontFamily: services.settings.epubFontFamily || undefined,
                     ...themeOverrides,
                 };
 
@@ -335,6 +379,26 @@ export class LocalReaderView extends ItemView {
                         );
                 }
                 await this.dataManager.saveAnnotation(annotation);
+            }
+        }
+
+        // Auto-copy newly created annotations (creation only — skips edits).
+        if (this.file) {
+            const sourceNotePath = getLinkedLocalSourceNote(
+                services.app,
+                this.file,
+            )?.path;
+            for (const annotation of annotations) {
+                const id = (annotation as AnnotationJSON).id;
+                if (this.knownAnnotationIds.has(id)) continue;
+                this.knownAnnotationIds.add(id);
+                await copyAnnotationOnCreate(annotation as AnnotationJSON, {
+                    sourceNotePath,
+                });
+            }
+            // Make sure re-saved (existing) annotation IDs are also tracked.
+            for (const annotation of annotations) {
+                this.knownAnnotationIds.add((annotation as AnnotationJSON).id);
             }
         }
     }

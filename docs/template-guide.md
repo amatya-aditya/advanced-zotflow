@@ -25,6 +25,7 @@ ZotFlow uses [LiquidJS](https://liquidjs.com) templates across four systems: **s
 - [Template Preview](#template-preview)
 - [Custom Filters](#custom-filters)
 - [Frontmatter Handling](#frontmatter-handling)
+- [Editable Regions](#editable-regions)
 - [Tips & Examples](#tips--examples)
 
 ---
@@ -137,6 +138,7 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `item.annotations`           | `AnnotationContext[]`     | Direct child annotations (for standalone attachment items)            |
 | `item.attachmentAnnotations` | `AnnotationContext[]`     | All annotations across all attachments (flattened)                    |
 | `item.notes`                 | `NoteContext[]`           | Child Zotero notes — see below                                        |
+| `item.relatedItems`          | `RelatedItemContext[]`    | Items linked via Zotero's "Related" tab (`dc:relation`) — see below   |
 
 #### `item.attachments[]` — Attachment Children
 
@@ -163,22 +165,38 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `note.dateAdded`    | `string`                | ISO timestamp                    |
 | `note.dateModified` | `string`                | ISO timestamp                    |
 
+#### `item.relatedItems[]` — Related Items
+
+Items the current item is linked to via Zotero's **Related** tab (the `dc:relation` predicate). Each entry corresponds to one related item URI; `key` and `libraryID` are always populated by parsing the URI itself, while the remaining fields are only filled in when the related item is present in ZotFlow's local database.
+
+| Variable             | Type                  | Description                                                                                       |
+| -------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
+| `rel.key`            | `string`              | Zotero item key of the related item                                                               |
+| `rel.libraryID`      | `number`              | Library ID parsed from the relation URI                                                           |
+| `rel.resolved`       | `boolean`             | `true` if the item was found in the local DB, `false` for cross-library / unsynced / missing items |
+| `rel.title`          | `string \| undefined` | Title of the related item (only when `resolved`)                                                  |
+| `rel.itemType`       | `string \| undefined` | Zotero item type (only when `resolved`)                                                           |
+| `rel.citationKey`    | `string \| undefined` | Citation key, e.g. from Better BibTeX (only when `resolved`)                                      |
+| `rel.notePath`       | `string \| undefined` | Vault path of that item's ZotFlow source note (only when `resolved`)                              |
+
+Cross-library or unsynced relations still appear in the list with `resolved: false` so they can be referenced or surfaced as a placeholder. Guard with `{% if rel.title %}` (or `{% if rel.resolved %}`) when you only want fully-known entries.
+
 #### `item.annotations[]` / `attachment.annotations[]` — Annotations
 
-| Variable                  | Type                    | Description                                                  |
-| ------------------------- | ----------------------- | ------------------------------------------------------------ |
-| `annotation.key`          | `string`                | Annotation item key                                          |
-| `annotation.libraryID`    | `number`                | Library ID                                                   |
-| `annotation.type`         | `string`                | Annotation type: `"highlight"`, `"note"`, `"image"`, `"ink"` |
-| `annotation.authorName`   | `string \| undefined`   | Author of the annotation                                     |
-| `annotation.text`         | `string \| null`        | Highlighted text (for highlights; `>` and `<` are escaped)   |
-| `annotation.comment`      | `string \| undefined`   | User comment on the annotation (`>` and `<` are escaped)     |
-| `annotation.color`        | `string \| undefined`   | Hex color code (e.g., `"#ffd400"`)                           |
-| `annotation.pageLabel`    | `string \| undefined`   | Page label where the annotation appears                      |
-| `annotation.tags`         | `Array<{ tag, type? }>` | Tags                                                         |
-| `annotation.dateAdded`    | `string`                | ISO timestamp when annotation was created                    |
-| `annotation.dateModified` | `string`                | ISO timestamp when annotation was last modified              |
-| `annotation.raw`          | `AnnotationJSON`        | Raw annotation object (for advanced use with filters)        |
+| Variable                  | Type                    | Description                                                                                                           |
+| ------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `annotation.key`          | `string`                | Annotation item key                                                                                                   |
+| `annotation.libraryID`    | `number`                | Library ID                                                                                                            |
+| `annotation.type`         | `string`                | Annotation type: `"highlight"`, `"note"`, `"image"`, `"ink"`                                                          |
+| `annotation.authorName`   | `string \| undefined`   | Author of the annotation                                                                                              |
+| `annotation.text`         | `string \| null`        | Highlighted text (for highlights; `>` and `<` are escaped)                                                            |
+| `annotation.comment`      | `string \| undefined`   | User comment converted to Markdown: `<b>`→`**`, `<i>`→`*`, `<sub>`/`<sup>` kept as inline HTML, stray `<`/`>` escaped |
+| `annotation.color`        | `string \| undefined`   | Hex color code (e.g., `"#ffd400"`)                                                                                    |
+| `annotation.pageLabel`    | `string \| undefined`   | Page label where the annotation appears                                                                               |
+| `annotation.tags`         | `Array<{ tag, type? }>` | Tags                                                                                                                  |
+| `annotation.dateAdded`    | `string`                | ISO timestamp when annotation was created                                                                             |
+| `annotation.dateModified` | `string`                | ISO timestamp when annotation was last modified                                                                       |
+| `annotation.raw`          | `AnnotationJSON`        | Raw annotation object (for advanced use with filters)                                                                 |
 
 #### `settings` — Plugin Settings
 
@@ -247,6 +265,22 @@ doi: {{ item.DOI | json }}
 
 {%- endfor -%}
 {%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{%- if item.attachments.length == 0 and item.itemType == "attachment" and item.annotations.length > 0 -%}
+## Annotations
+{%- for annotation in item.annotations -%}
+> [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [{{ item.title }}, p.{{ annotation.pageLabel }}](obsidian://zotflow?type=open-attachment&libraryID={{ item.libraryID }}&key={{ item.key }}&navigation={{ annotation.key | process_nav_info}})
+{%- if annotation.type == "ink" or annotation.type == "image"-%}
+> > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
+{%- else -%}
+> > {{ annotation.text | replace: newline, quote_string_2 }}
+{%- endif -%}
+{%- if annotation.comment != "" -%}
+>
+> {{ annotation.comment | replace: newline, quote_string }}
+{%- endif -%}^{{ annotation.key }}
+
 {%- endfor -%}
 {%- endif -%}
 ```
@@ -540,6 +574,46 @@ Converts an annotation key string into a URL-encoded JSON navigation parameter. 
 **Input:** `"ABC12345"` (annotation key)
 **Output:** `%7B%22annotationID%22%3A%22ABC12345%22%7D` (URL-encoded `{"annotationID":"ABC12345"}`)
 
+### `html2md`
+
+Available in: **Zotero Source Note** template only
+
+Converts a Zotero HTML string to Markdown using ZotFlow's full HTML-to-Markdown pipeline (the same one used when opening a note in the Note Editor view). Handles ProseMirror HTML, math, code, tables, images, and Zotero's wrapper `<div>` attributes.
+
+```liquid
+{{ note.note | html2md }}
+```
+
+Almost always chained with `wrap_editable` to produce an editable note region:
+
+```liquid
+{{ note.note | html2md | wrap_editable: "NOTE", note.key }}
+```
+
+**Input:** raw Zotero note HTML (`note.note`)
+**Output:** clean Markdown string
+
+> This filter is async — LiquidJS evaluates it as a Promise automatically. Do not call it on non-HTML strings.
+
+### `wrap_editable`
+
+Available in: **Zotero Source Note** template only
+
+Wraps content in the hidden HTML comment markers that ZotFlow's editor extension recognises as an editable region.
+
+```liquid
+{{ value | wrap_editable: "TYPE", key }}
+```
+
+| Argument | Type     | Description                                                       |
+| -------- | -------- | ----------------------------------------------------------------- |
+| `"TYPE"` | `string` | `"NOTE"` for Zotero child notes; `"ANNO"` for annotation comments |
+| `key`    | `string` | The Zotero item key of the note or annotation                     |
+
+**Output:** the input string surrounded by `<!-- ZF_TYPE_BEG_key -->` / `<!-- ZF_TYPE_END_key -->` markers on their own lines.
+
+See [Editable Regions](#editable-regions) for full usage examples.
+
 ### `process_raw_anno_json`
 
 Available in: **Local** template only
@@ -579,6 +653,94 @@ These fields are **always injected** regardless of your template. Do not remove 
 | `zotero-key`               | Zotero        | The Zotero item key. Used to link the note to the Zotero item. |
 | `item-version`             | Zotero        | The Zotero item version. Used for update detection.            |
 | `zotflow-local-attachment` | Local         | Wiki-link to the source file (e.g., `[[Articles/paper.pdf]]`). |
+
+---
+
+## Editable Regions
+
+Source notes are read-only by default, but your template can mark specific sections as **editable regions** — zones that users can unlock and edit directly inside the Obsidian editor. Editable regions are created using two custom LiquidJS filters: `html2md` and `wrap_editable`. You never write the HTML comment markers by hand.
+
+### How It Works
+
+`wrap_editable` wraps a piece of content in the hidden `<!-- ZF_<TYPE>_BEG_<key> -->` / `<!-- ZF_<TYPE>_END_<key> -->` comment markers that ZotFlow's CM6 extension recognises as editable boundaries.
+
+```liquid
+{{ value | wrap_editable: "TYPE", key }}
+```
+
+| Argument | Value                | Description                                                           |
+| -------- | -------------------- | --------------------------------------------------------------------- |
+| `"TYPE"` | `"NOTE"` or `"ANNO"` | Which kind of record to update on save                                |
+| `key`    | a Zotero item key    | The note key or annotation key ZotFlow uses to look up the IDB record |
+
+Two region types are supported:
+
+| Type                   | Filter call                                     | What it edits on save               |
+| ---------------------- | ----------------------------------------------- | ----------------------------------- |
+| **Zotero child note**  | `\| html2md \| wrap_editable: "NOTE", note.key` | The note item in IndexedDB          |
+| **Annotation comment** | `\| wrap_editable: "ANNO", annotation.key`      | The annotation comment in IndexedDB |
+
+### Note Regions
+
+`note.note` is raw Zotero HTML, so pipe it through `| html2md` first to convert it to Markdown, then `| wrap_editable` to fence it:
+
+```liquid
+{%- if item.notes.length > 0 -%}
+{%- for note in item.notes -%}
+{{ note.note | html2md | wrap_editable: "NOTE", note.key }}
+
+{%- endfor -%}
+{%- endif -%}
+```
+
+When the user edits the unlocked region and the debounce fires, ZotFlow converts the Markdown back to Zotero-flavored HTML and writes it to IndexedDB.
+
+### Annotation Comment Regions
+
+`annotation.comment` arrives in the template context **already converted to Markdown** via a lightweight `annoHtml2md` pass — no `| html2md` step needed. Zotero's annotation editor only supports four HTML tags (`<b>`, `<i>`, `<sub>`, `<sup>`); the conversion maps them like this:
+
+| Zotero HTML       | Markdown / Obsidian                                    |
+| ----------------- | ------------------------------------------------------ |
+| `<b>text</b>`     | `**text**`                                             |
+| `<i>text</i>`     | `*text*`                                               |
+| `<sub>text</sub>` | `<sub>text</sub>` (kept; Obsidian renders inline HTML) |
+| `<sup>text</sup>` | `<sup>text</sup>` (kept; Obsidian renders inline HTML) |
+| stray `<` / `>`   | `\<` / `\>` (escaped to avoid accidental markdown)     |
+
+So just pipe directly to `wrap_editable`:
+
+```liquid
+{%- if item.attachments.length > 0 and item.attachmentAnnotations.length > 0 -%}
+## Annotations
+{%- for attachment in item.attachments -%}
+{%- if attachment.annotations.length > 0 -%}
+### {{ attachment.filename }}
+{%- for annotation in attachment.annotations -%}
+> [!zotflow-{{ annotation.type }}-{{ annotation.color }}] [{{ attachment.filename }}, p.{{ annotation.pageLabel }}](obsidian://zotflow?type=open-attachment&libraryID={{ attachment.libraryID }}&key={{ attachment.key }}&navigation={{ annotation.key | process_nav_info}})
+{%- if annotation.type == "ink" or annotation.type == "image"-%}
+> > ![[{{settings.annotationImageFolder}}/{{ annotation.key }}.png]]
+{%- else -%}
+> > {{ annotation.text | replace: newline, quote_string_2 }}
+{%- endif -%}
+>
+> {{ annotation.comment | wrap_editable: "ANNO", annotation.key | replace: newline, quote_string }}
+^{{ annotation.key }}
+
+{%- endfor -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+```
+
+On save, ZotFlow runs the reverse pass (`annoMd2html`): `**` → `<b>`, `*` → `<i>`, `<sub>`/`<sup>` kept, escaped `\<`/`\>` unescaped. Any other HTML is stripped before writing back to IndexedDB.
+
+### How the Editor Renders Regions
+
+- In **Source / Live Preview** mode: each region shows a **🔒 lock icon** at the start of its BEG marker line. Click to unlock and edit. A **🔓 re-lock icon** appears at the END marker line.
+- In **Reading view**: fully read-only, same as the rest of the note.
+- The marker lines themselves can be **hidden** with **Settings → ZotFlow → General → Hide Editable Region Markers**.
+- **Default Editable Region Locked** (Settings → ZotFlow → General): whether regions start locked or unlocked when you open the note. Default: locked.
+- Libraries set to **Read Only** disable the unlock icon entirely.
 
 ---
 
@@ -623,6 +785,26 @@ tags:
 {%- endfor -%}
 {%- endif -%}
 ```
+
+### Listing Related Items
+
+```liquid
+{%- if item.relatedItems.size > 0 -%}
+## Related
+
+{% for rel in item.relatedItems -%}
+{% if rel.notePath -%}
+- [[{{ rel.notePath }}|{{ rel.title }}]]
+{%- elsif rel.title -%}
+- {{ rel.title }} (`{{ rel.key }}`)
+{%- else -%}
+- `{{ rel.key }}` *(not synced)*
+{%- endif %}
+{% endfor -%}
+{%- endif -%}
+```
+
+The three branches handle: items with a known source-note path (wikilink), items found locally but without a resolvable path (plain title + key), and unsynced/cross-library items (key only). Drop branches you don't need.
 
 ### Deep-Linking to Attachments
 

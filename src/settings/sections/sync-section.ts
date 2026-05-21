@@ -94,6 +94,26 @@ export class SyncSection {
             });
         });
 
+        // Auto-update source notes after sync
+        settingGroup.addSetting((setting) => {
+            setting
+                .setName("Auto-update source notes after sync")
+                .setDesc(
+                    "When enabled, source notes for items changed during sync are automatically refreshed (incremental — unchanged notes are skipped).",
+                )
+                .addToggle((toggle) => {
+                    toggle
+                        .setValue(
+                            this.plugin.settings.autoUpdateSourceNotesAfterSync,
+                        )
+                        .onChange(async (value) => {
+                            this.plugin.settings.autoUpdateSourceNotesAfterSync =
+                                value;
+                            await this.plugin.saveSettings();
+                        });
+                });
+        });
+
         // Libraries Table
         if (keyInfo) {
             settingGroup.addSetting(async (setting) => {
@@ -170,6 +190,15 @@ export class SyncSection {
                 : "zotflow-settings-access-badge zotflow-settings-access-badge--ro";
             const badge = accessCell.createSpan({ cls: badgeCls });
             badge.setText(lib.canWrite ? "Read/Write" : "Read Only");
+
+            // Surface notes permission separately so users can see why note
+            // edits may be disabled even on a Read/Write library.
+            const notesLine = accessCell.createDiv({
+                cls: "zotflow-settings-access-notes",
+            });
+            notesLine.setText(
+                `Notes: ${lib.hasNotesAccess ? "\u2713" : "\u2717"}`,
+            );
 
             const actionCell = row.createEl("td");
             const select = actionCell.createEl("select");

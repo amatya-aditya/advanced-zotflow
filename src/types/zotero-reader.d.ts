@@ -28,6 +28,10 @@ export interface CreateReaderOptions {
     primaryViewState?: Record<string, unknown>;
     secondaryViewState?: Record<string, unknown>;
     readOnly?: boolean;
+    autoDisableNoteTool?: boolean;
+    autoDisableTextTool?: boolean;
+    autoDisableImageTool?: boolean;
+    fontFamily?: string;
 }
 
 /** Discriminated union of all events the reader iframe can emit to the parent. */
@@ -150,6 +154,7 @@ export interface AnnotationJSON {
     }>;
     dateModified: string;
     dateAdded: string;
+    dateCreated?: string;
 }
 
 /** User-defined reader color theme. */

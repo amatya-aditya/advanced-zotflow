@@ -5,6 +5,7 @@ import { ViewStateService } from "./view-state-service";
 import { TaskMonitor } from "./task-monitor";
 import { CitationService } from "./citation-service";
 import { WorkflowService } from "./workflow-service";
+import { LibraryCache } from "./library-cache";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { App } from "obsidian";
@@ -31,6 +32,7 @@ class ServiceLocator {
 
     private _onBookmarksChanged: Set<() => void> = new Set();
     private _onRecentsChanged: Set<() => void> = new Set();
+    private _libraryCache: LibraryCache;
 
     initialize(plugin: ZotFlow, settings: ZotFlowSettings) {
         this._plugin = plugin;
@@ -50,6 +52,10 @@ class ServiceLocator {
         this._taskMonitor = new TaskMonitor(this._app);
         this._citationService = new CitationService();
         this._workflowService = new WorkflowService(this._logService);
+        this._libraryCache = new LibraryCache(
+            () => this._settings,
+            this._logService,
+        );
 
         this._initialized = true;
         this._logService.info("Services initialized.", "LocalServiceLocator");
@@ -68,6 +74,9 @@ class ServiceLocator {
     updateSettings(newSettings: ZotFlowSettings) {
         this.assertInitialized();
         this._settings = newSettings;
+        // Library capabilities depend on the active API key + cached key info,
+        // both of which can change after a settings save. Refresh in background.
+        void this._libraryCache.refresh();
     }
 
     saveSettings() {
@@ -216,6 +225,11 @@ class ServiceLocator {
     get workflowService() {
         this.assertInitialized();
         return this._workflowService;
+    }
+
+    get libraryCache() {
+        this.assertInitialized();
+        return this._libraryCache;
     }
 }
 

@@ -2,8 +2,10 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import SparkMD5 from "spark-md5";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
+import { copyAnnotationOnCreate } from "./auto-copy";
 import { services } from "services/services";
 import { ViewStateService } from "services/view-state-service";
+import { openSourceNote } from "utils/viewer";
 
 import type { ViewStateResult } from "obsidian";
 import type { AttachmentData } from "types/zotero-item";
@@ -37,9 +39,35 @@ export class ZoteroReaderView extends ItemView {
     private lastSyncTaskStatuses = new Map<string, ITaskInfo["status"]>();
     /** MD5 of the file blob used to init the reader, for extraction skip check. */
     private fileBlobMD5?: string;
+    private knownAnnotationIds = new Set<string>();
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
+        this.addAction(
+            "notebook-text",
+            "Open source note",
+            this.handleOpenSourceNote.bind(this),
+        );
+    }
+
+    /**
+     * Resolve and open the source note linked to this attachment's parent item.
+     */
+    private async handleOpenSourceNote() {
+        if (!this.attachmentItem) return;
+        const parentKey =
+            this.attachmentItem.parentItem === ""
+                ? this.attachmentItem.key
+                : this.attachmentItem.parentItem;
+        const file = services.indexService.getFileByKey(parentKey);
+        if (!file) {
+            services.notificationService.notify(
+                "warning",
+                "No source note found for this item.",
+            );
+            return;
+        }
+        await openSourceNote(file, this.app);
     }
 
     getViewType() {
@@ -270,6 +298,10 @@ export class ZoteroReaderView extends ItemView {
                 this.attachmentItem,
                 services.settings.zoteroapikey,
             );
+            // Seed known-annotation set so the initial load isn't auto-copied.
+            this.knownAnnotationIds = new Set(
+                annotationJson.map((a: AnnotationJSON) => a.id),
+            );
             // Initialize Reader if ready
             if (this.bridge.state === "bridge-ready") {
                 const savedViewState = services.viewStateService.getViewState(
@@ -296,14 +328,23 @@ export class ZoteroReaderView extends ItemView {
                     services.settings.librariesConfig[
                         String(this.attachmentItem.libraryID)
                     ];
-                const isReadOnly = libraryConfig?.mode === "readonly";
+                const isReadOnly =
+                    services.libraryCache.isReadOnly(
+                        this.attachmentItem.libraryID,
+                    ) || libraryConfig?.mode === "readonly";
                 const isObsidianThemeMode = schemeSetting === "obsidian-theme";
+                const autoDisable =
+                    services.settings.autoDisableNoteImageTextTools;
                 const opts: Partial<CreateReaderOptions> = {
                     annotations: annotationJson,
                     primaryViewState: savedViewState?.primaryViewState,
                     colorScheme: this.colorScheme,
                     obsidianThemeMode: isObsidianThemeMode,
                     customThemes: services.viewStateService.getCustomThemes(),
+                    autoDisableNoteTool: autoDisable,
+                    autoDisableTextTool: autoDisable,
+                    autoDisableImageTool: autoDisable,
+                    fontFamily: services.settings.epubFontFamily || undefined,
                     ...themeOverrides,
                     ...(isReadOnly ? { readOnly: true } : {}),
                 };
@@ -624,6 +665,29 @@ export class ZoteroReaderView extends ItemView {
                 "error",
                 "Failed to save annotations",
             );
+        }
+
+        // Auto-copy newly created annotations (creation only — skips edits).
+        const created = annotations.filter(
+            (a) => !this.knownAnnotationIds.has(a.id),
+        );
+        // Update the known set for both newly-created and re-saved annotations
+        // so subsequent edits aren't mistaken for creations.
+        for (const a of annotations) this.knownAnnotationIds.add(a.id);
+        if (created.length > 0) {
+            const parentKey =
+                this.attachmentItem.parentItem === ""
+                    ? this.attachmentItem.key
+                    : this.attachmentItem.parentItem;
+            const sourceNotePath =
+                services.indexService.getFileByKey(parentKey)?.path;
+            for (const annotation of created) {
+                await copyAnnotationOnCreate(annotation, {
+                    sourceNotePath,
+                    parentItemKey: parentKey,
+                    libraryID: this.attachmentItem.libraryID,
+                });
+            }
         }
     }
 

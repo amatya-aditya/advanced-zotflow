@@ -6,6 +6,7 @@ import type {
     NoteTemplateContext,
     AnnotationTemplateContext,
     AttachmentTemplateContext,
+    RelatedItemTemplateContext,
 } from "types/template-context";
 import type { IParentProxy } from "bridge/types";
 import type {
@@ -84,12 +85,10 @@ dateAdded: {{ item.dateAdded | json }}
 
 {%- endif -%}
 {%- if item.notes.length > 0 -%}
-## Notes
 {%- for note in item.notes -%}
-### {{ note.title | default: "Note" }}
-{{ note.note }}
-{%- endfor -%}
+{{ note.note | html2md | wrap_editable: "NOTE", note.key }}
 
+{%- endfor -%}
 {%- endif -%}
 {%- if item.attachments.length > 0 and item.attachmentAnnotations.length > 0 -%}
 ## Annotations
@@ -103,10 +102,9 @@ dateAdded: {{ item.dateAdded | json }}
 {%- else -%}
 > > {{ annotation.text | replace: newline, quote_string_2 }}
 {%- endif -%}
-{%- if annotation.comment != "" -%}
 >
-> {{ annotation.comment | replace: newline, quote_string }}
-{%- endif -%}^{{ annotation.key }}
+> {{ annotation.comment | wrap_editable: "ANNO", annotation.key | replace: newline, quote_string }}
+^{{ annotation.key }}
 
 {%- endfor -%}
 {%- endif -%}
@@ -121,10 +119,9 @@ dateAdded: {{ item.dateAdded | json }}
 {%- else -%}
 > > {{ annotation.text | replace: newline, quote_string_2 }}
 {%- endif -%}
-{%- if annotation.comment != "" -%}
 >
-> {{ annotation.comment | replace: newline, quote_string }}
-{%- endif -%}^{{ annotation.key }}
+> {{ annotation.comment | wrap_editable: "ANNO", annotation.key | replace: newline, quote_string }}
+^{{ annotation.key }}
 
 {%- endfor -%}
 {%- endif -%}
@@ -146,6 +143,10 @@ const FALLBACK_FOOTNOTE_TEMPLATE = `{%- if item.creators.length > 1 -%}
 {{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}
  {{ item.creators[0].name }} {%- else -%}
 Unknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}).`;
+
+// Matches http(s)://zotero.org/{users|groups}/<id>/items/<KEY>
+const ZOTERO_URI_RE =
+    /^https?:\/\/zotero\.org\/(?:users|groups)\/(\d+)\/items\/([A-Z0-9]+)$/i;
 
 /** LiquidJS template engine for rendering library (Zotero) item source notes. */
 export class LibraryTemplateService {
@@ -198,8 +199,28 @@ export class LibraryTemplateService {
         );
         this.engine.registerFilter(
             "wrap_editable",
-            (input: string, type: string, key: string) => {
+            /**
+             * Wrap content in ZF_<TYPE>_BEG/END markers so the CM6 editable
+             * region extension can mount an editable zone.
+             *
+             * The filter consults a per-render `__zfReadOnlyKeys: Set<string>`
+             * stashed on the Liquid context (populated by `prepareItemContext`)
+             * to decide whether the region is actually editable.  When the key
+             * is in the set (e.g. an external annotation, different author in
+             * a group library), the markers are omitted so the content renders
+             * as plain locked text.
+             *
+             * Falls back to wrapping when the set is absent (e.g. preview /
+             * citation render paths that don't prep one), preserving the old
+             * behaviour for callers that don't opt in.
+             */
+            function (this: any, input: string, type: string, key: string) {
                 if (!type || !key) return input;
+                const readOnlyKeys: Set<string> | undefined =
+                    this?.context?.environments?.__zfReadOnlyKeys;
+                if (readOnlyKeys && readOnlyKeys.has(`${type}:${key}`)) {
+                    return input;
+                }
                 return `<!-- ZF_${type}_BEG_${key} -->\n${input}\n<!-- ZF_${type}_END_${key} -->`;
             },
         );
@@ -394,13 +415,27 @@ export class LibraryTemplateService {
     }
 
     public async prepareItemContext(item: AnyIDBZoteroItem): Promise<any> {
+        const itemContext = await this.mapToItemContext(item);
+
+        // Build a Set of `${type}:${key}` for regions that must NOT be wrapped
+        // as editable.  Currently: annotations flagged readOnly (external, or
+        // not authored by the current user).  Built once per render so the
+        // wrap_editable filter is O(1) per call.
+        const readOnlyKeys = new Set<string>();
+        for (const a of itemContext.annotations) {
+            if (a.readOnly) readOnlyKeys.add(`ANNO:${a.key}`);
+        }
+        for (const a of itemContext.attachmentAnnotations) {
+            if (a.readOnly) readOnlyKeys.add(`ANNO:${a.key}`);
+        }
         return {
-            item: await this.mapToItemContext(item),
+            item: itemContext,
             settings: {
                 ...this.settings,
                 annotationImageFolder:
                     this.settings.annotationImageFolder.replace(/\/$/, ""),
             },
+            __zfReadOnlyKeys: readOnlyKeys,
         };
     }
 
@@ -468,6 +503,8 @@ export class LibraryTemplateService {
             ])
             .then((paths) => paths[`${item.libraryID}:${item.key}`] || []);
 
+        const relatedItems = await this.mapToRelatedItems(data);
+
         return {
             key: item.key,
             version: item.version,
@@ -478,6 +515,7 @@ export class LibraryTemplateService {
             annotations,
             attachmentAnnotations,
             attachments,
+            relatedItems,
             itemType: item.itemType,
             title: item.title || "",
             creators: creatorsObj,
@@ -533,9 +571,70 @@ export class LibraryTemplateService {
             tags: annotation.tags?.map((t) => ({ tag: t.name })) || [],
             dateAdded: annotation.dateAdded,
             dateModified: annotation.dateModified,
+            isExternal: annotation.isExternal === true,
+            readOnly: annotation.readOnly === true,
 
             raw: annotation,
         };
+    }
+
+    private parseRelationUri(
+        uri: string,
+    ): { libraryID: number; key: string } | null {
+        const m = ZOTERO_URI_RE.exec(uri.trim());
+        if (!m) return null;
+        return { libraryID: Number(m[1]), key: m[2]! };
+    }
+
+    private async mapToRelatedItems(
+        data: any,
+    ): Promise<RelatedItemTemplateContext[]> {
+        const rels = data?.relations as
+            | { [k: string]: string | string[] }
+            | undefined;
+        if (!rels) return [];
+
+        const dc = rels["dc:relation"];
+        if (!dc) return [];
+        const uris = Array.isArray(dc) ? dc : [dc];
+
+        const parsed: { libraryID: number; key: string }[] = [];
+        for (const uri of uris) {
+            const p = this.parseRelationUri(uri);
+            if (p) parsed.push(p);
+        }
+        if (parsed.length === 0) return [];
+
+        const fetched = await db.items.bulkGet(
+            parsed.map((p) => [p.libraryID, p.key]),
+        );
+
+        const out: RelatedItemTemplateContext[] = [];
+        for (let i = 0; i < parsed.length; i++) {
+            const { libraryID, key } = parsed[i]!;
+            const hit = fetched[i];
+            if (!hit) {
+                out.push({ key, libraryID, resolved: false });
+                continue;
+            }
+            let notePath: string | undefined;
+            try {
+                notePath =
+                    await this.notePathService.resolveLibraryNotePath(hit);
+            } catch {
+                notePath = undefined;
+            }
+            out.push({
+                key,
+                libraryID,
+                resolved: true,
+                title: hit.title || "",
+                itemType: hit.itemType,
+                citationKey: hit.citationKey || "",
+                notePath,
+            });
+        }
+        return out;
     }
 
     public async mapToAttachmentContext(
@@ -553,7 +652,7 @@ export class LibraryTemplateService {
         return {
             key: item.key,
             libraryID: item.libraryID,
-            filename: data.filename || "",
+            filename: data.filename || data.title || "",
             contentType: data.contentType || "",
             tags: data.tags || [],
             dateAdded: item.dateAdded,

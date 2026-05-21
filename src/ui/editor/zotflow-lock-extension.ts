@@ -4,6 +4,7 @@ import {
     editableRegionsField,
     unlockedRegionsField,
 } from "./zotflow-editable-region-extension";
+import { services } from "services/services";
 
 const USER_ZONE_MARKER = "%% ZOTFLOW_USER_START %%";
 
@@ -11,12 +12,18 @@ interface FrontmatterInfo {
     locked: boolean;
     fmEnd: number;
     hasLibraryId: boolean;
+    libraryId: number | undefined;
 }
 
-/** Parse frontmatter once, extracting lock state, end offset, and library-id presence. */
+/** Parse frontmatter once, extracting lock state, end offset, and library-id. */
 function parseFrontmatter(state: EditorState): FrontmatterInfo {
     if (state.doc.sliceString(0, 3) !== "---") {
-        return { locked: false, fmEnd: -1, hasLibraryId: false };
+        return {
+            locked: false,
+            fmEnd: -1,
+            hasLibraryId: false,
+            libraryId: undefined,
+        };
     }
 
     const head = state.doc.sliceString(0, 10000);
@@ -26,9 +33,15 @@ function parseFrontmatter(state: EditorState): FrontmatterInfo {
     );
     const fmEnd = fmMatch ? fmMatch[0].length : -1;
     const fm = fmMatch ? fmMatch[0] : "";
-    const hasLibraryId = /^library-id:\s*\d+/m.test(fm);
+    const libIdMatch = /^library-id:\s*(\d+)/m.exec(fm);
+    const libraryId = libIdMatch ? Number(libIdMatch[1]) : undefined;
 
-    return { locked, fmEnd, hasLibraryId };
+    return {
+        locked,
+        fmEnd,
+        hasLibraryId: libraryId !== undefined,
+        libraryId,
+    };
 }
 
 /** Returns the character offset of the user zone marker, or -1 if none. */
@@ -56,6 +69,26 @@ export function ZotFlowLockExtension(
             const fm = parseFrontmatter(tr.startState);
             if (!fm.locked || fm.fmEnd === -1) return true;
 
+            const fmEnd = fm.fmEnd;
+
+            // If the library-id resolves to a library where note edits are
+            // disallowed (read-only sync mode, or API key lacks notes/write
+            // permission), reject ALL non-frontmatter edits regardless of
+            // editable-region state.
+            if (
+                fm.libraryId !== undefined &&
+                !services.libraryCache.canEditNotes(fm.libraryId)
+            ) {
+                let allowFmOnly = true;
+                tr.changes.iterChanges((fromChange, toChange) => {
+                    if (!allowFmOnly) return;
+                    if (toChange <= fmEnd) return;
+                    allowFmOnly = false;
+                });
+                return allowFmOnly;
+            }
+
+            // If library-id is present, editable regions are active
             const userZoneStart = getUserZoneStart(tr.startState);
             const regionsEnabled = fm.hasLibraryId;
             const regions = regionsEnabled

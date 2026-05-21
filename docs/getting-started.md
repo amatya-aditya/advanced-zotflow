@@ -1,127 +1,163 @@
 # Getting Started
 
-This guide walks you through installing ZotFlow, connecting your Zotero account, and running your first library sync.
+Welcome to ZotFlow! This guide walks you through installation and first setup.
+
+> [!important] 📖 Strongly recommended read the Concepts Guide first
+> ZotFlow has an opinionated model for how literature review works inside Obsidian (source notes, sync modes, the locked/editable system, reader modes). Spending 5 minutes with the **[Key Concepts & Design Philosophy](concepts.md)** guide will make every step below — and every setting you encounter later — immediately make sense.
+>
+> **[Key Concepts & Design Philosophy](concepts.md)**
 
 ---
 
-## 1. Install ZotFlow
+## Part 1 — Installation
 
-> **Note:** This plugin is currently in beta and not available in the official Obsidian Community Plugins store yet.
+ZotFlow is available in the official Obsidian Community Plugins store. Pre-release builds are also available via BRAT.
 
-1. **Install BRAT Plugin**
-    - Open Obsidian Settings (⚙️)
-    - Go to **Community plugins**
-    - Click **Browse** and search for "BRAT"
-    - Install and enable the **BRAT** plugin
+### Option A — Community Plugins (recommended)
 
-2. **Add Beta Plugin**
-    - In Obsidian, open **Settings → Community plugins**
-    - Find **BRAT** in your installed plugins and click **Options**
-    - Click **Add Beta plugin**
+1. Open Obsidian → **Settings (⚙️) → Community plugins**.
+2. Make sure **Restricted mode** is **off**.
+3. Click **Browse**, search for **ZotFlow**, click **Install**, then **Enable**.
+
+Direct link: [https://community.obsidian.md/plugins/zotflow](https://community.obsidian.md/plugins/zotflow)
+
+### Option B — Beta builds via BRAT
+
+Use this path if you want early access to features that haven't been promoted to the stable release yet.
+
+1. **Install BRAT**
+    - Open Obsidian → **Settings (⚙️) → Community plugins**.
+    - Click **Browse**, search for "BRAT", install and enable it.
+
+2. **Add ZotFlow as a beta plugin**
+    - In Community plugins, click **Options** next to **BRAT**.
+    - Click **Add Beta plugin**.
     - Enter the repository: `duanxianpi/obsidian-zotflow`
-    - Click **Add Plugin**
+    - Click **Add Plugin**.
 
-3. **Enable Plugin**
-    - Go to **Settings → Community plugins**
-    - Find **Obsidian ZotFlow** in the list
-    - Toggle it on to enable
+3. **Enable ZotFlow**
+    - Back in **Settings → Community plugins**, find **ZotFlow**.
+    - Toggle it on.
 
 ---
 
-## 2. Create a Zotero API Key
+## Part 2 — Connect to Zotero
+
+### Prerequisites: Zotero Sync
+
+ZotFlow fetches your library from the **Zotero Web API**, which means your items must already be synced to Zotero's servers. Before continuing:
+
+1. Open the **Zotero desktop app** → **Edit → Settings → Sync** (or **Zotero → Preferences → Sync** on macOS).
+2. Sign in with your Zotero account and make sure **Data Syncing** is enabled.
+3. Click **Sync** (the green circular arrow) and wait for it to finish.
+
+**What about attachments (PDFs)?** Zotero syncs item metadata for free, but attachment files need storage space. If your attachment library is large, you have three options:
+
+| Option             | Details                                                                                                                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Zotero Storage** | Built-in, zero-config. Free tier: 300 MB. Paid plans start at $20/year for 2 GB. [See plans →](https://www.zotero.org/storage)                                                                                       |
+| **WebDAV**         | Self-hosted or third-party (e.g. [Box](https://www.box.com), [pCloud](https://www.pcloud.com), [koofr](https://koofr.eu)). Free tiers available. Configure in **Settings → ZotFlow → WebDAV** after setup.           |
+| **Linked files**   | Store PDFs anywhere on disk (or third-party cloud service); Zotero links to them. Set the base directory in **Settings → ZotFlow → General → Linked Attachment Base Directory**. This only works on desktop version. |
+
+> [!tip]
+> You don't need attachment sync to use ZotFlow's source notes, citations, or the tree view — those only need metadata. Attachment storage only matters if you want to open PDFs inside the ZotFlow reader.
+
+### Create a Zotero API Key
 
 1. Go to [https://www.zotero.org/settings/keys/new](https://www.zotero.org/settings/keys/new).
 2. Give the key a descriptive name (e.g., "ZotFlow").
-3. Under **Personal Library**, check **Allow library access** and **Allow write access** (required for bidirectional sync).
-4. If you use group libraries, grant access to the groups you want to sync under **Default Group Permissions** or per-group settings.
-5. Click **Save Key** and copy the generated key.
+3. Under **Personal Library**, check **Allow library access** and **Allow write access** (the latter is required for bidirectional sync).
+4. If you want to use Zotero Item Notes (child notes), check **Allow notes access**.
+5. If you use group libraries, grant access to the groups you want to sync.
+6. Click **Save Key** and copy the generated key.
 
----
-
-## 3. Connect ZotFlow to Zotero
+### Add the Key to ZotFlow
 
 1. Open **Settings → ZotFlow → Sync**.
-2. Paste your API key into the **API Key** field.
+2. Paste the API key into the **API Key** field.
 3. Click **Verify Key**.
-    - ZotFlow will validate the key, fetch your user info, and discover all accessible libraries (personal + groups).
-    - On success, you'll see a green **Verified** badge next to the key field.
-4. A **Library Synchronization** table appears showing all available libraries.
+    - ZotFlow validates the key, fetches your user info, and discovers all accessible libraries.
+    - On success, a **Verified** badge appears next to the key field.
+4. A **Library Synchronization** table appears with every library you can access.
 
-### Configure Library Sync Modes
+### Pick a Sync Mode per Library
 
-Each library can be set to one of three modes:
+For each library in the table, pick a sync mode (see the [concept above](#2-zotero-is-the-source-of-truth-mostly)):
 
-| Mode              | Description                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| **Bidirectional** | Push local annotation changes back to Zotero and pull remote changes. Requires write access. |
-| **Read Only**     | Pull items and annotations from Zotero, but never push changes back.                         |
-| **Ignored**       | Skip this library entirely during sync.                                                      |
+- **Bidirectional** — pulls _and_ pushes.
+- **Read Only** — pulls only.
+- **Ignored** — skipped.
 
-Set the desired mode for each library using the dropdown in the table.
+You can change this any time.
 
 ---
 
-## 4. Run Your First Sync
+## Part 3 — Run Your First Sync
 
-1. Click the **ZotFlow icon** (Zotero logo) in the left ribbon to open the **Activity Center**.
+1. Click the **ZotFlow ribbon icon** (left sidebar) to open the **Activity Center**.
 2. Go to the **Sync** tab.
-3. Click **Sync All** to sync every non-ignored library, or click the **Sync** button next to a specific library.
-4. Watch the progress in the **Tasks** tab — you'll see a sync task with a progress bar.
-5. Once complete, your Zotero items are cached locally in IndexedDB. You can now browse them offline.
+3. Click **Sync All** to sync every non-ignored library, or click **Sync** on a specific library.
+4. Watch progress in the **Tasks** tab.
+5. When the task completes, your Zotero items are cached locally. You're now offline-ready.
 
 ---
 
-## 5. Browse Your Library
+## Part 4 — Browse Your Library
 
 1. Open the **Zotero Tree View**:
-    - Use the command palette: `ZotFlow: Open Zotero Tree View`
-    - Or look for the Library icon in the left sidebar
-2. The tree shows your libraries → collections → items → attachments in a familiar hierarchy.
-3. Use the **search bar** at the top to filter items by name.
-4. Click any node to expand/collapse it.
+    - Command palette → `ZotFlow: Open Zotero Tree View`, or
+    - Click the Library icon in the left sidebar.
+2. Expand libraries → collections → items → attachments.
+3. Use the **search bar** at the top to filter items.
+4. **Double-click** an attachment to open it in the reader.
+5. **Drag** a regular item into any note to insert a citation.
 
 ---
 
-## 6. Optional: WebDAV Setup
+## Part 5 — Optional Setup
 
-If your Zotero attachments are stored on a WebDAV server (instead of Zotero cloud storage):
+### WebDAV (Self-Hosted Attachments)
 
-1. Go to **Settings → ZotFlow → WebDAV**.
-2. Enable the **WebDAV Sync** toggle.
-3. Enter your **Server URL**, **Username**, and **Password**.
+If your Zotero attachments live on a WebDAV server instead of Zotero cloud storage:
+
+1. **Settings → ZotFlow → WebDAV**.
+2. Enable **WebDAV Sync**.
+3. Enter **Server URL**, **Username**, **Password**.
 4. Click **Verify & Connect**.
-    - On success, you'll see "WebDAV Connected!" and the fields become read-only.
-    - Use the **Disconnect** button to clear WebDAV settings later.
 
----
+### Attachment Cache
 
-## 7. Optional: Caching
+ZotFlow caches downloaded attachments for fast reopening.
 
-ZotFlow caches downloaded attachment files locally for fast reopening.
+- **Settings → ZotFlow → Cache → Enable Cache** (default: on).
+- Set a **size limit** in MB (default: 500 MB). Oldest files are evicted first.
+- Click **Purge Cache** to clear everything.
 
-- **Toggle**: **Settings → ZotFlow → Cache → Enable Cache** (default: on).
-- **Size limit**: Set a maximum cache size in MB (default: 500 MB). Oldest files are evicted first when the limit is reached.
-- **Purge**: Click **Purge Cache** to clear all cached files immediately.
+### Linked Attachment Base Directory
 
----
+If you use Zotero's **Linked Attachment Base Directory** (Zotero → Preferences → Advanced → Files and Folders), tell ZotFlow where those files live:
 
-## 8. Optional: Linked Attachment Base Directory
+1. **Settings → ZotFlow → General → Linked Attachment Base Directory**.
+2. Enter the **same absolute path** you set in Zotero (e.g., `D:\Papers` or `/Users/name/Papers`).
+3. Attachments stored as `attachments:papers/foo.pdf` will resolve to `D:\Papers\papers\foo.pdf`.
 
-If you use Zotero's **Linked Attachment Base Directory** feature (Zotero → Preferences → Advanced → Files and Folders), you need to tell ZotFlow where those files live so it can open them.
+Skip this step if you don't use linked attachments.
 
-1. Go to **Settings → ZotFlow → General**.
-2. Find the **Linked Attachment Base Directory** field.
-3. Enter the **same absolute path** you configured in Zotero (e.g., `D:\Papers` on Windows or `/Users/name/Papers` on macOS).
-4. ZotFlow will now resolve any attachment whose path starts with `attachments:` by prepending this base directory.
+### Local Reader for Vault Files
 
-> **Example:** An attachment stored as `attachments:papers/myresearch.pdf` in Zotero will be resolved to `D:\Papers\papers\myresearch.pdf`.
+To open _any_ PDF/EPUB/HTML in your vault with the ZotFlow reader:
 
-If you don't use linked attachments in Zotero, you can skip this step.
+1. **Settings → ZotFlow → General → Overwrite PDF/EPUB/HTML Viewer** → enable.
+2. **Restart Obsidian.**
+3. Vault PDFs/EPUBs/HTMLs now open in the ZotFlow reader; annotations save to `.zf.json` sidecar files.
 
 ---
 
 ## What's Next?
 
-- **[Reading & Annotating](reading-and-annotating.md)** — Open attachments in the built-in reader and start highlighting.
-- **[Source Notes](source-notes.md)** — Auto-generate linked Markdown notes from your Zotero items.
-- **[Template Guide](template-guide.md)** — Customize how source notes are rendered with LiquidJS templates.
+Now that you understand the model and have ZotFlow running, head into the feature guides:
+
+- **[Reading & Annotating](reading-and-annotating.md)** — Reader features, annotation types, image extraction, drag & drop.
+- **[Source Notes](source-notes.md)** — How and when source notes update, frontmatter merging, version-aware re-rendering.
+- **[Citation Guide](citation-guide.md)** — Every way to insert a citation, with annotation context.
+- **[Template Guide](template-guide.md)** — Full LiquidJS variable & filter reference.

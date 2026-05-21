@@ -400,7 +400,13 @@ export const NodeItem = ({
                     });
             });
 
-            if (node.data.itemType !== "attachment") {
+            // Standalone attachments (no parent item) cannot have child notes
+            // Hide the action when the library doesn't allow note edits
+            // (read-only mode or API key lacks notes/write permission).
+            if (
+                node.data.itemType !== "attachment" &&
+                services.libraryCache.canEditNotes(node.data.libraryID)
+            ) {
                 menu.addItem((item) => {
                     item.setTitle("Create child note")
                         .setIcon("sticky-note")
