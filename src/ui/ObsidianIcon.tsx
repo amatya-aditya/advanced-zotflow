@@ -1,8 +1,7 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { setIcon } from "obsidian";
 
 interface ObsidianIconProps {
-    ref?: React.RefObject<HTMLDivElement | null>;
     icon: string;
     className?: string;
     containerStyle?: React.CSSProperties;
@@ -11,37 +10,48 @@ interface ObsidianIconProps {
 }
 
 /** React wrapper that renders an Obsidian icon via `setIcon()` inside a ref-managed div. */
-export const ObsidianIcon: React.FC<ObsidianIconProps> = ({
-    ref,
-    icon,
-    className,
-    containerStyle,
-    iconStyle,
-    onClick,
-}) => {
-    if (!ref) {
-        ref = useRef<HTMLDivElement | null>(null);
-    }
+export const ObsidianIcon = React.forwardRef<HTMLDivElement, ObsidianIconProps>(
+    ({ icon, className, containerStyle, iconStyle, onClick }, forwardedRef) => {
+        const localRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        if (ref.current) {
-            ref.current.innerHTML = "";
-            setIcon(ref.current, icon);
-        }
-        if (iconStyle) {
-            const iconElement = ref.current?.firstElementChild as HTMLElement;
-            if (iconElement) {
-                Object.assign(iconElement.style, iconStyle);
+        const setRefs = useCallback(
+            (node: HTMLDivElement | null) => {
+                localRef.current = node;
+                if (typeof forwardedRef === "function") {
+                    forwardedRef(node);
+                } else if (forwardedRef) {
+                    forwardedRef.current = node;
+                }
+            },
+            [forwardedRef],
+        );
+
+        useEffect(() => {
+            const container = localRef.current;
+            if (!container) {
+                return;
             }
-        }
-    }, [icon]);
 
-    return (
-        <div
-            ref={ref}
-            className={className}
-            style={{ display: "flex", alignItems: "center", ...containerStyle }}
-            onClick={onClick}
-        />
-    );
-};
+            container.innerHTML = "";
+            setIcon(container, icon);
+
+            if (iconStyle) {
+                const iconElement = container.firstElementChild as HTMLElement | null;
+                if (iconElement) {
+                    Object.assign(iconElement.style, iconStyle);
+                }
+            }
+        }, [icon, iconStyle]);
+
+        return (
+            <div
+                ref={setRefs}
+                className={className}
+                style={{ display: "flex", alignItems: "center", ...containerStyle }}
+                onClick={onClick}
+            />
+        );
+    },
+);
+
+ObsidianIcon.displayName = "ObsidianIcon";
