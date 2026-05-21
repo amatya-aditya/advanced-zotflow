@@ -20,7 +20,9 @@ export const ObsidianIcon = React.forwardRef<HTMLDivElement, ObsidianIconProps>(
                 if (typeof forwardedRef === "function") {
                     forwardedRef(node);
                 } else if (forwardedRef) {
-                    forwardedRef.current = node;
+                    (
+                        forwardedRef as React.MutableRefObject<HTMLDivElement | null>
+                    ).current = node;
                 }
             },
             [forwardedRef],
