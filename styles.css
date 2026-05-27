@@ -3987,6 +3987,14 @@ svg.react-flow__connectionline {
     background-color: var(--nav-item-background-hover);
 }
 
+.zotflow-sidebar-item--companion {
+    color: var(--text-muted);
+}
+
+.zotflow-sidebar-item--companion .zotflow-file-icon {
+    opacity: 0.85;
+}
+
 .zotflow-sidebar-item-name {
     flex: 1;
     overflow: hidden;

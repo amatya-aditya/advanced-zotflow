@@ -79,13 +79,28 @@ export class IndexService {
         );
     }
 
+    private isCanonicalSourceNote(frontmatter: Record<string, unknown> | undefined) {
+        if (!frontmatter) return false;
+
+        return (
+            typeof frontmatter["zotero-key"] === "string" &&
+            frontmatter["library-id"] !== undefined &&
+            frontmatter["zotflow-companion-of"] === undefined
+        );
+    }
+
     // Process a single file
     public indexFile(file: TFile) {
+        this.removeFileIndex(file);
+
         // Get data from cache, do not await read()
         const cache = this.app.metadataCache.getFileCache(file);
-        const zoteroKey = cache?.frontmatter?.["zotero-key"];
+        const frontmatter = cache?.frontmatter as
+            | Record<string, unknown>
+            | undefined;
 
-        if (zoteroKey) {
+        if (this.isCanonicalSourceNote(frontmatter)) {
+            const zoteroKey = frontmatter!["zotero-key"] as string;
             this.keyToFileMap.set(zoteroKey, file);
         }
     }

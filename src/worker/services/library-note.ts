@@ -50,6 +50,25 @@ export class LibraryNoteService {
         this.debouncers.clear();
     }
 
+    private isMatchingSourceNote(
+        fileCheck: {
+            exists: boolean;
+            path: string;
+            frontmatter?: Record<string, any>;
+        },
+        libraryID: number,
+        key: string,
+    ): boolean {
+        if (!fileCheck.exists) return false;
+
+        const frontmatter = fileCheck.frontmatter || {};
+        return (
+            frontmatter["zotero-key"] === key &&
+            String(frontmatter["library-id"] ?? "") === String(libraryID) &&
+            frontmatter["zotflow-companion-of"] === undefined
+        );
+    }
+
     /**
      * ============================================================
      * Public API
@@ -223,19 +242,24 @@ export class LibraryNoteService {
             // Determine path
             // Ask main thread first: which file does this Key correspond to? (Cache lookup)
             let path = await this.parentHost.getFileByKey(key);
+            let fileCheck =
+                path != null
+                    ? await this.parentHost.checkFile(path)
+                    : {
+                          exists: false,
+                          path: "",
+                      };
 
-            // If Cache lookup fails, resolve path from template
-            if (!path) {
+            // Ignore stale or non-source-note cache hits, such as companion notes.
+            if (
+                !path ||
+                !this.isMatchingSourceNote(fileCheck, libraryID, key)
+            ) {
                 path = await this.notePathService.resolveLibraryNotePath(item);
+                fileCheck = await this.parentHost.checkFile(path);
             }
 
-            // Check physical file status
-            const fileCheck = await this.parentHost.checkFile(path);
-
-            if (
-                fileCheck.exists &&
-                fileCheck.frontmatter?.["zotero-key"] === key
-            ) {
+            if (this.isMatchingSourceNote(fileCheck, libraryID, key)) {
                 // Case A: File exists -> Try update (version check)
                 await this.performUpdate(
                     item,
@@ -280,7 +304,12 @@ export class LibraryNoteService {
      */
     async ensureNotePath(libraryID: number, key: string): Promise<string> {
         const cached = await this.parentHost.getFileByKey(key);
-        if (cached) return cached;
+        if (cached) {
+            const cachedCheck = await this.parentHost.checkFile(cached);
+            if (this.isMatchingSourceNote(cachedCheck, libraryID, key)) {
+                return cached;
+            }
+        }
 
         const item = await db.items.get({ libraryID, key });
         if (!item) {
@@ -294,7 +323,7 @@ export class LibraryNoteService {
         const targetPath =
             await this.notePathService.resolveLibraryNotePath(item);
         const fileCheck = await this.parentHost.checkFile(targetPath);
-        if (fileCheck.exists && fileCheck.frontmatter?.["zotero-key"] === key) {
+        if (this.isMatchingSourceNote(fileCheck, libraryID, key)) {
             return targetPath;
         }
 

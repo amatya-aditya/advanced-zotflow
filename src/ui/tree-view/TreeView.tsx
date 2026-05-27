@@ -22,8 +22,8 @@ import type {
     CollectionSortOrder,
     ItemSortOrder,
 } from "settings/types";
-import type { TFile, TAbstractFile } from "obsidian";
-import { normalizePath } from "obsidian";
+import { normalizePath, TFile } from "obsidian";
+import type { TAbstractFile } from "obsidian";
 
 /* ================================================================ */
 /*  Types                                                          */
@@ -47,6 +47,13 @@ export type ViewNode = {
     dateAdded?: string;
     dateModified?: string;
     syncStatus?: string;
+};
+
+type NotesSidebarNode = {
+    id: string;
+    file: TFile;
+    kind: "source" | "companion";
+    children: NotesSidebarNode[];
 };
 
 function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
@@ -123,6 +130,120 @@ function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
     });
 
     return roots;
+}
+
+function extractLinkPath(linkText: string): string {
+    return linkText.replace(/\[\[|\]\]/g, "").split("|")[0]?.trim() || "";
+}
+
+function compareNoteFiles(
+    a: TFile,
+    b: TFile,
+    itemSort: ItemSortOrder,
+): number {
+    switch (itemSort) {
+        case "title-desc":
+            return -cmpStr(a.basename, b.basename);
+        case "modified-new":
+            return b.stat.mtime - a.stat.mtime;
+        case "modified-old":
+            return a.stat.mtime - b.stat.mtime;
+        case "added-new":
+            return b.stat.ctime - a.stat.ctime;
+        case "added-old":
+            return a.stat.ctime - b.stat.ctime;
+        default:
+            return cmpStr(a.basename, b.basename);
+    }
+}
+
+function buildNotesSidebarTree(
+    sourceFiles: TFile[],
+    itemSort: ItemSortOrder,
+    term: string,
+): NotesSidebarNode[] {
+    const roots = sourceFiles.map((file) => ({
+        id: `source:${file.path}`,
+        file,
+        kind: "source" as const,
+        children: [],
+    }));
+
+    const sourceByPath = new Map<string, NotesSidebarNode>(
+        roots.map((node) => [normalizePath(node.file.path), node]),
+    );
+
+    const orphanCompanions: NotesSidebarNode[] = [];
+    for (const file of services.app.vault.getMarkdownFiles()) {
+        const frontmatter = services.app.metadataCache.getFileCache(file)
+            ?.frontmatter as Record<string, unknown> | undefined;
+        const companionOf = frontmatter?.["zotflow-companion-of"];
+
+        if (typeof companionOf !== "string") continue;
+
+        const sourceDest = services.app.metadataCache.getFirstLinkpathDest(
+            extractLinkPath(companionOf),
+            file.path,
+        );
+
+        const companionNode: NotesSidebarNode = {
+            id: `companion:${file.path}`,
+            file,
+            kind: "companion",
+            children: [],
+        };
+
+        if (sourceDest?.path) {
+            const sourceNode = sourceByPath.get(normalizePath(sourceDest.path));
+            if (sourceNode) {
+                sourceNode.children.push(companionNode);
+                continue;
+            }
+        }
+
+        orphanCompanions.push(companionNode);
+    }
+
+    const sortNodes = (nodes: NotesSidebarNode[]) => {
+        nodes.sort((a, b) => compareNoteFiles(a.file, b.file, itemSort));
+        nodes.forEach((node) => {
+            if (node.children.length > 0) sortNodes(node.children);
+        });
+    };
+
+    sortNodes(roots);
+    sortNodes(orphanCompanions);
+
+    const allRoots = [...roots, ...orphanCompanions];
+    if (!term) return allRoots;
+
+    const lower = term.toLowerCase();
+
+    const filterNode = (node: NotesSidebarNode): NotesSidebarNode | null => {
+        const selfMatches = node.file.basename.toLowerCase().includes(lower);
+
+        if (node.kind === "companion") {
+            return selfMatches ? { ...node, children: [] } : null;
+        }
+
+        const filteredChildren = node.children
+            .map(filterNode)
+            .filter((child): child is NotesSidebarNode => child !== null);
+
+        if (selfMatches) {
+            return { ...node, children: node.children };
+        }
+
+        if (filteredChildren.length > 0) {
+            return { ...node, children: filteredChildren };
+        }
+
+        return null;
+    };
+
+    return allRoots
+        .map(filterNode)
+        .filter((node): node is NotesSidebarNode => node !== null);
 }
 
 /* ================================================================ */
@@ -544,11 +665,35 @@ export const ZotFlowTree = () => {
         };
     }, []);
 
-    // Load note files when switching to notes view
+    // Load source notes when switching to notes view and refresh on vault changes.
     useEffect(() => {
-        if (viewMode === "notes") {
-            setNoteFiles(services.indexService.getAllIndexedFiles());
-        }
+        if (viewMode !== "notes") return;
+
+        const loadNotes = () => {
+            setNoteFiles([...services.indexService.getAllIndexedFiles()]);
+        };
+
+        loadNotes();
+
+        const onCreate = services.app.vault.on("create", (file) => {
+            if (file instanceof TFile && file.extension === "md") loadNotes();
+        });
+        const onDelete = services.app.vault.on("delete", (file) => {
+            if (file instanceof TFile && file.extension === "md") loadNotes();
+        });
+        const onRename = services.app.vault.on("rename", (file) => {
+            if (file instanceof TFile && file.extension === "md") loadNotes();
+        });
+        const onChanged = services.app.metadataCache.on("changed", (file) => {
+            if (file instanceof TFile && file.extension === "md") loadNotes();
+        });
+
+        return () => {
+            services.app.vault.offref(onCreate);
+            services.app.vault.offref(onDelete);
+            services.app.vault.offref(onRename);
+            services.app.metadataCache.offref(onChanged);
+        };
     }, [viewMode]);
 
     // Load base files when switching to bases view
@@ -845,6 +990,46 @@ export const ZotFlowTree = () => {
         return node.data.name.toLowerCase().includes(lowerTerm);
     };
 
+    const handleNotesContextMenu = useCallback(
+        (e: React.MouseEvent, file: TFile, kind: "source" | "companion") => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const menu = new Menu();
+
+            if (kind === "source") {
+                menu.addItem((item) => {
+                    item.setTitle("Create Companion Note")
+                        .setIcon("file-plus-2")
+                        .onClick(() => {
+                            services.plugin.promptCompanionNote(file);
+                        });
+                });
+            }
+
+            menu.addItem((item) => {
+                item.setTitle("Toggle lock")
+                    .setIcon("lock")
+                    .onClick(() => {
+                        services.app.fileManager.processFrontMatter(
+                            file,
+                            (fm) => {
+                                fm["zotflow-locked"] = !fm["zotflow-locked"];
+                            },
+                        );
+                    });
+            });
+
+            menu.showAtMouseEvent(e.nativeEvent);
+        },
+        [],
+    );
+
+    const notesTree = useMemo(
+        () => buildNotesSidebarTree(noteFiles, itemSort, term),
+        [noteFiles, itemSort, term],
+    );
+
     // --- Render content based on view mode ---
 
     const renderContent = () => {
@@ -942,81 +1127,58 @@ export const ZotFlowTree = () => {
         }
 
         if (viewMode === "notes") {
-            const lower = term.toLowerCase();
-            const filtered = term
-                ? noteFiles.filter((f) =>
-                      f.basename.toLowerCase().includes(lower),
-                  )
-                : noteFiles;
-            const sorted = [...filtered].sort((a, b) =>
-                itemSort === "title-desc"
-                    ? -cmpStr(a.basename, b.basename)
-                    : itemSort === "modified-new"
-                      ? b.stat.mtime - a.stat.mtime
-                      : itemSort === "modified-old"
-                        ? a.stat.mtime - b.stat.mtime
-                        : itemSort === "added-new"
-                          ? b.stat.ctime - a.stat.ctime
-                          : itemSort === "added-old"
-                            ? a.stat.ctime - b.stat.ctime
-                            : cmpStr(a.basename, b.basename),
+            const renderNoteNode = (
+                noteNode: NotesSidebarNode,
+                depth: number = 0,
+            ): React.ReactNode => (
+                <React.Fragment key={noteNode.id}>
+                    <div
+                        className={`zotflow-sidebar-item${noteNode.kind === "companion" ? " zotflow-sidebar-item--companion" : ""}`}
+                        style={{ paddingLeft: `${8 + depth * INDENT_SIZE}px` }}
+                        onClick={() => {
+                            services.app.workspace
+                                .getLeaf(false)
+                                .openFile(noteNode.file);
+                        }}
+                        onContextMenu={(e) =>
+                            handleNotesContextMenu(
+                                e,
+                                noteNode.file,
+                                noteNode.kind,
+                            )
+                        }
+                    >
+                        <ObsidianIcon
+                            icon={
+                                noteNode.kind === "source"
+                                    ? "file-text"
+                                    : "file-pen"
+                            }
+                            className="zotflow-file-icon"
+                        />
+                        <span className="zotflow-sidebar-item-name">
+                            {noteNode.file.basename}
+                        </span>
+                        {noteNode.kind === "companion" && (
+                            <div className="nav-file-tag">Companion</div>
+                        )}
+                    </div>
+                    {noteNode.children.map((child) =>
+                        renderNoteNode(child, depth + 1),
+                    )}
+                </React.Fragment>
             );
+
             return (
                 <div className="zotflow-sidebar-list">
-                    {sorted.length === 0 && (
+                    {notesTree.length === 0 && (
                         <div className="zotflow-sidebar-empty">
                             {noteFiles.length === 0
                                 ? "No source notes found."
                                 : "No matching notes."}
                         </div>
                     )}
-                    {sorted.map((f) => (
-                        <div
-                            key={f.path}
-                            className="zotflow-sidebar-item"
-                            onClick={() => {
-                                services.app.workspace
-                                    .getLeaf(false)
-                                    .openFile(f);
-                            }}
-                            onContextMenu={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                const menu = new Menu();
-                                menu.addItem((item) => {
-                                    item.setTitle("Create Companion Note")
-                                        .setIcon("file-plus-2")
-                                        .onClick(() => {
-                                            services.plugin.promptCompanionNote(
-                                                f,
-                                            );
-                                        });
-                                });
-                                menu.addItem((item) => {
-                                    item.setTitle("Toggle lock")
-                                        .setIcon("lock")
-                                        .onClick(() => {
-                                            services.app.fileManager.processFrontMatter(
-                                                f,
-                                                (fm) => {
-                                                    fm["zotflow-locked"] =
-                                                        !fm["zotflow-locked"];
-                                                },
-                                            );
-                                        });
-                                });
-                                menu.showAtMouseEvent(e.nativeEvent);
-                            }}
-                        >
-                            <ObsidianIcon
-                                icon="file-text"
-                                className="zotflow-file-icon"
-                            />
-                            <span className="zotflow-sidebar-item-name">
-                                {f.basename}
-                            </span>
-                        </div>
-                    ))}
+                    {notesTree.map((node) => renderNoteNode(node))}
                 </div>
             );
         }
