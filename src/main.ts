@@ -140,7 +140,7 @@ export default class ZotFlow extends Plugin {
 
         // Add tree view to left
         this.app.workspace.onLayoutReady(async () => {
-            this.registerTreeView();
+            await this.registerTreeView(false, false);
         });
 
         this.registerEvent(
@@ -508,7 +508,7 @@ export default class ZotFlow extends Plugin {
         );
     }
 
-    async registerTreeView(active = false) {
+    async registerTreeView(active = false, createIfMissing = true) {
         const { workspace } = this.app;
 
         let leaf: WorkspaceLeaf | null = null;
@@ -517,7 +517,12 @@ export default class ZotFlow extends Plugin {
         if (leaves.length > 0) {
             const existingLeaf = leaves[0];
             if (existingLeaf) leaf = existingLeaf;
-        } else {
+
+            // Self-heal duplicate sidebar instances created by older startup behavior.
+            for (const duplicateLeaf of leaves.slice(1)) {
+                duplicateLeaf.detach();
+            }
+        } else if (createIfMissing) {
             const leftLeaf = workspace.getLeftLeaf(false);
             if (leftLeaf) {
                 leaf = leftLeaf;
