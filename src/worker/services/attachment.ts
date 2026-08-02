@@ -32,6 +32,20 @@ export class AttachmentService {
 
     private static readonly ATTACHMENTS_PREFIX = "attachments:";
 
+    private isPersonalLibraryAttachment(
+        item: IDBZoteroItem<AttachmentData>,
+    ): boolean {
+        return item.raw.library.type === "user";
+    }
+
+    private shouldUseWebDav(item: IDBZoteroItem<AttachmentData>): boolean {
+        return (
+            this.settings.useWebDav &&
+            this.settings.webDavVerified === true &&
+            this.isPersonalLibraryAttachment(item)
+        );
+    }
+
     /**
      * Resolve a Zotero linked-file path.
      * If the path starts with "attachments:" (Zotero Linked Attachment Base
@@ -144,6 +158,7 @@ export class AttachmentService {
     ): Promise<Blob> {
         let buffer: ArrayBuffer | null = null;
         const linkMode = item.raw.data.linkMode;
+        const shouldUseWebDav = this.shouldUseWebDav(item);
 
         if (linkMode !== "linked_file") {
             await this.enforceMobileDownloadLimit(item);
@@ -178,7 +193,7 @@ export class AttachmentService {
                 );
 
                 // Try WebDAV first if enabled
-                if (this.settings.useWebDav) {
+                if (shouldUseWebDav) {
                     try {
                         this.parentHost.log(
                             "info",
@@ -194,6 +209,22 @@ export class AttachmentService {
                             e,
                         );
                     }
+                } else if (this.settings.useWebDav) {
+                    const reason =
+                        this.settings.webDavVerified !== true
+                            ? "configuration is not verified"
+                            : "group-library attachments always use Zotero Storage";
+                    this.parentHost.log(
+                        "debug",
+                        `Skipping WebDAV for ${item.key} because ${reason}.`,
+                        "AttachmentService",
+                        {
+                            itemKey: item.key,
+                            libraryType: item.raw.library.type,
+                            webDavVerified:
+                                this.settings.webDavVerified === true,
+                        },
+                    );
                 }
 
                 // If WebDAV disabled or failed, use API
@@ -251,7 +282,7 @@ export class AttachmentService {
                     // Smart Repair Strategy
                     if (
                         linkMode === "imported_file" ||
-                        !this.settings.useWebDav
+                        !shouldUseWebDav
                     ) {
                         this.parentHost.log(
                             "info",
@@ -321,7 +352,7 @@ export class AttachmentService {
 
         let sizeBytes: number | null = null;
 
-        if (this.settings.useWebDav) {
+        if (this.shouldUseWebDav(item)) {
             try {
                 sizeBytes = await this.webdav.getContentLength(
                     `${item.key}.zip`,

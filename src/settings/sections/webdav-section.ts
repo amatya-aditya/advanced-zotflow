@@ -21,7 +21,7 @@ export class WebDavSection {
             setting
                 .setName("Enable WebDAV Sync")
                 .setDesc(
-                    "Sync attachment files via a WebDAV server instead of Zotero Storage.",
+                    "Sync personal-library attachment files via a WebDAV server instead of Zotero Storage. Group-library attachments always use Zotero Storage.",
                 )
                 .addToggle((toggle) =>
                     toggle
@@ -54,7 +54,9 @@ export class WebDavSection {
         settingGroup.addSetting((setting) => {
             setting
                 .setName("Server URL")
-                .setDesc("e.g., https://webdav.service.com/zotero/")
+                .setDesc(
+                    "Enter the same base WebDAV URL you use in Zotero. `/zotero` is added automatically if needed.",
+                )
                 .addText((text) => {
                     text.setPlaceholder("https://...")
                         .setValue(tempUrl)
@@ -172,7 +174,7 @@ export class WebDavSection {
                                 services.notificationService.notify(
                                     savedAnyway ? "warning" : "error",
                                     savedAnyway
-                                        ? `Verification failed (${error.message}). Credentials were saved anyway and WebDAV downloads will still be attempted.`
+                                        ? `Verification failed (${error.message}). Credentials were saved, but ZotFlow will not use WebDAV until verification succeeds.`
                                         : `Connection failed: ${error.message}`,
                                 );
                                 this.refreshUI();
@@ -187,7 +189,7 @@ export class WebDavSection {
                 cls: "setting-item-description",
             });
             hint.setText(
-                "Credentials are saved but the server has not been verified yet. ZotFlow will still try WebDAV downloads and fall back to the Zotero API if needed.",
+                "Credentials are saved but the server has not been verified yet. ZotFlow will not use WebDAV until verification succeeds.",
             );
         }
     }
