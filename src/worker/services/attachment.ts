@@ -17,6 +17,7 @@ import type { IDBZoteroFile, IDBZoteroItem } from "types/db-schema";
  */
 export class AttachmentService {
     private downloadLocks: Map<string, Promise<Blob>> = new Map();
+    private static readonly MOBILE_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
 
     constructor(
         private webdav: WebDavService,
@@ -143,6 +144,10 @@ export class AttachmentService {
     ): Promise<Blob> {
         let buffer: ArrayBuffer | null = null;
         const linkMode = item.raw.data.linkMode;
+
+        if (linkMode !== "linked_file") {
+            await this.enforceMobileDownloadLimit(item);
+        }
 
         // Download Strategy
         switch (linkMode) {
@@ -307,6 +312,68 @@ export class AttachmentService {
         }
 
         return blob;
+    }
+
+    private async enforceMobileDownloadLimit(
+        item: IDBZoteroItem<AttachmentData>,
+    ): Promise<void> {
+        if (!(await this.parentHost.isAndroidApp())) return;
+
+        let sizeBytes: number | null = null;
+
+        if (this.settings.useWebDav) {
+            try {
+                sizeBytes = await this.webdav.getContentLength(
+                    `${item.key}.zip`,
+                );
+            } catch (e) {
+                this.parentHost.log(
+                    "warn",
+                    `WebDAV size probe failed for ${item.key}, falling back to Zotero metadata.`,
+                    "AttachmentService",
+                    e,
+                );
+            }
+        }
+
+        if (sizeBytes === null) {
+            const rawLength = (
+                item.raw as {
+                    links?: { enclosure?: { length?: number | string } };
+                }
+            ).links?.enclosure?.length;
+            if (typeof rawLength === "number") {
+                sizeBytes = rawLength;
+            } else if (typeof rawLength === "string") {
+                const parsed = Number.parseInt(rawLength, 10);
+                if (Number.isFinite(parsed)) {
+                    sizeBytes = parsed;
+                }
+            }
+        }
+
+        if (
+            sizeBytes !== null &&
+            sizeBytes > AttachmentService.MOBILE_MAX_DOWNLOAD_BYTES
+        ) {
+            const fileName =
+                item.raw.data.filename || item.raw.data.title || item.key;
+            const sizeMB = (sizeBytes / 1024 / 1024).toFixed(1);
+            const limitMB = Math.round(
+                AttachmentService.MOBILE_MAX_DOWNLOAD_BYTES / 1024 / 1024,
+            );
+
+            this.parentHost.notify(
+                "error",
+                `"${fileName}" is ${sizeMB} MB. On Android, attachments larger than ${limitMB} MB can't be downloaded. Open it on desktop instead.`,
+            );
+
+            throw new ZotFlowError(
+                ZotFlowErrorCode.ATTACHMENT_TOO_LARGE,
+                "AttachmentService",
+                `Attachment ${item.key} exceeds the ${limitMB} MB Android download limit.`,
+            );
+        }
     }
 
     /**

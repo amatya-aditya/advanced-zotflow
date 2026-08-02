@@ -71,6 +71,7 @@ export interface ZotFlowSettings {
     webDavUrl?: string;
     webDavUser?: string;
     webdavpassword?: string;
+    webDavVerified?: boolean;
     useCache: boolean;
     maxCacheSizeMB: number;
     librarySourceNoteTemplatePath: string;
@@ -134,6 +135,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     syncInterval: 30,
     autoSync: false,
     useWebDav: false,
+    webDavVerified: false,
     useCache: true,
     maxCacheSizeMB: 500,
     librarySourceNoteTemplatePath: "",

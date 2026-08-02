@@ -48,6 +48,7 @@ export interface IParentProxy {
     getLinkedLocalSourceNote(
         file: TFileWithoutParentAndVault,
     ): Promise<TFileWithoutParentAndVault | null>;
+    isAndroidApp(): Promise<boolean>;
 
     // Tasks
     onTaskUpdate(taskId: string, info: ITaskInfo): void;

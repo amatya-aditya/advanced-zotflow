@@ -159,7 +159,42 @@ function parseNoteHtml(
         },
     );
 
+    visitParents(
+        tree,
+        (n: any) => n.type === "text",
+        (n: any, ancestors) => {
+            for (const a of ancestors) {
+                if (
+                    a.type === "element" &&
+                    (a.tagName === "code" || a.tagName === "pre")
+                ) {
+                    return;
+                }
+            }
+            n.value = decodeNumericCharRefs(n.value);
+        },
+    );
+
     return { tree, wrapperAttrs };
+}
+
+function decodeNumericCharRefs(value: string): string {
+    if (value.indexOf("&#") === -1) return value;
+
+    return value.replace(
+        /&#x([0-9a-fA-F]+);|&#(\d+);/g,
+        (match, hex: string | undefined, dec: string | undefined) => {
+            const code = hex != null ? parseInt(hex, 16) : parseInt(dec!, 10);
+            if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
+                return match;
+            }
+            try {
+                return String.fromCodePoint(code);
+            } catch {
+                return match;
+            }
+        },
+    );
 }
 
 /* ================================================================ */

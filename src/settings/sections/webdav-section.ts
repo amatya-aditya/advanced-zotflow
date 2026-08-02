@@ -1,6 +1,7 @@
 import { Setting, setIcon, SettingGroup } from "obsidian";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
+import { ZotFlowError } from "utils/error";
 
 import type ZotFlow from "main";
 
@@ -31,6 +32,7 @@ export class WebDavSection {
                                 this.plugin.settings.webDavUrl = "";
                                 this.plugin.settings.webDavUser = "";
                                 this.plugin.settings.webdavpassword = "";
+                                this.plugin.settings.webDavVerified = false;
                             }
                             await this.plugin.saveSettings();
                             this.refreshUI();
@@ -40,7 +42,11 @@ export class WebDavSection {
 
         if (!this.plugin.settings.useWebDav) return;
 
-        const isVerified = !!this.plugin.settings.webDavUrl;
+        const isVerified = !!this.plugin.settings.webDavVerified;
+        const hasSavedCredentials =
+            !!this.plugin.settings.webDavUrl ||
+            !!this.plugin.settings.webDavUser ||
+            !!this.plugin.settings.webdavpassword;
         let tempUrl = this.plugin.settings.webDavUrl || "";
         let tempUser = this.plugin.settings.webDavUser || "";
         let tempPassword = this.plugin.settings.webdavpassword || "";
@@ -80,7 +86,7 @@ export class WebDavSection {
                 cls: "zotflow-settings-btn-container",
             });
 
-            if (isVerified) {
+            if (hasSavedCredentials) {
                 new Setting(btnContainer).addButton((button) =>
                     button
                         .setButtonText("Disconnect")
@@ -90,6 +96,7 @@ export class WebDavSection {
                             this.plugin.settings.webDavUrl = "";
                             this.plugin.settings.webDavUser = "";
                             this.plugin.settings.webdavpassword = "";
+                            this.plugin.settings.webDavVerified = false;
                             await this.plugin.saveSettings();
                             services.notificationService.notify(
                                 "info",
@@ -98,10 +105,16 @@ export class WebDavSection {
                             this.refreshUI();
                         }),
                 );
-            } else {
+            }
+
+            if (!isVerified) {
                 new Setting(btnContainer).addButton((button) =>
                     button
-                        .setButtonText("Verify & Connect")
+                        .setButtonText(
+                            hasSavedCredentials
+                                ? "Re-verify & Save"
+                                : "Verify & Connect",
+                        )
                         .setCta()
                         .onClick(async () => {
                             if (!tempUrl || !tempUser || !tempPassword) {
@@ -116,7 +129,7 @@ export class WebDavSection {
                                 .setDisabled(true);
 
                             try {
-                                await workerBridge.webdav.verify(
+                                const verifiedUrl = await workerBridge.webdav.verify(
                                     tempUrl,
                                     tempUser,
                                     tempPassword,
@@ -126,10 +139,11 @@ export class WebDavSection {
                                     "WebDAV Connected!",
                                 );
 
-                                this.plugin.settings.webDavUrl = tempUrl;
+                                this.plugin.settings.webDavUrl = verifiedUrl;
                                 this.plugin.settings.webDavUser = tempUser;
                                 this.plugin.settings.webdavpassword =
                                     tempPassword;
+                                this.plugin.settings.webDavVerified = true;
 
                                 await this.plugin.saveSettings();
 
@@ -140,17 +154,41 @@ export class WebDavSection {
                                     "Settings",
                                     error,
                                 );
+
+                                this.plugin.settings.webDavUrl =
+                                    tempUrl.trim();
+                                this.plugin.settings.webDavUser =
+                                    tempUser.trim();
+                                this.plugin.settings.webdavpassword =
+                                    tempPassword;
+                                this.plugin.settings.webDavVerified = false;
+                                await this.plugin.saveSettings();
+
+                                const savedAnyway =
+                                    error instanceof ZotFlowError &&
+                                    (error.message.includes("401/403") ||
+                                        error.message.includes("405") ||
+                                        error.message.includes("PROPFIND"));
                                 services.notificationService.notify(
-                                    "error",
-                                    `Connection failed: ${error.message}`,
+                                    savedAnyway ? "warning" : "error",
+                                    savedAnyway
+                                        ? `Verification failed (${error.message}). Credentials were saved anyway and WebDAV downloads will still be attempted.`
+                                        : `Connection failed: ${error.message}`,
                                 );
-                                button
-                                    .setButtonText("Verify & Connect")
-                                    .setDisabled(false);
+                                this.refreshUI();
                             }
                         }),
                 );
             }
         });
+
+        if (hasSavedCredentials && !isVerified) {
+            const hint = containerEl.createDiv({
+                cls: "setting-item-description",
+            });
+            hint.setText(
+                "Credentials are saved but the server has not been verified yet. ZotFlow will still try WebDAV downloads and fall back to the Zotero API if needed.",
+            );
+        }
     }
 }

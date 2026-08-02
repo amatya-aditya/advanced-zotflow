@@ -342,13 +342,15 @@ export class IframeReaderBridge {
                 if (!this.isLocal && this.attachmentItem && annotations.length) {
                     const parentKey = this.getParentItemKey();
                     if (parentKey) {
+                        const libraryID = this.attachmentItem.libraryID;
                         const payload: ZotFlowCitationPayload = {
                             type: "zotflow-citation",
-                            libraryID: this.attachmentItem.libraryID,
+                            libraryID,
                             key: parentKey,
-                            annotations: annotations.map((annotation) =>
-                                stripAnnotationForPayload(annotation),
-                            ),
+                            annotations: annotations.map((annotation) => ({
+                                ...stripAnnotationForPayload(annotation),
+                                libraryID,
+                            })),
                         };
                         dataTransfer.setData(
                             ZOTFLOW_CITATION_MIME,
@@ -468,9 +470,11 @@ export class IframeReaderBridge {
                             {
                                 libraryID: this.attachmentItem.libraryID,
                                 key: parentKey,
-                                annotations: annotations.map((annotation) =>
-                                    stripAnnotationForPayload(annotation),
-                                ),
+                                annotations: annotations.map((annotation) => ({
+                                    ...stripAnnotationForPayload(annotation),
+                                    libraryID:
+                                        this.attachmentItem!.libraryID,
+                                })),
                             },
                             citationFormat,
                         );

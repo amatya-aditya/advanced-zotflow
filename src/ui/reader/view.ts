@@ -23,8 +23,8 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 export const ZOTERO_READER_VIEW_TYPE = "zotflow-zotero-reader-view";
 
 interface ReaderViewState extends Record<string, unknown> {
-    libraryID: number;
-    itemKey: string;
+    libraryID?: number;
+    itemKey?: string;
 }
 
 /** Obsidian `ItemView` that embeds the Zotero reader iframe for remote/cloud attachments. */
@@ -90,6 +90,15 @@ export class ZoteroReaderView extends ItemView {
         state: ReaderViewState,
         result: ViewStateResult,
     ): Promise<void> {
+        if (
+            typeof state.libraryID !== "number" ||
+            typeof state.itemKey !== "string" ||
+            state.itemKey.length === 0
+        ) {
+            await super.setState(state, result);
+            return;
+        }
+
         const _keyInfo = await workerBridge.annotation.getKeyInfo(
             services.settings.zoteroapikey,
         );
@@ -131,7 +140,7 @@ export class ZoteroReaderView extends ItemView {
             this.loadDocument();
         }
 
-        super.setState(state, result);
+        await super.setState(state, result);
     }
 
     private async loadDocument() {
@@ -427,8 +436,8 @@ export class ZoteroReaderView extends ItemView {
 
     getState(): ReaderViewState {
         return {
-            libraryID: this.attachmentItem.libraryID,
-            itemKey: this.attachmentItem.key,
+            libraryID: this.attachmentItem?.libraryID,
+            itemKey: this.attachmentItem?.key,
         };
     }
 

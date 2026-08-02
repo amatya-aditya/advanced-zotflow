@@ -538,6 +538,10 @@ export default class ZotFlow extends Plugin {
 
     async loadSettings() {
         const raw = (await this.loadData()) as Record<string, unknown> | null;
+        const rawSettings =
+            raw && "settings" in raw
+                ? ((raw as Partial<ZotFlowPluginData>).settings ?? null)
+                : raw;
 
         if (raw && "settings" in raw) {
             // New nested format: { settings, viewStates }
@@ -550,6 +554,18 @@ export default class ZotFlow extends Plugin {
             this.settings = { ...DEFAULT_SETTINGS, ...raw };
             this.viewStates = {};
             this.customThemes = [];
+        }
+
+        // Migrate older installs that stored a WebDAV URL but had no explicit
+        // verification flag yet.
+        if (
+            rawSettings &&
+            typeof rawSettings === "object" &&
+            !("webDavVerified" in rawSettings) &&
+            this.settings.useWebDav &&
+            !!this.settings.webDavUrl
+        ) {
+            this.settings.webDavVerified = true;
         }
 
         // Load sensitive credentials from SecretStorage (cross-platform safe)

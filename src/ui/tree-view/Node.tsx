@@ -8,6 +8,7 @@ import { workerBridge } from "bridge";
 
 import { openAttachment, openItemNote } from "utils/viewer";
 import { generateBaseView } from "utils/base-generator";
+import { zoteroLibraryPrefix, zoteroSelectItemUri } from "utils/zotero-uri";
 import {
     ZOTFLOW_CITATION_MIME,
     type ZotFlowCitationPayload,
@@ -460,6 +461,38 @@ export const NodeItem = ({
                             services.notificationService.notify(
                                 "error",
                                 "Failed to delete note.",
+                            );
+                        }
+                    });
+            });
+        }
+
+        if (nodeType === "item") {
+            menu.addItem((item) => {
+                item.setTitle("Open in Zotero")
+                    .setIcon("external-link")
+                    .onClick(() => {
+                        try {
+                            const prefix = zoteroLibraryPrefix(
+                                services.libraryCache.isGroup(
+                                    node.data.libraryID,
+                                ),
+                                node.data.libraryID,
+                            );
+                            const url = zoteroSelectItemUri(
+                                prefix,
+                                node.data.key,
+                            );
+                            window.open(url, "_blank", "noopener,noreferrer");
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to open item in Zotero",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to open item in Zotero.",
                             );
                         }
                     });

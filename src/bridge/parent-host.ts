@@ -6,6 +6,7 @@ import {
     TFile,
     normalizePath,
     MarkdownView,
+    Platform,
     parseYaml,
     stringifyYaml,
 } from "obsidian";
@@ -166,6 +167,10 @@ export class ParentHost implements IParentProxy {
         file: TFileWithoutParentAndVault,
     ): Promise<TFileWithoutParentAndVault | null> {
         return getLinkedLocalSourceNote(this.app, file);
+    }
+
+    public async isAndroidApp(): Promise<boolean> {
+        return Platform.isAndroidApp;
     }
 
     public onTaskUpdate(taskId: string, info: ITaskInfo): void {
