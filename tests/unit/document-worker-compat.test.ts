@@ -1,6 +1,9 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, test } from "vitest";
-import { DOCUMENT_WORKER_PREAMBLE } from "bundle-assets/patch-inlined-assets";
+import {
+    DOCUMENT_WORKER_PREAMBLE,
+    patchDocumentWorkerScript,
+} from "bundle-assets/patch-inlined-assets";
 
 // Each VM has its own Promise constructor, like the nested Document Worker.
 // Removing the API here reproduces the iPad failure without changing Vitest's realm.
@@ -13,6 +16,67 @@ function runWithoutNative(script: string): unknown {
         ${DOCUMENT_WORKER_PREAMBLE}\n${script}`,
     ) as unknown;
 }
+
+describe("Document Worker SDT layout fallback", () => {
+    // The two recorders in the pinned worker differ in their local names and
+    // return values. Keep both shapes here to exercise the resource patch.
+    const recorders = `
+        function recordInference(t,e,n) {
+            const i={type:"text_only_layout",pageIndex:t.pageIndex,pageNumber:t.pageIndex+1,...n};
+            return e&&(e.layoutFallbacks||=[],e.layoutFallbacks.push(i)),i;
+        }
+        function recordLimit(t,e,n) {
+            const s={type:"text_only_layout",pageIndex:t.pageIndex,pageNumber:t.pageIndex+1,...n};
+            e&&(e.layoutFallbacks||=[],e.layoutFallbacks.push(s));
+        }
+    `;
+
+    function run(script: string): unknown {
+        return runInNewContext(
+            patchDocumentWorkerScript(
+                new TextEncoder().encode(recorders + script),
+            ),
+        ) as unknown;
+    }
+
+    test("rejects a failed page instead of returning plain text after retries", async () => {
+        const result = run(`
+            async function infer() { throw new TypeError("unsupported model operation"); }
+            async function extract() {
+                try { return await infer(); }
+                catch {
+                    try { return await infer(); }
+                    catch (error) {
+                        recordInference({pageIndex:2},{},{reason:"inference_error",errorName:error.name,errorMessage:error.message});
+                        return [{type:"body",text:"incomplete fallback"}];
+                    }
+                }
+            }
+            extract();
+        `);
+        await expect(result).rejects.toThrow(
+            "SDT layout extraction failed on page 3 (inference_error): TypeError: unsupported model operation",
+        );
+    });
+
+    test("reports the page and line limit when inference cannot run", () => {
+        expect(() =>
+            run(`
+            recordLimit({pageIndex:4},{},{reason:"too_many_lines",lineCount:9999,limit:1000});
+        `),
+        ).toThrow("page 5 (too_many_lines): line count 9999 exceeds 1000");
+    });
+
+    test("preserves non-degrading bookkeeping and successful results", () => {
+        expect(
+            run(`
+            const debug = {};
+            recordInference({pageIndex:0},debug,{reason:"fallback_blocks_coalesced"});
+            [debug.layoutFallbacks.length, {type:"image"}, {type:"math"}];
+        `),
+        ).toEqual([1, { type: "image" }, { type: "math" }]);
+    });
+});
 
 describe("Document Worker Promise.withResolvers compatibility", () => {
     test("supports immediate upstream calls and independent resolver pairs", async () => {

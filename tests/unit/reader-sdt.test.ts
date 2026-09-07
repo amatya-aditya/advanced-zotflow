@@ -164,6 +164,36 @@ describe("Reader SDT requests", () => {
         expect(state.notify).not.toHaveBeenCalled();
     });
 
+    test("logs a layout failure, notifies the user, and allows another attempt", async () => {
+        const error = new Error(
+            "SDT layout extraction failed on page 3 (inference_error): TypeError: unsupported model operation",
+        );
+        state.generate.mockRejectedValueOnce(error);
+        const document = {
+            type: "pdf",
+            data: { buf: new Uint8Array([1]), url: null },
+        } as const;
+        const show = vi.fn();
+        expect(await requestReaderSDT(document, {}, () => true, show)).toEqual({
+            ok: false,
+            reason: "failed",
+        });
+        expect(state.log).toHaveBeenCalledWith(
+            "Could not prepare structured document text",
+            "ReaderSDT",
+            error,
+        );
+        expect(state.notify).toHaveBeenCalledWith(
+            "error",
+            expect.stringContaining("update ZotFlow Enhancement Pack"),
+        );
+        expect(show).not.toHaveBeenCalled();
+        expect(
+            await requestReaderSDT(document, {}, () => true, show),
+        ).toMatchObject({ ok: true });
+        expect(state.notify).toHaveBeenCalledTimes(1);
+    });
+
     test("a corrupt/incompatible Pack is a failure, not an installation prompt", async () => {
         state.inspect.mockRejectedValue(
             new Error("Invalid installed Pack manifest"),

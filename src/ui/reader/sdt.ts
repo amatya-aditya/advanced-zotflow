@@ -89,7 +89,7 @@ export async function requestReaderSDT(
         );
         services.notificationService.notify(
             "error",
-            "Could not prepare reading mode. Check ZotFlow Enhancement Pack and try again.",
+            "Could not prepare reading mode. Check or update ZotFlow Enhancement Pack, then retry. See the log for details.",
         );
         return { ok: false, reason: "failed" };
     }

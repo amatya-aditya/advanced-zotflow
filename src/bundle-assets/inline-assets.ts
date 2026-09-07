@@ -1,6 +1,6 @@
 import { gunzipSync } from "fflate";
 import {
-    DOCUMENT_WORKER_PREAMBLE,
+    patchDocumentWorkerScript,
     patchPDFJSViewerHTML,
 } from "./patch-inlined-assets";
 import resourceContext, { resourceKeys } from "virtual:reader-resources";
@@ -117,7 +117,7 @@ function initializeBlobUrls(
     const workerScript = BLOB_BINARY_MAP["document-worker/worker.js"];
     if (workerScript) {
         const workerBlob = new Blob(
-            [DOCUMENT_WORKER_PREAMBLE, workerScript.data as BlobPart],
+            [patchDocumentWorkerScript(workerScript.data)],
             { type: workerScript.type },
         );
         const workerUrl = URL.createObjectURL(workerBlob);

@@ -57,6 +57,36 @@ if (typeof Promise.withResolvers !== "function") {
 })();
 `;
 
+/**
+ * Upstream silently replaces failed PDF layout inference with plain text. That
+ * loses image/equation blocks and can change reading order, so Read Mode must
+ * reject it instead of caching it as a successful result.
+ *
+ * Both upstream fallback recorders append to layoutFallbacks. Throw there,
+ * while the page and original error are still available: the final SDT pack
+ * only retains extractionDegraded. The existing worker error response then
+ * reaches ReaderSDT's log/notice and lets the user retry after fixing the Pack.
+ * Match property names rather than the upstream minifier's local names.
+ */
+export function patchDocumentWorkerScript(data: Uint8Array): string {
+    const source = new TextDecoder().decode(data);
+    const patched = source.replace(
+        /([\w$]+\.layoutFallbacks\.push)\(([\w$]+)\)/g,
+        (_match: string, push: string, record: string) => `${push}((() => {
+            const fallback = ${record};
+            if (fallback.reason === "inference_error" || fallback.reason === "too_many_lines") {
+                const detail = fallback.errorMessage
+                    ? (fallback.errorName || "Error") + ": " + fallback.errorMessage
+                    : "line count " + fallback.lineCount + " exceeds " + fallback.limit;
+                throw new Error("SDT layout extraction failed on page " + fallback.pageNumber
+                    + " (" + fallback.reason + "): " + detail);
+            }
+            return fallback;
+        })())`,
+    );
+    return DOCUMENT_WORKER_PREAMBLE + patched;
+}
+
 function uint8ArrayToBase64(bytes: Uint8Array): string {
     let binary = "";
     const len = bytes.byteLength;
