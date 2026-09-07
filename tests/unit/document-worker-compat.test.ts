@@ -17,6 +17,77 @@ function runWithoutNative(script: string): unknown {
     ) as unknown;
 }
 
+describe("Document Worker ONNX shared memory compatibility", () => {
+    const allocation =
+        "new WebAssembly.Memory({initial:256,maximum:65536,shared:!0})";
+
+    function allocate(memory: typeof WebAssembly.Memory): unknown {
+        return runInNewContext(
+            patchDocumentWorkerScript(new TextEncoder().encode(allocation)),
+            { WebAssembly: { Memory: memory }, RangeError },
+        ) as unknown;
+    }
+
+    test("keeps the original allocation when it succeeds", () => {
+        const requests: WebAssembly.MemoryDescriptor[] = [];
+        const result = new WebAssembly.Memory({ initial: 1 });
+        const Memory = function (descriptor: WebAssembly.MemoryDescriptor) {
+            requests.push(descriptor);
+            return result;
+        } as unknown as typeof WebAssembly.Memory;
+        expect(allocate(Memory)).toBe(result);
+        expect(requests).toEqual([
+            { initial: 256, maximum: 65536, shared: true },
+        ]);
+    });
+
+    test("retries a rejected reservation with a 1 GiB maximum", () => {
+        const requests: WebAssembly.MemoryDescriptor[] = [];
+        const result = new WebAssembly.Memory({ initial: 1 });
+        const Memory = function (descriptor: WebAssembly.MemoryDescriptor) {
+            requests.push(descriptor);
+            if (descriptor.maximum === 65536)
+                throw new RangeError("Out of memory");
+            return result;
+        } as unknown as typeof WebAssembly.Memory;
+        expect(allocate(Memory)).toBe(result);
+        expect(requests).toEqual([
+            { initial: 256, maximum: 65536, shared: true },
+            { initial: 256, maximum: 16384, shared: true },
+        ]);
+    });
+
+    test("does not retry unrelated failures", () => {
+        let attempts = 0;
+        const error = new TypeError("Invalid memory descriptor");
+        const Memory = function () {
+            attempts++;
+            throw error;
+        } as unknown as typeof WebAssembly.Memory;
+        expect(() => allocate(Memory)).toThrow(error);
+        expect(attempts).toBe(1);
+    });
+
+    test("reports the reduced limit if the retry also fails", () => {
+        let attempts = 0;
+        const Memory = function () {
+            attempts++;
+            throw new RangeError("Out of memory");
+        } as unknown as typeof WebAssembly.Memory;
+        expect(() => allocate(Memory)).toThrow(
+            "ONNX WASM memory allocation failed (16 MiB initial, 1 GiB maximum): RangeError: Out of memory",
+        );
+        expect(attempts).toBe(2);
+    });
+
+    test("leaves other WASM allocations untouched", () => {
+        const probe = "new WebAssembly.Memory({initial:0,maximum:0,shared:!0})";
+        expect(patchDocumentWorkerScript(new TextEncoder().encode(probe))).toBe(
+            DOCUMENT_WORKER_PREAMBLE + probe,
+        );
+    });
+});
+
 describe("Document Worker SDT layout fallback", () => {
     // The two recorders in the pinned worker differ in their local names and
     // return values. Keep both shapes here to exercise the resource patch.

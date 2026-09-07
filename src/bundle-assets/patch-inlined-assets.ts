@@ -69,7 +69,28 @@ if (typeof Promise.withResolvers !== "function") {
  * Match property names rather than the upstream minifier's local names.
  */
 export function patchDocumentWorkerScript(data: Uint8Array): string {
-    const source = new TextDecoder().decode(data);
+    // ONNX requests 16 MiB initially but reserves a shared-memory maximum of
+    // 4 GiB. iOS 16 WebKit can reject that reservation before loading a model
+    // (https://bugs.webkit.org/show_bug.cgi?id=255103). Retry this allocation
+    // once with a 1 GiB ceiling; keep the normal path and all other WASM memories
+    // intact. WASM pages are 64 KiB, and shared:true is required by this binary
+    // even though ONNX is configured to run with one thread.
+    const source = new TextDecoder().decode(data).replace(
+        "new WebAssembly.Memory({initial:256,maximum:65536,shared:!0})",
+        `(() => {
+            try {
+                return new WebAssembly.Memory({initial:256,maximum:65536,shared:true});
+            } catch (error) {
+                if (!(error instanceof RangeError)) throw error;
+                try {
+                    return new WebAssembly.Memory({initial:256,maximum:16384,shared:true});
+                } catch (retryError) {
+                    throw new Error("ONNX WASM memory allocation failed (16 MiB initial, 1 GiB maximum): "
+                        + retryError);
+                }
+            }
+        })()`,
+    );
     const patched = source.replace(
         /([\w$]+\.layoutFallbacks\.push)\(([\w$]+)\)/g,
         (_match: string, push: string, record: string) => `${push}((() => {
