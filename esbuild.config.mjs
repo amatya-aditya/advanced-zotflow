@@ -4,7 +4,6 @@ import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import { builtinModules } from "node:module";
-import { DOCUMENT_WORKER_PREAMBLE } from "./scripts/document-worker-compat.mjs";
 
 /**
  * Recursively list all files under `dir`, returning POSIX-style paths
@@ -139,15 +138,7 @@ const inlineResourcePlugin = {
 
                 files.forEach((file) => {
                     const filePath = path.join(resourceDir, file);
-                    let content = fs.readFileSync(filePath);
-                    // A Worker has its own global: install missing browser APIs
-                    // in its script, rather than in the main thread or Reader.
-                    if (file === "document-worker/worker.js") {
-                        content = Buffer.concat([
-                            Buffer.from(DOCUMENT_WORKER_PREAMBLE),
-                            content,
-                        ]);
-                    }
+                    const content = fs.readFileSync(filePath);
 
                     // Compress & Base64
                     const gzipped = zlib.gzipSync(content);

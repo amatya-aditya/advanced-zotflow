@@ -1,3 +1,62 @@
+// Prepended when creating the Document Worker Blob, before upstream code runs.
+// Older iPad WebViews lack these APIs. The Reader iframe's polyfills cannot reach
+// this separate worker global, including SDT modules loaded into it later.
+export const DOCUMENT_WORKER_PREAMBLE = `
+if (typeof Promise.withResolvers !== "function") {
+    Object.defineProperty(Promise, "withResolvers", {
+        configurable: true,
+        writable: true,
+        value: function withResolvers() {
+            var resolve, reject;
+            var promise = new this(function (res, rej) {
+                resolve = res;
+                reject = rej;
+            });
+            return { promise: promise, resolve: resolve, reject: reject };
+        }
+    });
+}
+
+// The pinned Document Worker uses values().flatMap(), values().some() and
+// keys().find(). Built-in iterators share this prototype even on WebViews
+// without a global Iterator constructor. Keep flatMap lazy and let for...of
+// close iterators when a predicate returns early or a callback throws.
+(() => {
+    const prototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+    const methods = {
+        flatMap: function* flatMap(mapper) {
+            let index = 0;
+            for (const value of this) {
+                yield* mapper(value, index++);
+            }
+        },
+        some: function some(predicate) {
+            let index = 0;
+            for (const value of this) {
+                if (predicate(value, index++)) return true;
+            }
+            return false;
+        },
+        find: function find(predicate) {
+            let index = 0;
+            for (const value of this) {
+                if (predicate(value, index++)) return value;
+            }
+            return undefined;
+        }
+    };
+    for (const [name, method] of Object.entries(methods)) {
+        if (typeof prototype[name] !== "function") {
+            Object.defineProperty(prototype, name, {
+                configurable: true,
+                writable: true,
+                value: method
+            });
+        }
+    }
+})();
+`;
+
 function uint8ArrayToBase64(bytes: Uint8Array): string {
     let binary = "";
     const len = bytes.byteLength;

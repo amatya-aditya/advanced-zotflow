@@ -1,5 +1,8 @@
 import { gunzipSync } from "fflate";
-import { patchPDFJSViewerHTML } from "./patch-inlined-assets";
+import {
+    DOCUMENT_WORKER_PREAMBLE,
+    patchPDFJSViewerHTML,
+} from "./patch-inlined-assets";
 import resourceContext, { resourceKeys } from "virtual:reader-resources";
 
 const mimeTypes: Record<string, string> = {
@@ -108,6 +111,22 @@ function initializeBlobUrls(
         }
     });
 
+    // Apply resource patches after all original bytes and URLs are available.
+    // Patch the worker first so viewer.html receives the final worker URL.
+    const workerPatchStarted = performance.now();
+    const workerScript = BLOB_BINARY_MAP["document-worker/worker.js"];
+    if (workerScript) {
+        const workerBlob = new Blob(
+            [DOCUMENT_WORKER_PREAMBLE, workerScript.data as BlobPart],
+            { type: workerScript.type },
+        );
+        const workerUrl = URL.createObjectURL(workerBlob);
+        const originalUrl = BLOB_URL_MAP["document-worker/worker.js"];
+        if (originalUrl) URL.revokeObjectURL(originalUrl);
+        BLOB_URL_MAP["document-worker/worker.js"] = workerUrl;
+    }
+    const patchWorkerMs = performance.now() - workerPatchStarted;
+
     // Patch viewer.html
     const patchStarted = performance.now();
     const patchedViewerHTML = patchPDFJSViewerHTML(
@@ -131,6 +150,7 @@ function initializeBlobUrls(
         base64Ms: Number(timing.base64Ms.toFixed(2)),
         gzipMs: Number(timing.gzipMs.toFixed(2)),
         blobMs: Number(timing.blobMs.toFixed(2)),
+        patchWorkerMs: Number(patchWorkerMs.toFixed(2)),
         patchViewerMs: Number((finished - patchStarted).toFixed(2)),
         slowestResources: resourceTimings
             .sort((a, b) => b.durationMs - a.durationMs)
