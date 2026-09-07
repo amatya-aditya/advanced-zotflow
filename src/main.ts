@@ -71,22 +71,78 @@ export default class ZotFlow extends Plugin {
     private sourceNoteActionElements = new WeakMap<MarkdownView, HTMLElement>();
 
     async onload() {
+        const startupStarted = performance.now();
+        const startupStartedAt = Date.now();
+        let stageStarted = startupStarted;
+        const logTiming = (
+            stage: string,
+            started: number,
+            finished: number,
+        ) => {
+            services.logService.debug(stage, "Startup", {
+                startedAt: new Date(
+                    startupStartedAt + started - startupStarted,
+                ).toISOString(),
+                finishedAt: new Date(
+                    startupStartedAt + finished - startupStarted,
+                ).toISOString(),
+                durationMs: Number((finished - started).toFixed(2)),
+                elapsedMs: Number((finished - startupStarted).toFixed(2)),
+            });
+        };
+        const finishStage = (stage: string, finished = performance.now()) => {
+            logTiming(stage, stageStarted, finished);
+            stageStarted = finished;
+        };
+        // Deferred tasks can overlap onload and each other. Measure them separately
+        // without awaiting them or advancing the sequential startup checkpoints.
+        const timeBackground = async (
+            stage: string,
+            run: () => Promise<unknown>,
+        ) => {
+            const started = performance.now();
+            let completed = false;
+            try {
+                await run();
+                completed = true;
+            } finally {
+                logTiming(
+                    `Background: ${stage} ${completed ? "completed" : "failed"}`,
+                    started,
+                    performance.now(),
+                );
+            }
+        };
+
         // Load settings
         await this.loadSettings();
         this.applyEditableRegionMarkerVisibility();
+        const settingsLoaded = performance.now();
 
         // Initialize local services
         services.initialize(this, this.settings);
         services.viewStateService.setViewStates(this.viewStates);
         services.viewStateService.setCustomThemes(this.customThemes);
+        const servicesInitialized = performance.now();
+        // LogService only exists after initialization; retain the earlier boundaries.
+        services.logService.debug("onload started", "Startup", {
+            startedAt: new Date(startupStartedAt).toISOString(),
+        });
+        finishStage("Load settings", settingsLoaded);
+        finishStage("Initialize main-thread services", servicesInitialized);
 
         // Initialize worker bridge
+        let workerStage = "Initialize worker bridge";
         try {
             await workerBridge.initialize(this.settings, this.app);
+            finishStage(workerStage);
+            workerStage = "Refresh library capabilities";
             // Now that the worker is ready, populate per-library capabilities
             // (notes/write access). Used by UI gates and the lock extension.
             await services.libraryCache.refresh();
+            finishStage(workerStage);
         } catch (e) {
+            finishStage(`${workerStage} failed`);
             services.logService.error(
                 "Failed to initialize worker bridge",
                 "Main",
@@ -100,6 +156,7 @@ export default class ZotFlow extends Plugin {
 
         // Add Icons
         this.addIcons();
+        finishStage("Register icons");
 
         // Register views
         this.registerView(
@@ -118,8 +175,14 @@ export default class ZotFlow extends Plugin {
 
         // Add tree view to left
         this.app.workspace.onLayoutReady(() => {
-            ff(this.registerTreeView(), "Failed to register the tree view");
+            ff(
+                timeBackground("Register tree view", () =>
+                    this.registerTreeView(),
+                ),
+                "Failed to register the tree view",
+            );
         });
+        finishStage("Register views and layout callback");
 
         // this.registerEvent(
         //     this.app.workspace.on("file-open", this.handleFileOpen.bind(this)),
@@ -150,6 +213,7 @@ export default class ZotFlow extends Plugin {
         // Register citation suggest
         this.citationSuggest = new CitationSuggest();
         this.registerEditorSuggest(this.citationSuggest);
+        finishStage("Register editor extensions and citation handlers");
 
         // Register protocol handler for zotflow URIs
         // Usage: obsidian://zotflow?filePath=path/to/file.md
@@ -187,18 +251,26 @@ export default class ZotFlow extends Plugin {
             }
         }
 
+        finishStage("Register protocol and file extensions");
+
         // Ensure MathJax is loaded. The output is thrown away — this only
         // exists to make Obsidian load the library — so a failure means the
         // warm-up did not happen and nothing more.
         const tempComponent = new Component();
-        void MarkdownRenderer.render(
-            this.app,
-            "$\\int$",
-            createDiv(),
-            "",
-            tempComponent,
+        ff(
+            timeBackground("MathJax warm-up", () =>
+                MarkdownRenderer.render(
+                    this.app,
+                    "$\\int$",
+                    createDiv(),
+                    "",
+                    tempComponent,
+                ),
+            ),
+            "Failed to warm up MathJax",
         );
         tempComponent.unload();
+        finishStage("Schedule MathJax warm-up");
 
         this.addRibbonIcon(
             "zotero-icon",
@@ -418,8 +490,11 @@ export default class ZotFlow extends Plugin {
             },
         });
 
+        finishStage("Register commands and ribbon actions");
+
         this.zotFlowSettingTab = new ZotFlowSettingTab(this.app, this);
         this.addSettingTab(this.zotFlowSettingTab);
+        finishStage("Register settings tab");
 
         // Track file renames to keep viewStates and .zf.json sidecar in sync
         this.registerEvent(
@@ -445,7 +520,12 @@ export default class ZotFlow extends Plugin {
         this.cslFolder = new CslFolderService(this.app.vault);
         this.cslFolder.setFolder(this.settings.cslStylesFolder);
         this.app.workspace.onLayoutReady(() => {
-            void this.cslFolder.rescan();
+            ff(
+                timeBackground("Scan CSL folder", () =>
+                    this.cslFolder.rescan(),
+                ),
+                "Failed to scan CSL folder",
+            );
             this.registerEvent(
                 this.app.vault.on("create", (file) => {
                     void this.cslFolder.onCreateOrModify(file);
@@ -461,6 +541,15 @@ export default class ZotFlow extends Plugin {
         // Add right-click "Update source note" entries for source notes
         this.registerEvent(
             this.app.workspace.on("file-menu", this.handleFileMenu.bind(this)),
+        );
+        finishStage("Register vault events and CSL layout callback");
+        // Wall-clock onload time includes awaited worker/I/O time, not just CPU
+        // execution. It excludes bundle parsing before onload and does not wait
+        // for deferred work, whose duration may overlap this total.
+        logTiming(
+            "onload completed (total)",
+            startupStarted,
+            performance.now(),
         );
     }
 

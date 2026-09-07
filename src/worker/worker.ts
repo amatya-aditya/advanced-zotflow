@@ -168,6 +168,17 @@ const exposedApi: WorkerAPI = {
         parentHost: IParentProxy,
         blobUrls: Record<string, string>,
     ) => {
+        const started = performance.now();
+        const startedAt = new Date().toISOString();
+        let stageStarted = started;
+        const stageDurationMs: Record<string, number> = {};
+        const finishStage = (stage: string) => {
+            const finished = performance.now();
+            stageDurationMs[stage] = Number(
+                (finished - stageStarted).toFixed(2),
+            );
+            stageStarted = finished;
+        };
         // Patch global fetch to proxy through Obsidian Main Thread
         // The worker global has no `originalFetch`; we are adding it so the
         // proxy can be unwound.
@@ -214,6 +225,7 @@ const exposedApi: WorkerAPI = {
         // Also expose via module import (see proxied-fetch.ts) so worker
         // code can use it without referencing lint-restricted globals.
         setProxiedFetch(proxiedFetchImpl);
+        finishStage("Configure proxied fetch");
 
         try {
             _zotero = new ZoteroAPIService(settings.zoteroapikey);
@@ -226,6 +238,7 @@ const exposedApi: WorkerAPI = {
                 _search,
             );
             _tag = new TagService(settings, parentHost);
+            finishStage("Create API, library, search and database services");
             _webdav = new WebDavService(settings, parentHost);
             _attachment = new AttachmentService(
                 _webdav,
@@ -240,6 +253,7 @@ const exposedApi: WorkerAPI = {
                 _library,
                 _search,
             );
+            finishStage("Create attachment, sync and tree services");
 
             _enhancementResources = new EnhancementResourceService();
             _documentWorker = new DocumentWorkerService(
@@ -250,8 +264,10 @@ const exposedApi: WorkerAPI = {
             );
             _notePath = new NotePathService(settings, _dbHelper);
             _convert = new ConvertService();
+            finishStage("Create document and conversion services");
 
             _cslRender = new CslRenderWorkerService(settings);
+            finishStage("Create CSL service");
 
             _template = new LibraryTemplateService(
                 settings,
@@ -284,6 +300,7 @@ const exposedApi: WorkerAPI = {
                 _localTemplate,
                 _notePath,
             );
+            finishStage("Create template and note services");
 
             _conflict = new ConflictService(parentHost);
 
@@ -297,9 +314,27 @@ const exposedApi: WorkerAPI = {
             _taskManager = new TaskManager(parentHost);
 
             _currentSettings = settings;
+            finishStage("Create annotation, key and task services");
 
             // Initialize the nested Document Worker.
             _documentWorker._init();
+            finishStage("Start nested Document Worker (synchronous setup)");
+            // Measure inside this worker's clock and send one summary. The main
+            // thread's init RPC duration also includes scheduling and messaging;
+            // this summary excludes worker bundle evaluation before init arrives.
+            parentHost.log(
+                "debug",
+                "Worker initialization breakdown",
+                "WorkerBridge",
+                {
+                    startedAt,
+                    finishedAt: new Date().toISOString(),
+                    durationMs: Number(
+                        (performance.now() - started).toFixed(2),
+                    ),
+                    stageDurationMs,
+                },
+            );
 
             parentHost.log("info", "Services initialized.", "Worker");
         } catch (e) {

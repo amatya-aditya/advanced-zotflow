@@ -39,6 +39,10 @@ export class EnhancementPackService {
         private expected: SdtCompatibility,
         private getProcessor: () => Processor,
         private logCleanupError: (error: unknown) => void = () => {},
+        private logDebug: (
+            message: string,
+            details: Record<string, unknown>,
+        ) => void = () => {},
     ) {
         this.directory = `${configDir}/plugins/${PACK_ID}`;
     }
@@ -80,6 +84,12 @@ export class EnhancementPackService {
     }
     private async load(): Promise<Generation> {
         const path = `${this.directory}/main.js`;
+        const startedAt = new Date().toISOString();
+        const started = performance.now();
+        let completed = false;
+        // Measure the shared file read and directory parsing, including any read
+        // retry. Individual resources are decoded lazily after this load finishes.
+        this.logDebug("Pack data load started", { startedAt });
         try {
             if (
                 !(await this.adapter.exists(path)) ||
@@ -132,6 +142,7 @@ export class EnhancementPackService {
                 if (existing) {
                     // Keep live URLs and release the extra load reference to this snapshot.
                     this.drop(result.snapshotId);
+                    completed = true;
                     return existing;
                 }
                 const generation: Generation = {
@@ -141,6 +152,7 @@ export class EnhancementPackService {
                     pending: new Map(),
                 };
                 this.generations.add(generation);
+                completed = true;
                 return generation;
             }
             throw new PackError(
@@ -153,6 +165,17 @@ export class EnhancementPackService {
             throw new PackError(
                 "unreadable",
                 "Cannot read installed Enhancement Pack",
+            );
+        } finally {
+            this.logDebug(
+                completed
+                    ? "Pack data load completed"
+                    : "Pack data load failed",
+                {
+                    startedAt,
+                    finishedAt: new Date().toISOString(),
+                    durationMs: Math.round(performance.now() - started),
+                },
             );
         }
     }

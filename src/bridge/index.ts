@@ -42,10 +42,6 @@ import type { AttachmentIdentifier } from "worker/tasks/impl/batch-extract-exter
 import { services } from "services/services";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
-function materializeComlinkProxy<T>(proxy: T): Promise<Awaited<T>> {
-    return Promise.resolve(proxy);
-}
-
 /** Comlink-based RPC wrapper managing the Web Worker lifecycle and exposing all worker service proxies. */
 export class WorkerBridge {
     private _worker: Worker;
@@ -87,48 +83,129 @@ export class WorkerBridge {
     }
 
     async initialize(settings: ZotFlowSettings, app: App) {
+        const proxyTimings: Record<string, number> = {};
+        const materializeComlinkProxy = async <T>(
+            name: string,
+            proxy: T,
+        ): Promise<Awaited<T>> => {
+            const started = performance.now();
+            try {
+                return await Promise.resolve(proxy);
+            } finally {
+                proxyTimings[name] = Number(
+                    (performance.now() - started).toFixed(2),
+                );
+            }
+        };
+        let stageStarted = performance.now();
+        // These timings are nested within Startup's worker bridge stage.
+        const finishStage = (stage: string) => {
+            const finished = performance.now();
+            services.logService.debug(stage, "WorkerBridge", {
+                durationMs: Number((finished - stageStarted).toFixed(2)),
+            });
+            stageStarted = finished;
+        };
         // Worker settings update / initialization
-        const blobUrls = getBlobUrls();
+        const blobUrls = getBlobUrls((details) =>
+            services.logService.debug(
+                "Reader resource preparation breakdown",
+                "WorkerBridge",
+                details,
+            ),
+        );
+        finishStage("Prepare bundled Reader resource URLs");
         await this._api.init(
             settings,
             Comlink.proxy(new ParentHost(app)),
             blobUrls,
         );
+        finishStage("Wait for worker initialization");
 
         // Promise.resolve performs the same thenable assimilation as `await`.
         // Comlink's runtime `then` trap materialises each dedicated MessagePort,
         // although its TypeScript types do not expose that thenable shape.
-        this._attachment = await materializeComlinkProxy(this._api.attachment);
-        this._sync = await materializeComlinkProxy(this._api.sync);
-        this._zotero = await materializeComlinkProxy(this._api.zotero);
-        this._webdav = await materializeComlinkProxy(this._api.webdav);
-        this._treeView = await materializeComlinkProxy(this._api.treeView);
+        this._attachment = await materializeComlinkProxy(
+            "attachment",
+            this._api.attachment,
+        );
+        this._sync = await materializeComlinkProxy("sync", this._api.sync);
+        this._zotero = await materializeComlinkProxy(
+            "zotero",
+            this._api.zotero,
+        );
+        this._webdav = await materializeComlinkProxy(
+            "webdav",
+            this._api.webdav,
+        );
+        this._treeView = await materializeComlinkProxy(
+            "treeView",
+            this._api.treeView,
+        );
         this._libraryNote = await materializeComlinkProxy(
+            "libraryNote",
             this._api.libraryNote,
         );
-        this._itemNote = await materializeComlinkProxy(this._api.itemNote);
-        this._localNote = await materializeComlinkProxy(this._api.localNote);
-        this._conflict = await materializeComlinkProxy(this._api.conflict);
-        this._annotation = await materializeComlinkProxy(this._api.annotation);
-        this._key = await materializeComlinkProxy(this._api.key);
-        this._library = await materializeComlinkProxy(this._api.library);
-        this._dbHelper = await materializeComlinkProxy(this._api.dbHelper);
-        this._tag = await materializeComlinkProxy(this._api.tag);
+        this._itemNote = await materializeComlinkProxy(
+            "itemNote",
+            this._api.itemNote,
+        );
+        this._localNote = await materializeComlinkProxy(
+            "localNote",
+            this._api.localNote,
+        );
+        this._conflict = await materializeComlinkProxy(
+            "conflict",
+            this._api.conflict,
+        );
+        this._annotation = await materializeComlinkProxy(
+            "annotation",
+            this._api.annotation,
+        );
+        this._key = await materializeComlinkProxy("key", this._api.key);
+        this._library = await materializeComlinkProxy(
+            "library",
+            this._api.library,
+        );
+        this._dbHelper = await materializeComlinkProxy(
+            "dbHelper",
+            this._api.dbHelper,
+        );
+        this._tag = await materializeComlinkProxy("tag", this._api.tag);
         this._enhancementResources = await materializeComlinkProxy(
+            "enhancementResources",
             this._api.enhancementResources,
         );
         this._documentWorker = await materializeComlinkProxy(
+            "documentWorker",
             this._api.documentWorker,
         );
         this._libraryTemplate = await materializeComlinkProxy(
+            "libraryTemplate",
             this._api.libraryTemplate,
         );
         this._localTemplate = await materializeComlinkProxy(
+            "localTemplate",
             this._api.localTemplate,
         );
-        this._notePath = await materializeComlinkProxy(this._api.notePath);
-        this._cslRender = await materializeComlinkProxy(this._api.cslRender);
-        this._tasks = await materializeComlinkProxy(this._api.tasks);
+        this._notePath = await materializeComlinkProxy(
+            "notePath",
+            this._api.notePath,
+        );
+        this._cslRender = await materializeComlinkProxy(
+            "cslRender",
+            this._api.cslRender,
+        );
+        this._tasks = await materializeComlinkProxy("tasks", this._api.tasks);
+        finishStage("Connect worker service proxies");
+        // One record avoids inserting a log operation between every RPC round trip.
+        services.logService.debug(
+            "Service proxy connection breakdown",
+            "WorkerBridge",
+            {
+                serviceDurationMs: proxyTimings,
+            },
+        );
 
         this._initialized = true;
         // Native Worker failure supplies no RPC responses. Settle resource waiters locally.

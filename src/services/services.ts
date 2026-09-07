@@ -64,6 +64,13 @@ class ServiceLocator {
                     "EnhancementPackService",
                     error,
                 ),
+            (message, details) =>
+                this._logService.log(
+                    "debug",
+                    message,
+                    "EnhancementPackService",
+                    details,
+                ),
         );
 
         this._initialized = true;
