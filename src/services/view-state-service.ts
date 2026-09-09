@@ -31,7 +31,8 @@ export class ViewStateService {
     }
 
     private _viewStates: Record<string, ViewStateEntry> = {};
-    private _viewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
+    /** `window.setTimeout` handle — a number, unlike Node's `Timeout`. */
+    private _viewStateSaveTimer: number | undefined;
     private _customThemes: CustomReaderTheme[] = [];
 
     /** Bulk-set the in-memory view state map (called once during plugin load). */
@@ -75,21 +76,25 @@ export class ViewStateService {
         state: Record<string, unknown>,
     ): void {
         const entry = this._viewStates[key] ?? {};
+
+        // Deepcopy, remove the reader realm
+        const safeState = JSON.parse(JSON.stringify(state)) as Record<
+            string,
+            unknown
+        >;
+
         if (primary) {
-            entry.primaryViewState = state;
+            entry.primaryViewState = safeState;
         } else {
-            entry.secondaryViewState = state;
+            entry.secondaryViewState = safeState;
         }
+
         this._viewStates[key] = entry;
         this.schedulePersistViewStates();
     }
 
     /** Save a theme preference for an attachment and schedule a debounced persist. */
-    saveTheme(
-        key: string,
-        kind: "light" | "dark",
-        theme: unknown,
-    ): void {
+    saveTheme(key: string, kind: "light" | "dark", theme: unknown): void {
         const entry = this._viewStates[key] ?? {};
         if (kind === "light") {
             entry.lightTheme = theme as string | undefined;
@@ -121,7 +126,7 @@ export class ViewStateService {
     /** Flush any pending view-state save immediately (call in onunload). */
     flushViewStateSave(): void {
         if (this._viewStateSaveTimer !== undefined) {
-            clearTimeout(this._viewStateSaveTimer);
+            window.clearTimeout(this._viewStateSaveTimer);
             this._viewStateSaveTimer = undefined;
             this.persistViewStates();
         }
@@ -134,9 +139,9 @@ export class ViewStateService {
 
     private schedulePersistViewStates(): void {
         if (this._viewStateSaveTimer !== undefined) {
-            clearTimeout(this._viewStateSaveTimer);
+            window.clearTimeout(this._viewStateSaveTimer);
         }
-        this._viewStateSaveTimer = setTimeout(() => {
+        this._viewStateSaveTimer = window.setTimeout(() => {
             this._viewStateSaveTimer = undefined;
             this.persistViewStates();
         }, VIEW_STATE_SAVE_DEBOUNCE_MS);

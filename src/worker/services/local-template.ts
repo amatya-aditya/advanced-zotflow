@@ -5,7 +5,14 @@ import type { AnnotationJSON } from "types/zotero-reader";
 import type { IParentProxy } from "bridge/types";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { getLocalSidecarPath } from "utils/utils";
+import { annoHtml2md } from "worker/convert";
 import type { AnnotationTemplateContext } from "types/template-context";
+import {
+    renderLiquid,
+    zfEnv,
+    type LiquidFilterScope,
+} from "./liquid-support";
+import { mergeTemplateFrontmatter } from "utils/template-frontmatter";
 
 /** Default LiquidJS template string for local vault file source notes. */
 const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
@@ -25,9 +32,11 @@ zotflow-local-attachment: [[{{ path }}]]
 {%- else -%}
 >  {{ annotation.text | replace: newline, quote_string_2 }}
 {%- endif -%}
-{%- if annotation.comment != "" -%}
 >
-> {{ annotation.comment | replace: newline, quote_string }}
+> {{ annotation.comment | wrap_editable: "ANNO", annotation.key | replace: newline, quote_string }}
+{%- if annotation.tags and annotation.tags.length > 0 -%}
+>
+> {% for t in annotation.tags %}#{{ t.tag | replace: " ", "_" }}{% unless forloop.last %} {% endunless %}{% endfor %}
 {%- endif -%}
 ^{{ annotation.key }}
 
@@ -38,6 +47,19 @@ zotflow-local-attachment: [[{{ path }}]]
 `;
 
 /** LiquidJS template engine for rendering local vault file (PDF/EPUB) source notes. */
+/** Root scope handed to Liquid when rendering a local-file sidecar note. */
+interface LocalRenderContext {
+    item: {
+        name: string;
+        path: string;
+        extension: string;
+        basename: string;
+        annotations: AnnotationTemplateContext[];
+    };
+    settings: ZotFlowSettings;
+    __zfReadOnlyKeys: Set<string>;
+}
+
 export class LocalTemplateService {
     private engine: Liquid;
 
@@ -63,6 +85,35 @@ export class LocalTemplateService {
             };
             return encodeURIComponent(JSON.stringify(navInfo));
         });
+
+        this.engine.registerFilter(
+            "wrap_editable",
+            /**
+             * Wrap content in ZF_<TYPE>_BEG/END markers so the CM6 editable
+             * region extension can mount an editable zone. Mirrors the
+             * library-template filter: consults the per-render
+             * `__zfReadOnlyKeys` set so read-only annotations (external,
+             * extracted from the PDF itself) render as plain locked text.
+             */
+            function (
+                this: LiquidFilterScope,
+                input: string,
+                type: string,
+                key: string,
+            ) {
+                if (!type || !key) return input;
+                const readOnlyKeys = zfEnv(this).__zfReadOnlyKeys;
+                if (readOnlyKeys && readOnlyKeys.has(`${type}:${key}`)) {
+                    return input;
+                }
+                // Always block form: markers on their own lines. An inline
+                // (single-line) layout was tried and retired — a line
+                // starting with `<!--` becomes a CommonMark HTML block, so
+                // markdown inside it renders raw in Reading view; `%%`
+                // markers avoid that but introduce stray blank lines.
+                return `<!-- ZF_${type}_BEG_${key} -->\n${input}\n<!-- ZF_${type}_END_${key} -->`;
+            },
+        );
     }
 
     updateSettings(newSettings: ZotFlowSettings) {
@@ -78,7 +129,7 @@ export class LocalTemplateService {
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
         templateContent: string | null,
-        originalFrontmatter: Record<string, any> = {},
+        originalFrontmatter: Record<string, unknown> = {},
         existingContent?: string,
     ): Promise<string> {
         try {
@@ -90,7 +141,7 @@ export class LocalTemplateService {
             const template = templateContent || DEFAULT_LOCAL_NOTE_TEMPLATE;
 
             // Separate Frontmatter and Body
-            const frontmatterRegex = /^---\s*([\s\S]*?)\s*---\n/;
+            const frontmatterRegex = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
             const match = template.match(frontmatterRegex);
 
             let templateFrontmatterRaw = "";
@@ -102,12 +153,13 @@ export class LocalTemplateService {
             }
 
             // Parse Template Frontmatter
-            let templateFrontmatter: any = {};
+            let templateFrontmatter: Record<string, unknown> = {};
             if (templateFrontmatterRaw.trim()) {
                 try {
                     // Render the frontmatter raw string first (allow liquid tags in frontmatter)
                     const renderedFrontmatterRaw =
-                        await this.engine.parseAndRender(
+                        await renderLiquid(
+                            this.engine,
                             templateFrontmatterRaw,
                             context,
                         );
@@ -127,12 +179,12 @@ export class LocalTemplateService {
                 }
             }
 
-            // Merge Frontmatter (Original + Rendered Template)
-            // Template keys overwrite Original keys
-            const finalFrontmatter = {
-                ...originalFrontmatter,
-                ...templateFrontmatter,
-            };
+            // `??key` supplies a default without overwriting a value the user
+            // already has; bare keys retain overwrite-on-render semantics.
+            const finalFrontmatter = mergeTemplateFrontmatter(
+                originalFrontmatter,
+                templateFrontmatter,
+            );
 
             // Ensure Mandatory Fields
             finalFrontmatter["zotflow-locked"] = true;
@@ -144,7 +196,8 @@ export class LocalTemplateService {
                 await this.parentHost.stringifyYaml(finalFrontmatter);
 
             // Render Body
-            const renderedBody = await this.engine.parseAndRender(
+            const renderedBody = await renderLiquid(
+                this.engine,
                 body,
                 context,
             );
@@ -179,16 +232,10 @@ export class LocalTemplateService {
         }
     }
 
-    private sanitizeQuotesString(str: string | null | undefined): string {
-        if (!str) return "";
-        // Escape > into \> to prevent breaking blockquotes structure in Markdown
-        return str.replace(/>/g, "\\>");
-    }
-
     public async prepareLocalAttachmentContext(
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
-    ): Promise<any> {
+    ): Promise<LocalRenderContext> {
         const processedAnnotations: AnnotationTemplateContext[] = annotations
             .sort((a, b) =>
                 (a.sortIndex ?? "").localeCompare(b.sortIndex ?? ""),
@@ -199,8 +246,12 @@ export class LocalTemplateService {
                     libraryID: 0, // Local files imply simplified library context
                     type: annotation.type,
                     authorName: annotation.authorName,
-                    text: this.sanitizeQuotesString(annotation.text),
-                    comment: this.sanitizeQuotesString(annotation.comment),
+                    // Both fields carry Zotero's restricted annotation HTML
+                    // (<b>/<i>/<sub>/<sup>) — convert to markdown, escaping
+                    // stray </> on the way (annoHtml2md subsumes the old
+                    // sanitizeQuotesString).
+                    text: annoHtml2md(annotation.text || ""),
+                    comment: annoHtml2md(annotation.comment || ""),
                     color: annotation.color,
                     pageLabel: annotation.pageLabel,
                     tags:
@@ -226,6 +277,13 @@ export class LocalTemplateService {
             annotations: processedAnnotations,
         };
 
+        // Read-only annotations must not become editable regions —
+        // consumed by the wrap_editable filter.
+        const readOnlyKeys = new Set<string>();
+        for (const anno of processedAnnotations) {
+            if (anno.readOnly) readOnlyKeys.add(`ANNO:${anno.key}`);
+        }
+
         return {
             item,
             settings: {
@@ -233,6 +291,7 @@ export class LocalTemplateService {
                 annotationImageFolder:
                     this.settings.annotationImageFolder.replace(/\/$/, ""),
             },
+            __zfReadOnlyKeys: readOnlyKeys,
         };
     }
 

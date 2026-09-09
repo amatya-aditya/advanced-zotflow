@@ -9,7 +9,7 @@
 
 import { Type, Kind, OptionalKind } from "@sinclair/typebox";
 
-import type { TObject, TSchema, TProperties } from "@sinclair/typebox";
+import type { TArray, TObject, TSchema, TProperties } from "@sinclair/typebox";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -33,7 +33,7 @@ export interface ContextPath {
 
 /** Read the TypeBox Kind from a schema. */
 function getKind(schema: TSchema): string {
-    return (schema as any)[Kind] as string;
+    return schema[Kind];
 }
 
 /** Unwrap `Type.Optional(...)` to get the inner schema. */
@@ -107,7 +107,7 @@ export function extractPaths(schema: TSchema, prefix = ""): ContextPath[] {
                 path: fullPath,
                 type: schemaTypeLabel(inner),
                 optional,
-                description: (inner.description as string) ?? undefined,
+                description: (inner.description) ?? undefined,
             });
 
             // Recurse into nested objects
@@ -168,8 +168,8 @@ export function resolvePathSchema(
  * This is used to combine upstream node outputs during schema propagation.
  */
 export function mergeSchemas(a: TObject, b: TObject): TObject {
-    const aProps = (a.properties ?? {}) as TProperties;
-    const bProps = (b.properties ?? {}) as TProperties;
+    const aProps = (a.properties ?? {});
+    const bProps = (b.properties ?? {});
     const merged: Record<string, TSchema> = {};
 
     // Start with all keys from a
@@ -232,8 +232,8 @@ function mergeProperty(a: TSchema, b: TSchema): TSchema {
  * optional; variables in both keep the wider (required) type.
  */
 export function mergeBranchSchemas(base: TObject, branch: TObject): TObject {
-    const baseProps = (base.properties ?? {}) as TProperties;
-    const branchProps = (branch.properties ?? {}) as TProperties;
+    const baseProps = (base.properties ?? {});
+    const branchProps = (branch.properties ?? {});
     const merged: Record<string, TSchema> = {};
 
     // All base props survive as-is
@@ -252,6 +252,16 @@ export function mergeBranchSchemas(base: TObject, branch: TObject): TObject {
     }
 
     return Type.Object(merged);
+}
+
+/**
+ * Narrows a schema to an array so its element type can be read safely.
+ *
+ * TypeBox schemas carry an index signature typed `any`, so `.items` has to be
+ * reached through a guard rather than a direct property read.
+ */
+export function isArraySchema(schema: TSchema): schema is TArray {
+    return getKind(schema) === "Array";
 }
 
 /** Empty context schema. */

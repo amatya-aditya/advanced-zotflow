@@ -1,13 +1,15 @@
 /**
  * Example Action — a generic placeholder action node.
  *
- * Logs an interpolated message to the console. The message field supports
- * variable references such as `{{trigger.itemKey}}`.
+ * Logs an interpolated message to the plugin log (Activity Center → Logs).
+ * The message field supports variable references such as `{{trigger.itemKey}}`.
  */
 
 import { Type } from "@sinclair/typebox";
 
-import { interpolate } from "../../context/interpolate";
+import { services } from "services/services";
+
+import { interpolateToString } from "../../context/interpolate";
 import {
     PropertySection,
     PropertyField,
@@ -52,7 +54,7 @@ export const exampleAction: NodeType<ExampleActionNodeData> = {
     category: "action",
     displayName: "Example Action",
     icon: "play",
-    description: "Logs a message to the console",
+    description: "Logs a message to the plugin log",
 
     contextOutputs: Type.Object({}),
 
@@ -64,8 +66,8 @@ export const exampleAction: NodeType<ExampleActionNodeData> = {
     Properties: ExampleActionProperties,
 
     async execute(context, data, _signal) {
-        const output = interpolate(data.message, context);
-        console.log("[Example Action]", output);
+        const output = interpolateToString(data.message, context);
+        services.logService.info(output, "Example Action");
         return "flow-out";
     },
 };

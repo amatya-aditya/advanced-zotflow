@@ -4,7 +4,17 @@ import type { LocalTemplateService } from "./local-template";
 import type { NotePathService } from "./note-path";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
-import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { errorMessage, ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import {
+    workerClearTimeout,
+    workerSetTimeout,
+    type WorkerTimeout,
+} from "worker/timers";
+import {
+    extractPersistRegions,
+    reinsertPersistRegions,
+    type PersistExtract,
+} from "utils/persist-regions";
 
 // Legacy regex patterns kept for migration fallback
 const OZRP_REGEX =
@@ -14,7 +24,12 @@ const ZOTFLOW_REGEX =
 
 /** CRUD service for local vault file notes (PDF/EPUB opened locally). */
 export class LocalNoteService {
-    private debouncers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+    private debouncers: Map<string, WorkerTimeout> = new Map();
+
+    // Notes that gained orphaned persist regions since the last Notice
+    // (same aggregation pattern as LibraryNoteService).
+    private orphanReports: Map<string, string[]> = new Map();
+    private orphanNoticeTimer: WorkerTimeout | null = null;
 
     constructor(
         private settings: ZotFlowSettings,
@@ -29,14 +44,51 @@ export class LocalNoteService {
         this.notePathService.updateSettings(settings);
     }
 
+    private normalizeTemplatePath(path: string): string {
+        const trimmed = path.trim();
+        if (!trimmed) return trimmed;
+        return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
+    }
+
     /**
      * Clear all pending debounced operations.
      */
     public dispose() {
         for (const timer of this.debouncers.values()) {
-            clearTimeout(timer);
+            workerClearTimeout(timer);
         }
         this.debouncers.clear();
+        if (this.orphanNoticeTimer !== null) {
+            workerClearTimeout(this.orphanNoticeTimer);
+            this.orphanNoticeTimer = null;
+        }
+    }
+
+    /**
+     * Record newly orphaned persist regions for a note and schedule a
+     * single debounced summary Notice covering the whole update cycle.
+     */
+    private reportNewOrphans(path: string, orphanIds: string[]) {
+        this.parentHost.log(
+            "warn",
+            `Persist region(s) orphaned in ${path}: ${orphanIds.join(", ")} — content moved to the "Orphaned persist regions" section`,
+            "LocalNoteService",
+        );
+        this.orphanReports.set(path, orphanIds);
+
+        if (this.orphanNoticeTimer !== null) {
+            workerClearTimeout(this.orphanNoticeTimer);
+        }
+        this.orphanNoticeTimer = workerSetTimeout(() => {
+            this.orphanNoticeTimer = null;
+            const noteCount = this.orphanReports.size;
+            this.orphanReports.clear();
+            if (noteCount === 0) return;
+            this.parentHost.notify(
+                "warning",
+                `${noteCount} note(s) have orphaned persist regions — content was preserved at the bottom of each note (see log)`,
+            );
+        }, 2000);
     }
 
     /**
@@ -111,23 +163,26 @@ export class LocalNoteService {
         // Debounced execution
         const debounceId = localAttachment.path;
         if (this.debouncers.has(debounceId)) {
-            clearTimeout(this.debouncers.get(debounceId)!);
+            workerClearTimeout(this.debouncers.get(debounceId));
             this.debouncers.delete(debounceId);
         }
 
-        const timer = setTimeout(async () => {
+        const run = async () => {
             this.debouncers.delete(debounceId);
             try {
                 await this.ensureNote(localAttachment, annotations);
             } catch (e) {
                 this.parentHost.log(
                     "error",
-                    "Debounced update failed: " + (e as Error).message,
+                    "Debounced update failed: " + errorMessage(e),
                     "LocalNoteService",
                     e,
                 );
             }
-        }, 2000);
+        };
+        // The body handles its own failures, so the promise is deliberately
+        // not awaited by the timer.
+        const timer = workerSetTimeout(() => void run(), 2000);
 
         this.debouncers.set(debounceId, timer);
     }
@@ -178,12 +233,12 @@ export class LocalNoteService {
             if (exists.exists) {
                 await this.parentHost.deleteFile(path);
             }
-        } catch (e: any) {
+        } catch (e) {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.FILE_WRITE_FAILED,
                 "LocalNoteService",
-                `Failed to delete image ${annotationKey}: ${e.message}`,
+                `Failed to delete image ${annotationKey}: ${errorMessage(e)}`,
             );
         }
     }
@@ -222,7 +277,7 @@ export class LocalNoteService {
                 try {
                     const fullBlock = match[0];
                     const jsonStr = match[1]!;
-                    const ann = JSON.parse(jsonStr);
+                    const ann = JSON.parse(jsonStr) as AnnotationJSON;
 
                     const quoteMatch =
                         /%% OZRP-ANNO-QUOTE-BEGIN %%([\s\S]*?)[>\s]*%% OZRP-ANNO-QUOTE-END %%/.exec(
@@ -270,7 +325,7 @@ export class LocalNoteService {
                 try {
                     const jsonStr = match[2]!;
                     const decodedJsonStr = decodeURIComponent(jsonStr);
-                    const ann = JSON.parse(decodedJsonStr);
+                    const ann = JSON.parse(decodedJsonStr) as AnnotationJSON;
                     annotations.push(ann);
                 } catch (e) {
                     this.parentHost.log(
@@ -364,7 +419,9 @@ export class LocalNoteService {
 
         // Render and Write
         const templateContent = await this.parentHost.readTextFile(
-            this.settings.localSourceNoteTemplatePath,
+            this.normalizeTemplatePath(
+                this.settings.localSourceNoteTemplatePath,
+            ),
         );
 
         const content = await this.templateService.renderLocalNote(
@@ -374,7 +431,14 @@ export class LocalNoteService {
             {},
         );
 
-        await this.parentHost.writeTextFile(notePath, content);
+        // No old content on create, but still validate the render's persist
+        // markers (throws on template errors; a no-op splice otherwise).
+        const spliced = reinsertPersistRegions(content, {
+            regions: [],
+            orphanSectionInner: null,
+        });
+
+        await this.parentHost.writeTextFile(notePath, spliced.content);
         this.parentHost.log(
             "info",
             `Created note: ${notePath}`,
@@ -387,10 +451,36 @@ export class LocalNoteService {
     private async performUpdate(
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
-        fileCheck: any, // Ideally typed as { exists: boolean, path: string, frontmatter: any }
+        fileCheck: Awaited<ReturnType<IParentProxy["checkFile"]>>,
     ) {
+        // Persist regions: pull user-owned blocks out of the current file
+        // before the full-content overwrite. A parse failure refuses the
+        // update — the file stays untouched until the user repairs it.
+        const oldContent = await this.parentHost.readTextFile(fileCheck.path);
+        if (oldContent === null || oldContent === undefined) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.FILE_OPEN_FAILED,
+                "LocalNoteService",
+                `Could not read ${fileCheck.path} before update — refused to overwrite blindly`,
+            );
+        }
+
+        let extracted: PersistExtract;
+        try {
+            extracted = extractPersistRegions(oldContent);
+        } catch (e) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.PARSE_ERROR,
+                "LocalNoteService",
+                `Invalid persist markers in ${fileCheck.path}: ${(e as Error).message}. Update refused until the file is fixed.`,
+                { cause: e, path: fileCheck.path },
+            );
+        }
+
         const templateContent = await this.parentHost.readTextFile(
-            this.settings.localSourceNoteTemplatePath,
+            this.normalizeTemplatePath(
+                this.settings.localSourceNoteTemplatePath,
+            ),
         );
 
         // Read existing content to preserve user zone during updates
@@ -406,7 +496,16 @@ export class LocalNoteService {
             existingContent || undefined,
         );
 
-        await this.parentHost.writeTextFile(fileCheck.path, content);
+        const spliced = reinsertPersistRegions(content, extracted);
+
+        await this.parentHost.writeTextFile(fileCheck.path, spliced.content);
+
+        if (spliced.newOrphans.length > 0) {
+            this.reportNewOrphans(
+                fileCheck.path,
+                spliced.newOrphans.map((o) => o.id),
+            );
+        }
 
         this.parentHost.log(
             "info",

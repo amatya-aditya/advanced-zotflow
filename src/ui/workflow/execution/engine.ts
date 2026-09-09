@@ -22,7 +22,7 @@ import {
     getInnerGraph,
     type PropagatedSchema,
 } from "../context/propagation";
-import { mergeSchemas } from "../context/schema";
+import { EMPTY_SCHEMA, mergeSchemas } from "../context/schema";
 import { createInitialContext } from "../context/strict-context";
 import { validateWorkflow } from "../context/validation";
 
@@ -34,14 +34,25 @@ import type {
     ExecutionCallbacks,
 } from "./types";
 import type { StrictWorkflowContext } from "../context/strict-context";
+import type { TObject } from "@sinclair/typebox";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Variables a node is allowed to write: its own outputs, else its cumulative set. */
+function writableSchema(schema: PropagatedSchema | undefined): TObject {
+    return schema?.outputs ?? schema?.cumulative ?? EMPTY_SCHEMA;
+}
+
+/** Variables visible to a node and everything downstream of it. */
+function cumulativeSchema(schema: PropagatedSchema | undefined): TObject {
+    return schema?.cumulative ?? EMPTY_SCHEMA;
+}
+
 /** Yield to the event loop so the UI stays responsive. */
 function yieldToMain(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, 0));
+    return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
 /** Count the total top-level nodes reachable from the trigger via edge traversal. */
@@ -124,8 +135,8 @@ async function executeInnerChain(
 
         const schema = schemas.get(currentId);
         const nodeContext = context.fork(
-            schema?.outputs ?? schema?.cumulative!,
-            schema?.cumulative!,
+            writableSchema(schema),
+            cumulativeSchema(schema),
         );
 
         const nodeLabel = node.data.label || nodeType.displayName || node.type;
@@ -208,12 +219,13 @@ async function executeApplyToEach(
     const outputName = (data.outputName as string) || "loop";
 
     if (!Array.isArray(collection)) return;
+    const items = collection as unknown[];
 
-    for (let i = 0; i < collection.length; i++) {
+    for (let i = 0; i < items.length; i++) {
         if (signal.aborted) return;
 
         context.set(outputName, {
-            item: collection[i],
+            item: items[i],
             index: i,
         });
 
@@ -316,7 +328,7 @@ export class WorkflowEngine {
 
         const triggerSchema = schemas.get(triggerNode.id);
         let context: StrictWorkflowContext = createInitialContext(
-            triggerSchema?.outputs ?? triggerSchema?.cumulative!,
+            writableSchema(triggerSchema),
             triggerSchema?.cumulative,
         );
 
@@ -361,7 +373,7 @@ export class WorkflowEngine {
 
             // Fork context for this node (trigger uses the initial context)
             const schema = schemas.get(currentNodeId);
-            let allowedOutputs = schema?.outputs ?? schema?.cumulative!;
+            let allowedOutputs = writableSchema(schema);
 
             // Compound nodes also need to write their scoped outputs (e.g.
             // Apply-to-Each writes loop.item/loop.index). Merge scoped outputs
@@ -377,7 +389,7 @@ export class WorkflowEngine {
             const nodeContext =
                 currentNodeId === triggerNode.id
                     ? context
-                    : context.fork(allowedOutputs, schema?.cumulative!);
+                    : context.fork(allowedOutputs, cumulativeSchema(schema));
 
             const nodeLabel =
                 node.data.label || nodeType.displayName || node.type;

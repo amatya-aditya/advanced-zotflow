@@ -45,7 +45,7 @@ export function BaseNode({ nodeProps, children }: BaseNodeChildProps) {
 
     const outputs = resolveOutputs(
         type ?? "action",
-        d as Record<string, unknown>,
+        d,
     );
     const multiOut = outputs.length > 1;
 

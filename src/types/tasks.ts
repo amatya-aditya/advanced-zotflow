@@ -15,6 +15,7 @@ export type TaskType =
     | "batch-extract-external-annotations"
     | "download-attachment"
     | "workflow"
+    | "backfill-csljson"
     | "test-task";
 
 /** Progress snapshot for a running task. */
@@ -55,3 +56,21 @@ export interface ITaskOptions {
     id?: string; // Optional custom ID
     signal?: AbortSignal;
 }
+
+/** Attachment bytes handed from the worker to a reader view. */
+export interface DownloadedAttachment {
+    blob: Blob;
+    /** Actual file-content MD5. Present only when the PDF reader needs it. */
+    contentMD5?: string;
+}
+
+/** Cache identity of the physical source selected for a Library Reader. */
+export type ReaderDocumentRevision =
+    | { kind: "library" }
+    | {
+          kind: "external";
+          path: string;
+          mtime: number;
+          size: number;
+      }
+    | { kind: "volatile" };

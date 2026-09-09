@@ -1,8 +1,15 @@
 import api from "zotero-api-client";
-import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { errorStatus, ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
-import type { ZoteroKey } from "types/zotero";
+import type { ZoteroGroup, ZoteroKey } from "types/zotero";
 import type { ApiChain } from "zotero-api-client";
+
+type ApiFactory = typeof api;
+
+const createApiClient: ApiFactory =
+    typeof api === "function"
+        ? api
+        : (api as unknown as { default: ApiFactory }).default;
 
 /** Wrapper around `zotero-api-client` for Zotero Web API communication. */
 export class ZoteroAPIService {
@@ -10,15 +17,15 @@ export class ZoteroAPIService {
 
     constructor(apiKey?: string) {
         if (apiKey) {
-            this._client = api.default(apiKey);
+            this._client = createApiClient(apiKey);
         } else {
             // Placeholder, expected to be updated via updateCredentials
-            this._client = api.default("");
+            this._client = createApiClient("");
         }
     }
 
     updateCredentials(apiKey: string) {
-        this._client = api.default(apiKey);
+        this._client = createApiClient(apiKey);
     }
 
     /**
@@ -35,10 +42,12 @@ export class ZoteroAPIService {
         }
 
         try {
-            const response = await api.default(apiKey).verifyKeyAccess().get();
+            const response = await createApiClient(apiKey)
+                .verifyKeyAccess()
+                .get();
             return response.getData() as ZoteroKey;
-        } catch (e: any) {
-            const status = e.response ? e.response.status : 0;
+        } catch (e) {
+            const status = errorStatus(e);
 
             if (status === 403 || status === 401) {
                 throw new ZotFlowError(
@@ -69,15 +78,15 @@ export class ZoteroAPIService {
     /**
      * Fetch User Groups
      */
-    async getGroups(userID: number) {
+    async getGroups(userID: number): Promise<ZoteroGroup[]> {
         try {
             const response = await this._client
                 .library("user", userID)
                 .groups()
                 .get();
-            return response.getData();
-        } catch (e: any) {
-            const status = e.response ? e.response.status : 0;
+            return response.getData() as ZoteroGroup[];
+        } catch (e) {
+            const status = errorStatus(e);
             if (status === 403 || status === 401) {
                 throw new ZotFlowError(
                     ZotFlowErrorCode.AUTH_INVALID,

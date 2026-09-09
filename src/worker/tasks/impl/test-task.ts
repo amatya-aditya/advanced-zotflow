@@ -1,10 +1,15 @@
 import { BaseTask } from "../base";
+import type { IParentProxy } from "bridge/types";
 import type { TaskStatus } from "types/tasks";
+import { workerSetTimeout } from "worker/timers";
 
 /** Simulated task for development/debug — runs a configurable number of steps over a given duration. */
 export class TestTask extends BaseTask {
-    constructor(private duration: number = 5000) {
-        super("test-task");
+    constructor(
+        parentHost: IParentProxy,
+        private duration: number = 5000,
+    ) {
+        super("test-task", parentHost);
         this.displayText = "Test Task";
         this.taskInput = { duration, steps: 100 };
     }
@@ -20,7 +25,9 @@ export class TestTask extends BaseTask {
                 throw new Error("Test error at step 10");
             }
 
-            await new Promise((resolve) => setTimeout(resolve, stepDuration));
+            await new Promise((resolve) =>
+                workerSetTimeout(() => resolve(undefined), stepDuration),
+            );
 
             this.reportProgress(
                 i + 1,

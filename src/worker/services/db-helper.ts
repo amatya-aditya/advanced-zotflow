@@ -4,6 +4,7 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { IParentProxy } from "bridge/types";
 import type { LibraryService } from "./library";
+import type { SearchService, SearchableRecord } from "./search";
 import type {
     AnyIDBZoteroItem,
     IDBZoteroItem,
@@ -21,6 +22,7 @@ export class DbHelperService {
         public settings: ZotFlowSettings,
         private parentHost: IParentProxy,
         private library: LibraryService,
+        private search: SearchService,
     ) {}
 
     updateSettings(settings: ZotFlowSettings) {
@@ -91,7 +93,7 @@ export class DbHelperService {
     ): Promise<IDBZoteroItem<AttachmentData> | undefined> {
         const item = await db.items.get([libraryID, itemKey]);
         if (!item || item.itemType !== "attachment") return undefined;
-        return item as IDBZoteroItem<AttachmentData>;
+        return item;
     }
 
     /**
@@ -140,39 +142,146 @@ export class DbHelperService {
     }
 
     /**
+     * Return all library names for the active libraries, sorted alphabetically.
+     * Used for `library:` autocomplete.
+     */
+    async getLibraryNames(): Promise<string[]> {
+        const libraryIDs = await this.getFilteredLibraryIDs();
+        if (libraryIDs.length === 0) return [];
+
+        const libs = await db.libraries.where("id").anyOf(libraryIDs).toArray();
+
+        const names = libs
+            .map((lib) => lib.name || lib.id.toString())
+            .sort((a, b) =>
+                a.localeCompare(b, undefined, { sensitivity: "accent" }),
+            );
+
+        return names;
+    }
+
+    /**
+     * Return all distinct (non-trashed) collection names across the active
+     * libraries, sorted alphabetically. Used for `collection:` autocomplete.
+     */
+    async getCollectionNames(): Promise<string[]> {
+        const libraryIDs = await this.getFilteredLibraryIDs();
+        if (libraryIDs.length === 0) return [];
+
+        const colls = await db.collections
+            .where(["libraryID", "trashed"])
+            .anyOf(getCombinations([libraryIDs, [0]]))
+            .toArray();
+
+        const names = new Set<string>();
+        for (const c of colls) {
+            if (c.name) names.add(c.name);
+        }
+        return Array.from(names).sort((a, b) =>
+            a.localeCompare(b, undefined, { sensitivity: "accent" }),
+        );
+    }
+
+    /**
      * Search items by query string.
+     *
+     * Supports fuzzy free-text matching (title + creators + tags) plus
+     * structured operators: `collection:`, `tag:`, `creator:`, `type:`
+     * (with `-` negation). Ranking is delegated to the shared SearchService.
      */
     async searchItems(
         query: string,
         limit: number,
     ): Promise<AnyIDBZoteroItem[]> {
         const libraryIDs = await this.getFilteredLibraryIDs();
-        const lowerQuery = query.toLowerCase();
+        const parsed = this.search.parse(query);
         const isValidTopLevel = (type: string) =>
             !["note", "annotation"].includes(type);
         const validTopLevelTypeList = Zotero_Item_Types.filter((type) =>
             isValidTopLevel(type),
         );
 
-        return await db.items
+        const candidates = await db.items
             .where(["libraryID", "itemType", "trashed"])
             .anyOf(getCombinations([libraryIDs, validTopLevelTypeList, [0]]))
-            .filter((item: AnyIDBZoteroItem) => {
-                if (item.parentItem) return false;
-                const titleMatch = (item.title || "")
-                    .toLowerCase()
-                    .includes(lowerQuery);
-                const creatorMatch = (item.searchCreators || []).some((c) =>
-                    c.toLowerCase().includes(lowerQuery),
-                );
-                const tagMatch = (item.searchTags || []).some((t) =>
-                    t.toLowerCase().includes(lowerQuery),
-                );
-
-                return titleMatch || creatorMatch || tagMatch;
-            })
-            .limit(limit)
+            .filter((item: AnyIDBZoteroItem) => !item.parentItem)
             .toArray();
+
+        // Resolve collection names only when a collection filter is present.
+        const needsCollections = parsed.filters.some(
+            (f) => f.field === "collection",
+        );
+        const collectionNames = needsCollections
+            ? await this.resolveCollectionNames(candidates)
+            : null;
+
+        // Resolve library names for library filter.
+        const libraryNames = new Map<number, string>();
+        if (parsed.filters.some((f) => f.field === "library")) {
+            const libs = await db.libraries
+                .where("id")
+                .anyOf(libraryIDs)
+                .toArray();
+            for (const lib of libs) {
+                libraryNames.set(lib.id, lib.name);
+            }
+        }
+
+        const byId = new Map<string, AnyIDBZoteroItem>();
+        const records: SearchableRecord[] = candidates.map((item) => {
+            const id = `${item.libraryID}:${item.key}`;
+            byId.set(id, item);
+            return {
+                id,
+                name: item.title || "",
+                creators: item.searchCreators,
+                tags: item.searchTags,
+                itemType: item.itemType,
+                libraryName: libraryNames.get(item.libraryID),
+                collections: collectionNames
+                    ? (item.collections || []).map(
+                          (k) =>
+                              collectionNames.get(`${item.libraryID}:${k}`) ||
+                              "",
+                      )
+                    : undefined,
+            };
+        });
+
+        const ranked = this.search.matchAndRank(parsed, records, limit);
+        return ranked
+            .map((r) => byId.get(r.id))
+            .filter((i): i is AnyIDBZoteroItem => i !== undefined);
+    }
+
+    /**
+     * Build a `${libraryID}:${collectionKey}` → collection name map for every
+     * collection referenced by the given items.
+     */
+    private async resolveCollectionNames(
+        items: AnyIDBZoteroItem[],
+    ): Promise<Map<string, string>> {
+        const keys: [number, string][] = [];
+        const seen = new Set<string>();
+        for (const item of items) {
+            for (const collKey of item.collections || []) {
+                const cacheKey = `${item.libraryID}:${collKey}`;
+                if (!seen.has(cacheKey)) {
+                    seen.add(cacheKey);
+                    keys.push([item.libraryID, collKey]);
+                }
+            }
+        }
+
+        const names = new Map<string, string>();
+        if (keys.length === 0) return names;
+
+        const colls = await db.collections.bulkGet(keys);
+        keys.forEach(([libID, collKey], i) => {
+            const coll = colls[i];
+            if (coll) names.set(`${libID}:${collKey}`, coll.name);
+        });
+        return names;
     }
 
     /**
@@ -291,6 +400,11 @@ export class DbHelperService {
                     const breadcrumbs: string[] = [];
                     let currentKey: string | undefined = collKey;
                     let foundParentPath = "";
+                    // A cyclic parentCollection would otherwise loop forever,
+                    // and synchronously: nothing in here yields, so the worker
+                    // thread would never come back. The path cache cannot stand
+                    // in for this — it is only written after the walk finishes.
+                    const visitedSteps = new Set<string>();
 
                     while (currentKey) {
                         const stepCacheKey: string = `${libID}:${currentKey}`;
@@ -300,6 +414,9 @@ export class DbHelperService {
                             foundParentPath = collectionPathCache[stepCacheKey];
                             break;
                         }
+
+                        if (visitedSteps.has(stepCacheKey)) break;
+                        visitedSteps.add(stepCacheKey);
 
                         const coll: IDBZoteroCollection | null | undefined =
                             collectionEntityCache[stepCacheKey];
@@ -316,6 +433,17 @@ export class DbHelperService {
                             ? `${foundParentPath}/${breadcrumbs.join("/")}`
                             : foundParentPath
                         : breadcrumbs.join("/");
+
+                    // Nothing resolved: the collection row is gone while the
+                    // item still references it — an interrupted pull, or a
+                    // remote deletion whose member items have not come back
+                    // down yet. Treat the item as simply not being in that
+                    // collection. Keeping the empty string here would append a
+                    // blank segment, and `${libName}/${""}/` renders as a
+                    // doubled separator that reaches note bodies verbatim
+                    // (library-template feeds itemPaths to the note template,
+                    // which unlike NotePathService does not collapse slashes).
+                    if (!resolvedPath) continue;
 
                     collectionPathCache[cacheKey] = resolvedPath;
                     allCollPaths.push(resolvedPath);

@@ -7,10 +7,24 @@
  * interpolation replaces each `{{path}}` with its stringified value.
  */
 
-// @ts-ignore — generated Lezer parser has no type declarations
 import { parser } from "./template";
 
+import type { SyntaxNodeRef } from "@lezer/common";
 import type { WorkflowContext } from "../types";
+
+/** Renders a context value for inline `{{…}}` substitution. */
+export function stringifyContextValue(value: unknown): string {
+    if (typeof value === "object") return JSON.stringify(value);
+    if (typeof value === "string") return value;
+    if (
+        typeof value === "number" ||
+        typeof value === "bigint" ||
+        typeof value === "boolean"
+    ) {
+        return String(value);
+    }
+    return "";
+}
 
 /**
  * Interpolate template expressions in a string value against the workflow context.
@@ -38,7 +52,7 @@ export function interpolate(val: string, context: WorkflowContext): unknown {
     // Otherwise, perform string interpolation
     let out = "";
     let lastPos = 0;
-    tree.cursor().iterate((node: any) => {
+    tree.cursor().iterate((node: SyntaxNodeRef) => {
         if (node.name === "Variable" || node.name === "EscapedBrace") {
             out += val.slice(lastPos, node.from);
             if (node.name === "Variable") {
@@ -47,11 +61,7 @@ export function interpolate(val: string, context: WorkflowContext): unknown {
                     const pathStr = val
                         .slice(pathNode.from, pathNode.to)
                         .trim();
-                    const res = context.get(pathStr);
-                    out +=
-                        typeof res === "object"
-                            ? JSON.stringify(res)
-                            : String(res ?? "");
+                    out += stringifyContextValue(context.get(pathStr));
                 }
             } else if (node.name === "EscapedBrace") {
                 out += "{{";
@@ -63,4 +73,17 @@ export function interpolate(val: string, context: WorkflowContext): unknown {
     });
     out += val.slice(lastPos);
     return out;
+}
+
+/**
+ * Interpolate a template expression and render the result as a string.
+ *
+ * Use this where a node needs text rather than the raw context value; objects
+ * are rendered as JSON, matching inline `{{…}}` substitution.
+ */
+export function interpolateToString(
+    val: string,
+    context: WorkflowContext,
+): string {
+    return stringifyContextValue(interpolate(val, context));
 }

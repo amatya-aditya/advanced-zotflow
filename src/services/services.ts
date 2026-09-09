@@ -1,3 +1,6 @@
+import { EnhancementPackService } from "services/enhancement-pack-service";
+import { workerBridge } from "bridge";
+import { sdtCompatibility } from "enhancement-pack/compatibility";
 import { IndexService } from "./index-service";
 import { LogService } from "./log-service";
 import { NotificationService } from "./notification-service";
@@ -6,6 +9,7 @@ import { TaskMonitor } from "./task-monitor";
 import { CitationService } from "./citation-service";
 import { WorkflowService } from "./workflow-service";
 import { LibraryCache } from "./library-cache";
+import { ReaderDocumentCache } from "./reader-document-cache";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { App } from "obsidian";
@@ -30,9 +34,13 @@ class ServiceLocator {
     private _citationService: CitationService;
     private _workflowService: WorkflowService;
 
+    private _onSettingsChanged = new Set<() => void>();
+
     private _onBookmarksChanged: Set<() => void> = new Set();
     private _onRecentsChanged: Set<() => void> = new Set();
     private _libraryCache: LibraryCache;
+    private _readerDocumentCache: ReaderDocumentCache;
+    private _enhancementPack: EnhancementPackService;
 
     initialize(plugin: ZotFlow, settings: ZotFlowSettings) {
         this._plugin = plugin;
@@ -56,6 +64,26 @@ class ServiceLocator {
             () => this._settings,
             this._logService,
         );
+        this._readerDocumentCache = new ReaderDocumentCache();
+        this._enhancementPack = new EnhancementPackService(
+            this._app.vault.adapter,
+            this._app.vault.configDir,
+            sdtCompatibility,
+            () => workerBridge.enhancementResources,
+            (error) =>
+                this._logService.error(
+                    "Resource snapshot cleanup failed",
+                    "EnhancementPackService",
+                    error,
+                ),
+            (message, details) =>
+                this._logService.log(
+                    "debug",
+                    message,
+                    "EnhancementPackService",
+                    details,
+                ),
+        );
 
         this._initialized = true;
         this._logService.info("Services initialized.", "LocalServiceLocator");
@@ -74,6 +102,7 @@ class ServiceLocator {
     updateSettings(newSettings: ZotFlowSettings) {
         this.assertInitialized();
         this._settings = newSettings;
+        this._onSettingsChanged.forEach((cb) => cb());
         // Library capabilities depend on the active API key + cached key info,
         // both of which can change after a settings save. Refresh in background.
         void this._libraryCache.refresh();
@@ -85,6 +114,17 @@ class ServiceLocator {
     }
 
     // --- Bookmark Management ---
+
+    onSettingsChanged(cb: () => void): () => void {
+        this._onSettingsChanged.add(cb);
+        return () => { this._onSettingsChanged.delete(cb); };
+    }
+
+    async removeRecentItem(id: string): Promise<void> {
+        this._settings.recentItems = this._settings.recentItems.filter((item) => item.id !== id);
+        await this.saveSettings();
+        this._onRecentsChanged.forEach((cb) => cb());
+    }
 
     onBookmarksChanged(cb: () => void): () => void {
         this._onBookmarksChanged.add(cb);
@@ -230,6 +270,16 @@ class ServiceLocator {
     get libraryCache() {
         this.assertInitialized();
         return this._libraryCache;
+    }
+
+    get enhancementPack() {
+        this.assertInitialized();
+        return this._enhancementPack;
+    }
+
+    get readerDocumentCache() {
+        this.assertInitialized();
+        return this._readerDocumentCache;
     }
 }
 

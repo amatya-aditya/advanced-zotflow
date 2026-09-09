@@ -1,5 +1,5 @@
 # vscode
-.vscode 
+.vscode
 
 # Intellij
 *.iml
@@ -27,3 +27,20 @@ meta.json
 # local tooling / scratch files
 .claude/settings.local.json
 old_README.md
+# Local Obsidian memory monitor output
+.memory-logs/
+
+# CSL test fixtures (downloaded on first test run)
+tests/.csl-fixtures/
+
+# vitest coverage reports
+coverage/
+
+# Claude Code
+.claude
+
+# Local note-editor checkout (not tracked as a submodule)
+note-editor/note-editor/
+
+# Local integration validation output
+.local-validation/

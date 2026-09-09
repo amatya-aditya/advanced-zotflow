@@ -152,9 +152,9 @@ export function NodePropertiesPanel() {
                             <PropertyInput
                                 id="node-output-name"
                                 value={
-                                    (data.outputName as string | undefined) ??
+                                    (data.outputName) ??
                                     (nodeType.defaultData
-                                        .outputName as string) ??
+                                        .outputName) ??
                                     ""
                                 }
                                 onChange={(e) =>

@@ -1,4 +1,5 @@
 import type { CustomReaderTheme } from "types/zotero-reader";
+import type { OutputFormat as CslOutputFormat } from "worker/csl";
 
 /** Per-library sync mode. */
 export type LibrarySyncMode = "bidirectional" | "readonly" | "ignored";
@@ -92,9 +93,20 @@ export interface ZotFlowSettings {
     bookmarkedItems: BookmarkedItem[];
     recentItems: RecentItem[];
     maxRecentItems: number;
+    treeSingleClickOpen: boolean;
+    showTreeItemIcons: boolean;
+    showTreeLibrary: boolean;
+    showTreeRecents: boolean;
+    showTreeBookmarks: boolean;
+    showTreeNotes: boolean;
+    showTreeBases: boolean;
+    convertNoteLinks: boolean;
     linkedAttachmentBaseDir: string;
+    useZoteroStorage: boolean;
+    zoteroStoragePath: string;
     defaultEditableRegionLocked: boolean;
     hideEditableRegionMarkers: boolean;
+    alwaysOpenChildNoteInEditor: boolean;
     defaultCitationFormat: CitationFormat;
     citationTrigger: string;
     citationPandocTemplate: string;
@@ -104,9 +116,22 @@ export interface ZotFlowSettings {
     baseViewFolder: string;
     autoCopyAnnotation: AutoCopyAnnotationMode;
     autoUpdateSourceNotesAfterSync: boolean;
+    autoPurgeTrashedSourceNotes: boolean;
     autoDisableNoteImageTextTools: boolean;
     epubFontFamily: string;
+    /** CSL renderer: default style id (slug or custom style key). */
+    cslDefaultStyleId: string;
+    /** CSL renderer: default output format. */
+    cslDefaultFormat: CslOutputFormat;
+    /** Vault-relative folder scanned for custom .csl styles; "" disables. */
+    cslStylesFolder: string;
 }
+
+/** Top-level key addressable by Obsidian's declarative settings controls. */
+export type SettingKey = Extract<keyof ZotFlowSettings, string>;
+
+/** Re-exported so main-thread settings UI can reference the format union. */
+export type { CslOutputFormat };
 
 /** Persisted reader view state for a single attachment (local or zotero). */
 export interface ViewStateEntry {
@@ -157,9 +182,20 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     bookmarkedItems: [],
     recentItems: [],
     maxRecentItems: 10,
+    treeSingleClickOpen: false,
+    showTreeItemIcons: true,
+    showTreeLibrary: true,
+    showTreeRecents: true,
+    showTreeBookmarks: true,
+    showTreeNotes: true,
+    showTreeBases: true,
+    convertNoteLinks: true,
     linkedAttachmentBaseDir: "",
+    useZoteroStorage: false,
+    zoteroStoragePath: "",
     defaultEditableRegionLocked: true,
     hideEditableRegionMarkers: false,
+    alwaysOpenChildNoteInEditor: false,
     defaultCitationFormat: "footnote",
     citationTrigger: "@@",
     citationPandocTemplate: "",
@@ -169,8 +205,12 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     baseViewFolder: "ZotFlow/Bases",
     autoCopyAnnotation: "off",
     autoUpdateSourceNotesAfterSync: true,
+    autoPurgeTrashedSourceNotes: false,
     autoDisableNoteImageTextTools: true,
     epubFontFamily: "",
+    cslDefaultStyleId: "apa",
+    cslDefaultFormat: "markdown",
+    cslStylesFolder: "",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

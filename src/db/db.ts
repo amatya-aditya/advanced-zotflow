@@ -1,6 +1,6 @@
 import Dexie from "dexie";
 
-import type { Table } from "dexie";
+import type { IndexableTypePart, Table } from "dexie";
 import type {
     IDBZoteroFile,
     IDBZoteroCollection,
@@ -8,6 +8,7 @@ import type {
     AnyIDBZoteroItem,
     IDBZoteroKey,
     IDBZoteroGroup,
+    IDBCslCacheEntry,
 } from "types/db-schema";
 
 /** Dexie subclass defining the IndexedDB schema for ZotFlow. */
@@ -18,6 +19,7 @@ export class ZotFlowDB extends Dexie {
     collections!: Table<IDBZoteroCollection, [number, string]>;
     libraries!: Table<IDBZoteroLibrary, number>;
     files!: Table<IDBZoteroFile, [number, string]>;
+    cslCache!: Table<IDBCslCacheEntry, string>;
 
     constructor() {
         super("zotflow-dev");
@@ -80,6 +82,20 @@ export class ZotFlowDB extends Dexie {
                 lastAccessedAt
             `,
         });
+
+        // v4: Store cached file bytes as ArrayBuffer instead of Blob.
+        // WebKit/iPadOS IndexedDB Blob handles detach intermittently, causing
+        // spurious read failures and needless re-downloads. The indexes are
+        // unchanged, but old records hold a `blob` field the new code no longer
+        // reads; the cache is fully regenerable from Zotero, so clear it.
+        this.version(4).upgrade(async (tx) => {
+            await tx.table("files").clear();
+        });
+
+        // v5: Key-value cache for the CSL renderer (styles, locales, index).
+        this.version(5).stores({
+            cslCache: "&key",
+        });
     }
 }
 
@@ -89,8 +105,10 @@ export class ZotFlowDB extends Dexie {
  * @param arrays The input array of arrays, e.g. [[1, 2], ['a', 'b']]
  * @returns All possible combinations
  */
-export function getCombinations(arrays: any[][]) {
-    return arrays.reduce(
+export function getCombinations(
+    arrays: IndexableTypePart[][],
+): IndexableTypePart[][] {
+    return arrays.reduce<IndexableTypePart[][]>(
         (acc, currList) => {
             return acc.flatMap((prevCombination) => {
                 return currList.map((item) => {

@@ -35,7 +35,7 @@ export class ZotFlowWorkflowView extends TextFileView {
     private root: Root | null = null;
     private store: StoreApi<WorkflowState>;
     private unsubscribe: (() => void) | undefined;
-    private saveTimer: ReturnType<typeof setTimeout> | undefined;
+    private saveTimer: ReturnType<Window["setTimeout"]> | undefined;
 
     /** Debounce interval (ms) for auto-saving after edits. */
     private static readonly SAVE_DEBOUNCE_MS = 1_000;
@@ -114,7 +114,7 @@ export class ZotFlowWorkflowView extends TextFileView {
     async onClose(): Promise<void> {
         this.unsubscribe?.();
         if (this.saveTimer !== undefined) {
-            clearTimeout(this.saveTimer);
+            window.clearTimeout(this.saveTimer);
         }
         this.root?.unmount();
         this.root = null;
@@ -150,9 +150,9 @@ export class ZotFlowWorkflowView extends TextFileView {
 
     private scheduleSave(): void {
         if (this.saveTimer !== undefined) {
-            clearTimeout(this.saveTimer);
+            window.clearTimeout(this.saveTimer);
         }
-        this.saveTimer = setTimeout(() => {
+        this.saveTimer = window.setTimeout(() => {
             this.requestSave();
             this.store.getState().markClean();
         }, ZotFlowWorkflowView.SAVE_DEBOUNCE_MS);

@@ -3,15 +3,58 @@ import { ZoteroAPIService } from "./zotero";
 import { LibraryService } from "./library";
 import { normalizeItem, normalizeCollection, toZoteroDate } from "db/normalize";
 import pLimit from "p-limit";
-import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import {
+    errorMessage,
+    errorStatus,
+    ZotFlowError,
+    ZotFlowErrorCode,
+} from "utils/error";
 
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
 import type { ItemIdentifier } from "worker/tasks/impl/batch-extract-images-task";
+import type { AnyZoteroItem, ZoteroCollection } from "types/zotero";
+import type {
+    AnyIDBZoteroItem,
+    IDBZoteroCollection,
+} from "types/db-schema";
 
 const PULL_BULK_SIZE = 100;
 const UPDATE_BULK_SIZE = 50;
 const MAX_PUSH_RETRIES = 3;
+
+/**
+ * An item envelope prepared for Zotero's multi-write endpoint. Only the fields
+ * the payload builder rewrites are named; the rest of the item's own data is
+ * passed through untouched, which is why `data` stays open.
+ */
+interface WritePayload {
+    key?: string;
+    version?: number;
+    data: {
+        key?: string;
+        version?: number;
+        dateAdded?: string;
+        dateModified?: string;
+        /** ZotFlow-only; stripped before the item is sent. */
+        annotationIsExternal?: boolean;
+        [field: string]: unknown;
+    };
+}
+
+/**
+ * What the server echoes back for one item in a multi-write response: either
+ * the stored item, or — for an item Zotero reports as unchanged — a marker the
+ * push loop synthesises so both cases can be handled together.
+ */
+type WriteEcho = AnyZoteroItem | { key: string; version: number; isUnchanged: true };
+
+/** Zotero's multi-write response body, keyed by the item's index in the chunk. */
+interface WriteResponse {
+    successful?: Record<string, AnyZoteroItem>;
+    unchanged?: Record<string, unknown>;
+    failed?: Record<string, { code?: number; message?: string }>;
+}
 
 /** Bidirectional sync engine — pulls items/collections from Zotero and pushes local changes. */
 export class SyncService {
@@ -42,9 +85,15 @@ export class SyncService {
         successCount: number;
         failCount: number;
         changedItems: ItemIdentifier[];
+        syncedLibraryIDs: number[];
     }> {
         if (signal?.aborted) {
-            return { successCount: 0, failCount: 0, changedItems: [] };
+            return {
+                successCount: 0,
+                failCount: 0,
+                changedItems: [],
+                syncedLibraryIDs: [],
+            };
         }
 
         if (!navigator.onLine) {
@@ -95,7 +144,12 @@ export class SyncService {
                 "No libraries configured for sync.",
                 "SyncService",
             );
-            return { successCount: 0, failCount: 0, changedItems: [] };
+            return {
+                successCount: 0,
+                failCount: 0,
+                changedItems: [],
+                syncedLibraryIDs: [],
+            };
         }
 
         // Build the active library list for progress reporting
@@ -113,7 +167,12 @@ export class SyncService {
                     `Library ${libraryId} is ignored or not found.`,
                     "SyncService",
                 );
-                return { successCount: 0, failCount: 0, changedItems: [] };
+                return {
+                    successCount: 0,
+                    failCount: 0,
+                    changedItems: [],
+                    syncedLibraryIDs: [],
+                };
             }
         } else {
             for (const libKey of libraries) {
@@ -219,14 +278,24 @@ export class SyncService {
                 );
             }
 
-            return { successCount, failCount, changedItems };
-        } catch (error: any) {
+            return {
+                successCount,
+                failCount,
+                changedItems,
+                syncedLibraryIDs: activeLibraries,
+            };
+        } catch (error) {
             // Catastrophic failure (e.g., DB crash)
-            this.parentHost.log("error", error.message, "SyncService", error);
+            this.parentHost.log(
+                "error",
+                errorMessage(error),
+                "SyncService",
+                error,
+            );
 
             this.parentHost.notify(
                 "error",
-                `Critical Sync Failure: ${error.message}`,
+                `Critical Sync Failure: ${errorMessage(error)}`,
             );
             throw error; // Re-throw so TaskLayer can track it as failed
         } finally {
@@ -272,7 +341,10 @@ export class SyncService {
                 includeTrashed: true,
             });
 
-            const versionsMap = await response.raw.json();
+            const versionsMap = (await (response.raw as Response).json()) as Record<
+                string,
+                number
+            >;
             const serverHeaderVersion = response.getVersion() || 0;
 
             // Early Return
@@ -297,61 +369,18 @@ export class SyncService {
                         collectionKey: slice.join(","),
                         includeTrashed: true,
                     });
-                    const newCollections = batchRes.raw;
+                    const newCollections = batchRes.raw as ZoteroCollection[];
 
                     if (newCollections.length > 0) {
-                        // Check one by one inside transaction
+                        // Collections are pull-only: nothing in the plugin
+                        // edits one locally, so the server copy always wins and
+                        // there is no local state to read first.
                         await db.transaction("rw", db.collections, async () => {
-                            const promises = newCollections.map(
-                                async (remoteRaw: any) => {
-                                    // Get local state
-                                    const localCol = await db.collections.get([
-                                        libraryID,
-                                        remoteRaw.key,
-                                    ]);
-
-                                    // Conflict check logic (Preserved from original)
-                                    if (localCol) {
-                                        switch (localCol.syncStatus) {
-                                            case "created":
-                                            case "updated":
-                                            case "deleted":
-                                            case "conflict":
-                                                this.parentHost.log(
-                                                    "warn",
-                                                    `Collection Conflict: ${localCol.name} (${localCol.key})`,
-                                                    "SyncService",
-                                                );
-
-                                                await db.collections.update(
-                                                    [libraryID, localCol.key],
-                                                    {
-                                                        syncStatus: "conflict",
-                                                        syncError:
-                                                            "Remote update conflict (Renamed or Moved).",
-                                                        version:
-                                                            remoteRaw.version,
-                                                        serverCopyRaw:
-                                                            remoteRaw,
-                                                    },
-                                                );
-                                                return; // Skip overwrite
-
-                                            case "synced":
-                                                break;
-                                        }
-                                    }
-                                    // Local is Clean or New
-                                    const cleanCol = normalizeCollection(
-                                        remoteRaw,
-                                        libraryID,
-                                    );
-                                    cleanCol.syncStatus = "synced";
-                                    await db.collections.put(cleanCol);
-                                },
+                            await db.collections.bulkPut(
+                                newCollections.map((remoteRaw) =>
+                                    normalizeCollection(remoteRaw, libraryID),
+                                ),
                             );
-
-                            await Promise.all(promises);
                         });
                     }
 
@@ -374,7 +403,9 @@ export class SyncService {
             // Handle Deletions (Safe Cascade)
             if (localVersion > 0) {
                 const delResponse = await libHandle.deleted(localVersion).get();
-                const deletedKeys = delResponse.getData().collections;
+                const deletedKeys = (
+                    delResponse.getData() as { collections: string[] }
+                ).collections;
 
                 if (deletedKeys.length > 0) {
                     await this.handlePullCollectionDeletions(
@@ -388,7 +419,7 @@ export class SyncService {
             await db.libraries.update(libraryID, {
                 collectionVersion: serverHeaderVersion,
             });
-        } catch (e: any) {
+        } catch (e) {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.NETWORK_ERROR,
@@ -420,44 +451,20 @@ export class SyncService {
                     libraryID,
                     targetKey,
                 );
+                // Collections are pull-only, so there are never local changes
+                // to weigh against a remote deletion — unlike items, which get
+                // a dirty-family check before the cascade runs.
                 const family = [targetCol, ...descendants];
 
-                // Check dirty data
-                const dirtyNode = family.find((col) =>
-                    ["created", "updated", "deleted", "conflict"].includes(
-                        col.syncStatus,
-                    ),
+                await db.collections.bulkDelete(
+                    family.map((c) => [libraryID, c.key]),
                 );
 
-                if (dirtyNode) {
-                    // Prevent deletion
-                    this.parentHost.log(
-                        "warn",
-                        `Prevented deletion of Collection ${targetKey}. Reason: Local changes in ${dirtyNode.key}.`,
-                        "SyncService",
-                    );
-
-                    // Mark as conflict
-                    await db.collections.update([libraryID, targetKey], {
-                        syncStatus: "conflict",
-                        syncError:
-                            "Remote deletion blocked: Contains unsynced local changes.",
-                    });
-                } else {
-                    // Safe deletion
-                    const keysToRemove = family.map((c) => c.key);
-
-                    // Physical deletion
-                    await db.collections.bulkDelete(
-                        keysToRemove.map((k) => [libraryID, k]),
-                    );
-
-                    this.parentHost.log(
-                        "debug",
-                        `Deleted Collection ${targetKey} and ${descendants.length} sub-collections.`,
-                        "SyncService",
-                    );
-                }
+                this.parentHost.log(
+                    "debug",
+                    `Deleted Collection ${targetKey} and ${descendants.length} sub-collections.`,
+                    "SyncService",
+                );
             }
         });
     }
@@ -466,9 +473,15 @@ export class SyncService {
     private async getAllCollectionDescendants(
         libraryID: number,
         parentKey: string,
-    ): Promise<any[]> {
+        visited: Set<string> = new Set(),
+    ): Promise<IDBZoteroCollection[]> {
         // Guard: empty parentKey would match ALL top-level collections
         if (!parentKey) return [];
+
+        // Guard: a cyclic parentCollection would otherwise recurse forever,
+        // and it would do so inside the caller's open Dexie transaction.
+        if (visited.has(parentKey)) return [];
+        visited.add(parentKey);
 
         const children = await db.collections
             .where({
@@ -480,7 +493,7 @@ export class SyncService {
         if (children.length === 0) return [];
 
         const grandChildPromises = children.map((child) =>
-            this.getAllCollectionDescendants(libraryID, child.key),
+            this.getAllCollectionDescendants(libraryID, child.key, visited),
         );
         const grandChildrenArrays = await Promise.all(grandChildPromises);
 
@@ -521,7 +534,10 @@ export class SyncService {
                 includeTrashed: true,
             });
 
-            const versionsMap = await response.raw.json();
+            const versionsMap = (await (response.raw as Response).json()) as Record<
+                string,
+                number
+            >;
             const serverHeaderVersion = response.getVersion() || 0;
 
             if (serverHeaderVersion <= localVersion) {
@@ -549,12 +565,15 @@ export class SyncService {
                     const batchRes = await libHandle.items().get({
                         itemKey: slice.join(","),
                         includeTrashed: true,
+                        // csljson: server-side canonical item -> CSL-JSON
+                        // conversion, stored for the citation template filters.
+                        include: "data,csljson",
                     });
 
-                    const newItems = batchRes.raw;
+                    const newItems = batchRes.raw as AnyZoteroItem[];
 
                     const collectionUpdate = Promise.all(
-                        newItems.map(async (newItem: any) => {
+                        newItems.map(async (newItem) => {
                             const localItem = await db.items.get([
                                 libraryID,
                                 newItem.key,
@@ -608,7 +627,9 @@ export class SyncService {
             // Handle Deletions
             if (localVersion > 0) {
                 const delResponse = await libHandle.deleted(localVersion).get();
-                const deletedKeys = delResponse.getData().items;
+                const deletedKeys = (
+                    delResponse.getData() as { items?: string[] }
+                ).items;
 
                 if (deletedKeys && deletedKeys.length > 0) {
                     await this.handlePullDeletions(
@@ -627,7 +648,7 @@ export class SyncService {
                 `Item sync finished. New Version: ${serverHeaderVersion}`,
                 "SyncService",
             );
-        } catch (e: any) {
+        } catch (e) {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.NETWORK_ERROR,
@@ -646,6 +667,11 @@ export class SyncService {
         changedItems?: ItemIdentifier[],
     ) {
         if (keysToDelete.length === 0) return;
+
+        // Visual (image/ink) annotation keys whose rendered image files must be
+        // removed from disk. Collected inside the transaction, deleted after it
+        // commits — file I/O must never run inside a Dexie transaction.
+        const imageKeysToDelete: string[] = [];
 
         await db.transaction("rw", db.items, async () => {
             for (const targetKey of keysToDelete) {
@@ -718,6 +744,21 @@ export class SyncService {
                     await db.items.bulkDelete(
                         keysToRemove.map((k) => [libraryID, k]),
                     );
+
+                    // Queue rendered images of any deleted image/ink
+                    // annotations for removal after the transaction commits.
+                    for (const member of family) {
+                        if (
+                            member.itemType === "annotation" &&
+                            (member.raw?.data?.annotationType ===
+                                "image" ||
+                                member.raw?.data?.annotationType ===
+                                    "ink")
+                        ) {
+                            imageKeysToDelete.push(member.key);
+                        }
+                    }
+
                     this.parentHost.log(
                         "debug",
                         `Deleted ${targetKey} and ${descendants.length} descendants.`,
@@ -726,14 +767,52 @@ export class SyncService {
                 }
             }
         });
+
+        // Remove orphaned annotation image files (outside the transaction).
+        for (const key of imageKeysToDelete) {
+            await this.deleteAnnotationImageFile(key);
+        }
+    }
+
+    /**
+     * Delete a rendered annotation image (`{folder}/{key}.png`) from the vault,
+     * if it exists. Best-effort — failures are logged, never thrown.
+     */
+    private async deleteAnnotationImageFile(annotationKey: string) {
+        const folder = this.settings.annotationImageFolder.replace(/\/$/, "");
+        const path = `${folder}/${annotationKey}.png`;
+        try {
+            const exists = await this.parentHost.checkFile(path);
+            if (exists.exists) {
+                await this.parentHost.deleteFile(path);
+                this.parentHost.log(
+                    "debug",
+                    `Deleted orphaned annotation image: ${path}`,
+                    "SyncService",
+                );
+            }
+        } catch (e) {
+            this.parentHost.log(
+                "warn",
+                `Failed to delete annotation image ${annotationKey}`,
+                "SyncService",
+                e,
+            );
+        }
     }
 
     private async getAllDescendants(
         libraryID: number,
         parentKey: string,
-    ): Promise<any[]> {
+        visited: Set<string> = new Set(),
+    ): Promise<AnyIDBZoteroItem[]> {
         // Guard: empty parentKey would match ALL top-level items
         if (!parentKey) return [];
+
+        // Guard: a cyclic parentItem would otherwise recurse forever, and it
+        // would do so inside the caller's open Dexie transaction.
+        if (visited.has(parentKey)) return [];
+        visited.add(parentKey);
 
         const children = await db.items
             .where({ libraryID: libraryID, parentItem: parentKey })
@@ -742,7 +821,7 @@ export class SyncService {
         if (children.length === 0) return [];
 
         const grandChildPromises = children.map((child) =>
-            this.getAllDescendants(libraryID, child.key),
+            this.getAllDescendants(libraryID, child.key, visited),
         );
         const grandChildrenArrays = await Promise.all(grandChildPromises);
 
@@ -850,11 +929,9 @@ export class SyncService {
                             `Successfully deleted: ${item.key}`,
                             "SyncService",
                         );
-                    } catch (e: any) {
+                    } catch (e) {
                         // Error Handling logic preserved from original business logic
-                        const status = e.response
-                            ? e.response.status
-                            : e.code || 0;
+                        const status = errorStatus(e);
 
                         if (status === 412) {
                             this.parentHost.log(
@@ -874,7 +951,7 @@ export class SyncService {
                                 "error",
                                 `Failed to delete ${item.key}:`,
                                 "SyncService",
-                                e.message,
+                                errorMessage(e),
                             );
                             // We don't throw here to avoid stopping the batch
                         }
@@ -891,7 +968,13 @@ export class SyncService {
             for (const chunk of chunks) {
                 // Prepare Payload & Sanitization
                 const payload = chunk.map((item) => {
-                    const itemRawData = { ...item.raw } as any;
+                    // `data` is copied too: a spread of the envelope alone
+                    // shares it with the stored item, and everything below
+                    // writes into `data`.
+                    const itemRawData = {
+                        ...item.raw,
+                        data: { ...item.raw.data },
+                    } as unknown as WritePayload;
 
                     if (itemRawData.data.dateAdded)
                         itemRawData.data.dateAdded = toZoteroDate(
@@ -934,20 +1017,21 @@ export class SyncService {
                         latestVersion = postVersion;
                     }
 
-                    const resData = response.raw as any;
+                    const resData = response.raw as WriteResponse;
                     const successful = resData.successful || {};
                     const failed = resData.failed || {};
                     const unchanged = resData.unchanged || {};
 
-                    const validUpdates: any[] = [];
+                    const validUpdates: AnyIDBZoteroItem[] = [];
                     const idsToDelete: string[] = [];
 
                     // Process each item in the chunk
                     chunk.forEach((item, index) => {
                         const indexStr = String(index);
                         const itemKey = item.key;
-                        let serverResponseItem = null;
-                        let failData = null;
+                        let serverResponseItem: WriteEcho | null = null;
+                        let failData: { code?: number; message?: string } | null =
+                            null;
 
                         // Handle created items
                         if (item.syncStatus === "created") {
@@ -974,33 +1058,33 @@ export class SyncService {
                         }
 
                         if (serverResponseItem) {
+                            const echo = serverResponseItem;
                             const newItem = {
                                 ...item,
                                 syncStatus: "synced",
                                 syncError: undefined,
-                                version:
-                                    serverResponseItem.version || item.version,
-                            };
+                                version: echo.version || item.version,
+                            } as AnyIDBZoteroItem;
 
-                            if (serverResponseItem.data) {
-                                newItem.raw = serverResponseItem;
+                            if ("data" in echo) {
+                                newItem.raw = echo;
                                 // For created items the server should echo
                                 // back our client-provided key. If it differs
                                 // (edge case), fall back to delete-old/insert-new.
                                 if (
                                     item.syncStatus === "created" &&
-                                    serverResponseItem.key !== item.key
+                                    echo.key !== item.key
                                 ) {
-                                    newItem.key = serverResponseItem.key;
-                                    newItem.raw.key = serverResponseItem.key;
+                                    newItem.key = echo.key;
+                                    newItem.raw.key = echo.key;
                                     idsToDelete.push(item.key);
                                 }
-                            } else if (!serverResponseItem.isUnchanged) {
+                            } else if (!echo.isUnchanged) {
                                 if (
                                     item.syncStatus === "created" &&
-                                    serverResponseItem.key !== item.key
+                                    echo.key !== item.key
                                 ) {
-                                    newItem.key = serverResponseItem.key;
+                                    newItem.key = echo.key;
                                     idsToDelete.push(item.key);
                                 }
                             }
@@ -1033,8 +1117,8 @@ export class SyncService {
                             }
                         });
                     }
-                } catch (e: any) {
-                    const status = e.response?.status ?? e.code ?? 0;
+                } catch (e) {
+                    const status = errorStatus(e);
                     if (status === 412) {
                         this.parentHost.log(
                             "warn",

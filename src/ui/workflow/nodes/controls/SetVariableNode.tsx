@@ -10,7 +10,10 @@ import { Type } from "@sinclair/typebox";
 import React from "react";
 
 import { ObsidianIcon } from "ui/ObsidianIcon";
-import { interpolate } from "../../context/interpolate";
+import {
+    interpolate,
+    stringifyContextValue,
+} from "../../context/interpolate";
 import {
     PropertySection,
     PropertyInput,
@@ -62,7 +65,7 @@ function SetVariableProperties({
     const vars = d.variables ?? [];
 
     const setVars = (newVars: VariableEntry[]) =>
-        updateData({ variables: newVars } as any);
+        updateData({ variables: newVars });
 
     const addVar = () =>
         setVars([...vars, { name: "", type: "string", value: "" }]);
@@ -217,7 +220,10 @@ export const setVariableNode: NodeType<SetVariableNodeData> = {
                     coerced = raw === true || raw === "true";
                     break;
                 default:
-                    coerced = typeof raw === "string" ? raw : String(raw ?? "");
+                    coerced =
+                        typeof raw === "string"
+                            ? raw
+                            : stringifyContextValue(raw);
                     break;
             }
             const key = data.outputName || "variables";

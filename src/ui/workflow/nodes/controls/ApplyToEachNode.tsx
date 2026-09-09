@@ -7,6 +7,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
+
+import type { TSchema } from "@sinclair/typebox";
 import React, { useMemo } from "react";
 import { useStore } from "zustand";
 
@@ -15,7 +17,7 @@ import {
     PropertyField,
 } from "../../properties/PropertyControls";
 import { getAvailableArrayPaths } from "../../context/context-query";
-import { resolvePathSchema } from "../../context/schema";
+import { isArraySchema, resolvePathSchema } from "../../context/schema";
 import { useWorkflowStoreApi } from "../../store-context";
 
 import type { BaseNodeData, NodePropertiesProps, NodeType } from "../../types";
@@ -56,7 +58,7 @@ function ApplyToEachProperties({
                     id="loop-collection"
                     value={d.collectionPath ?? ""}
                     onChange={(e) =>
-                        updateData({ collectionPath: e.target.value } as any)
+                        updateData({ collectionPath: e.target.value })
                     }
                 >
                     <option value="">— Select a list —</option>
@@ -106,14 +108,14 @@ export const applyToEachNode: NodeType<ApplyToEachData> = {
         const key = data.outputName || "loop";
 
         // Infer the element type from the collection's array schema.
-        let itemType = Type.Unknown({ description: "Current item" });
+        let itemType: TSchema = Type.Unknown({ description: "Current item" });
         if (data.collectionPath) {
             const arraySchema = resolvePathSchema(
                 available,
                 data.collectionPath,
             );
-            if (arraySchema && (arraySchema as any).items) {
-                itemType = (arraySchema as any).items;
+            if (arraySchema && isArraySchema(arraySchema)) {
+                itemType = arraySchema.items;
             }
         }
 

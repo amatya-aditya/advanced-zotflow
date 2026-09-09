@@ -1,14 +1,25 @@
 import type { AnyIDBZoteroItem, IDBZoteroItem } from "types/db-schema";
 import { LibraryTemplateService } from "./library-template";
-import { db } from "db/db";
+import { db, getCombinations } from "db/db";
+import { Zotero_Item_Types } from "types/zotero-item-const";
 import type { ZotFlowSettings } from "settings/types";
 import type { AttachmentData } from "types/zotero-item";
 import { getAnnotationJson } from "db/annotation";
 import type { IParentProxy } from "bridge/types";
 import type { AttachmentService } from "./attachment";
-import type { PDFProcessWorker } from "./pdf-processor";
+import type { DocumentWorkerService } from "./document-worker";
 import type { NotePathService } from "./note-path";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import {
+    workerClearTimeout,
+    workerSetTimeout,
+    type WorkerTimeout,
+} from "worker/timers";
+import {
+    extractPersistRegions,
+    reinsertPersistRegions,
+    type PersistExtract,
+} from "utils/persist-regions";
 
 const DEBOUNCE_DELAY = 2000;
 
@@ -23,14 +34,20 @@ export interface UpdateOptions {
 /** CRUD service for library (Zotero) item source notes — creates, opens, updates, and manages annotation images. */
 export class LibraryNoteService {
     // Debounce map for update operations
-    private debouncers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+    private debouncers: Map<string, WorkerTimeout> = new Map();
+
+    // Notes that gained orphaned persist regions since the last Notice.
+    // Aggregated so a template change hitting hundreds of notes in one
+    // batch produces a single summary Notice instead of one per note.
+    private orphanReports: Map<string, string[]> = new Map();
+    private orphanNoticeTimer: WorkerTimeout | null = null;
 
     constructor(
         private settings: ZotFlowSettings,
         private templateService: LibraryTemplateService,
         private parentHost: IParentProxy,
         private attachmentService: AttachmentService,
-        private pdfProcessor: PDFProcessWorker,
+        private documentWorker: DocumentWorkerService,
         private notePathService: NotePathService,
     ) {}
 
@@ -40,14 +57,51 @@ export class LibraryNoteService {
         this.notePathService.updateSettings(newSettings);
     }
 
+    private normalizeTemplatePath(path: string): string {
+        const trimmed = path.trim();
+        if (!trimmed) return trimmed;
+        return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
+    }
+
     /**
      * Clear all pending debounced operations.
      */
     dispose() {
         for (const timer of this.debouncers.values()) {
-            clearTimeout(timer);
+            workerClearTimeout(timer);
         }
         this.debouncers.clear();
+        if (this.orphanNoticeTimer !== null) {
+            workerClearTimeout(this.orphanNoticeTimer);
+            this.orphanNoticeTimer = null;
+        }
+    }
+
+    /**
+     * Record newly orphaned persist regions for a note and schedule a
+     * single debounced summary Notice covering the whole update cycle.
+     */
+    private reportNewOrphans(path: string, orphanIds: string[]) {
+        this.parentHost.log(
+            "warn",
+            `Persist region(s) orphaned in ${path}: ${orphanIds.join(", ")} — content moved to the "Orphaned persist regions" section`,
+            "LibraryNoteService",
+        );
+        this.orphanReports.set(path, orphanIds);
+
+        if (this.orphanNoticeTimer !== null) {
+            workerClearTimeout(this.orphanNoticeTimer);
+        }
+        this.orphanNoticeTimer = workerSetTimeout(() => {
+            this.orphanNoticeTimer = null;
+            const noteCount = this.orphanReports.size;
+            this.orphanReports.clear();
+            if (noteCount === 0) return;
+            this.parentHost.notify(
+                "warning",
+                `${noteCount} note(s) have orphaned persist regions — content was preserved at the bottom of each note (see log)`,
+            );
+        }, DEBOUNCE_DELAY);
     }
 
     private isMatchingSourceNote(
@@ -121,7 +175,7 @@ export class LibraryNoteService {
 
         // Clear old timer
         if (this.debouncers.has(debounceId)) {
-            clearTimeout(this.debouncers.get(debounceId)!);
+            workerClearTimeout(this.debouncers.get(debounceId));
             this.debouncers.delete(debounceId);
         }
 
@@ -141,7 +195,7 @@ export class LibraryNoteService {
         }
 
         // Mode B: Debounced execution (2 seconds delay)
-        const timer = setTimeout(async () => {
+        const run = async () => {
             this.debouncers.delete(debounceId);
             try {
                 await this.ensureNote(libraryID, key, options);
@@ -154,7 +208,10 @@ export class LibraryNoteService {
                     e,
                 );
             }
-        }, DEBOUNCE_DELAY);
+        };
+        // The body handles its own failures, so the promise is deliberately
+        // not awaited by the timer.
+        const timer = workerSetTimeout(() => void run(), DEBOUNCE_DELAY);
 
         this.debouncers.set(debounceId, timer);
     }
@@ -210,6 +267,75 @@ export class LibraryNoteService {
     }
 
     /**
+     * Purge source notes whose Zotero items have been moved to the trash.
+     *
+     * Scans every trashed top-level item across the given libraries and, when
+     * a matching source note exists in the vault, sends it to the system trash.
+     * Idempotent — already-removed notes are skipped, so it is safe to run
+     * after every sync.
+     *
+     * @returns the number of source notes removed.
+     */
+    async purgeTrashedSourceNotes(libraryIDs: number[]): Promise<number> {
+        if (libraryIDs.length === 0) return 0;
+
+        const isValidTopLevel = (type: string) =>
+            !(["note", "annotation", "attachment"] as string[]).includes(type);
+        const validTopLevelTypeList = Zotero_Item_Types.filter((type) =>
+            isValidTopLevel(type),
+        );
+
+        const trashedItems = await db.items
+            .where(["libraryID", "itemType", "trashed"])
+            .anyOf(getCombinations([libraryIDs, validTopLevelTypeList, [1]]))
+            .filter((item: AnyIDBZoteroItem) => !item.parentItem)
+            .toArray();
+
+        if (trashedItems.length === 0) return 0;
+
+        let purged = 0;
+
+        for (const item of trashedItems) {
+            try {
+                const path = await this.parentHost.getFileByKey(item.key);
+                if (!path) continue;
+
+                // Defensive: only delete a file that is actually this item's
+                // source note (matching frontmatter key), never an unrelated file.
+                const fileCheck = await this.parentHost.checkFile(path);
+                if (
+                    this.isMatchingSourceNote(fileCheck, item.libraryID, item.key)
+                ) {
+                    await this.parentHost.deleteFile(path);
+                    purged++;
+                    this.parentHost.log(
+                        "info",
+                        `Purged source note for trashed item ${item.key}: ${path}`,
+                        "LibraryNoteService",
+                    );
+                }
+            } catch (e) {
+                // Best-effort: a single failure must not abort the whole purge.
+                this.parentHost.log(
+                    "warn",
+                    `Failed to purge source note for trashed item ${item.key}`,
+                    "LibraryNoteService",
+                    e,
+                );
+            }
+        }
+
+        if (purged > 0) {
+            this.parentHost.notify(
+                "info",
+                `Removed ${purged} source note(s) for trashed items.`,
+            );
+        }
+
+        return purged;
+    }
+
+    /**
      * ============================================================
      * Core Logic (Flow Control)
      * ============================================================
@@ -219,7 +345,7 @@ export class LibraryNoteService {
      * Core logic: Ensure note is ready
      * Responsible for routing logic: Index lookup -> Default path fallback -> Existence check -> Create/Update
      */
-    private async ensureNote(
+    async ensureNote(
         libraryID: number,
         key: string,
         options: UpdateOptions,
@@ -230,11 +356,12 @@ export class LibraryNoteService {
         // Prepare data
         const item = await db.items.get({ libraryID, key });
 
-        if (!item) {
+        const library = await db.libraries.get(libraryID);
+        if (!item || !library) {
             throw new ZotFlowError(
                 ZotFlowErrorCode.RESOURCE_MISSING,
                 "LibraryNoteService",
-                `Item not found: ${key}`,
+                `Item or Library not found: ${key}`,
             );
         }
 
@@ -268,8 +395,12 @@ export class LibraryNoteService {
                     forceUpdateImages,
                 );
             } else {
-                // Case B: File does not exist or frontmatter is different -> Create new file
-                await this.performCreate(item, path);
+                // Case B: File does not exist or frontmatter is different ->
+                // Create new file. The write may land on a suffixed path when
+                // the target is taken, so the caller must be told where the
+                // note actually went — openNote would otherwise open the file
+                // that caused the collision.
+                path = await this.performCreate(item, path);
 
                 // Post processing: Extract images (if setting is enabled)
                 if (this.settings.autoImportAnnotationImages) {
@@ -389,9 +520,16 @@ export class LibraryNoteService {
     }
 
     /**
-     * Perform file creation
+     * Perform file creation.
+     *
+     * @returns the path actually written, which differs from `path` when the
+     *   target was already taken by an unrelated file.
      */
-    private async performCreate(item: AnyIDBZoteroItem, path: string) {
+    private async performCreate(
+        item: AnyIDBZoteroItem,
+        path: string,
+    ): Promise<string> {
+        // If file exists but is not our note (collision), create a file with different name
         const notePath = await this.resolveUniquePath(path);
 
         // Create empty file first
@@ -400,7 +538,9 @@ export class LibraryNoteService {
 
         // Then write content
         const templateContent = await this.parentHost.readTextFile(
-            this.settings.librarySourceNoteTemplatePath,
+            this.normalizeTemplatePath(
+                this.settings.librarySourceNoteTemplatePath,
+            ),
         );
 
         // Render Item may throw ZotFlowError (Template Error), let it bubble
@@ -410,7 +550,16 @@ export class LibraryNoteService {
             {},
         );
 
-        await this.parentHost.writeTextFile(notePath, content);
+        // No old content on create, but still validate the render's persist
+        // markers (throws on template errors; a no-op splice otherwise).
+        const spliced = reinsertPersistRegions(content, {
+            regions: [],
+            orphanSectionInner: null,
+        });
+
+        await this.parentHost.writeTextFile(notePath, spliced.content);
+
+        return notePath;
     }
 
     /**
@@ -418,25 +567,58 @@ export class LibraryNoteService {
      */
     private async performUpdate(
         item: AnyIDBZoteroItem,
-        fileCheck: any,
+        fileCheck: Awaited<ReturnType<IParentProxy["checkFile"]>>,
         forceUpdate: boolean,
         forceUpdateImages: boolean,
     ) {
         // Read Frontmatter version from file
+        const rawVersion = fileCheck.frontmatter?.["item-version"];
+        // Only ever compared against a numeric string, so anything that is not
+        // a scalar counts as "no version" and forces the update — which is
+        // what a missing or mangled value should do anyway.
         const currentVersion =
-            fileCheck.frontmatter?.["item-version"]?.toString();
+            typeof rawVersion === "number" || typeof rawVersion === "string"
+                ? String(rawVersion)
+                : undefined;
         const newVersion = item.version.toString();
 
         // Only update if versions are different, or if forced update is specified
         if (forceUpdate || currentVersion !== newVersion) {
+            // Persist regions: pull user-owned blocks out of the current
+            // file before the full-content overwrite. A parse failure here
+            // refuses the update — the file stays untouched until the user
+            // repairs the markers.
+            const oldContent = await this.parentHost.readTextFile(
+                fileCheck.path,
+            );
+            if (oldContent === null || oldContent === undefined) {
+                throw new ZotFlowError(
+                    ZotFlowErrorCode.FILE_OPEN_FAILED,
+                    "LibraryNoteService",
+                    `Could not read ${fileCheck.path} before update — refused to overwrite blindly`,
+                );
+            }
+
+            let extracted: PersistExtract;
+            try {
+                extracted = extractPersistRegions(oldContent);
+            } catch (e) {
+                throw new ZotFlowError(
+                    ZotFlowErrorCode.PARSE_ERROR,
+                    "LibraryNoteService",
+                    `Invalid persist markers in ${fileCheck.path}: ${(e as Error).message}. Update refused until the file is fixed.`,
+                    { cause: e, path: fileCheck.path },
+                );
+            }
+
             const templateContent = await this.parentHost.readTextFile(
-                this.settings.librarySourceNoteTemplatePath,
+                this.normalizeTemplatePath(
+                    this.settings.librarySourceNoteTemplatePath,
+                ),
             );
 
             // Read existing content to preserve user zone during updates
-            const existingContent = await this.parentHost.readTextFile(
-                fileCheck.path,
-            );
+            const existingContent = oldContent;
 
             const content = await this.templateService.renderLibrarySourceNote(
                 item,
@@ -445,7 +627,19 @@ export class LibraryNoteService {
                 existingContent || undefined,
             );
 
-            await this.parentHost.writeTextFile(fileCheck.path, content);
+            const spliced = reinsertPersistRegions(content, extracted);
+
+            await this.parentHost.writeTextFile(
+                fileCheck.path,
+                spliced.content,
+            );
+
+            if (spliced.newOrphans.length > 0) {
+                this.reportNewOrphans(
+                    fileCheck.path,
+                    spliced.newOrphans.map((o) => o.id),
+                );
+            }
 
             this.parentHost.log(
                 "debug",
@@ -483,7 +677,7 @@ export class LibraryNoteService {
         let attachments: IDBZoteroItem<AttachmentData>[];
 
         if (item.itemType === "attachment") {
-            attachments = [item as IDBZoteroItem<AttachmentData>];
+            attachments = [item];
         } else {
             attachments = (await db.items
                 .where({
@@ -523,7 +717,7 @@ export class LibraryNoteService {
 
                     if (fileBlob) {
                         const buffer = await fileBlob.arrayBuffer();
-                        await this.pdfProcessor.renderAnnotations(
+                        await this.documentWorker.renderAnnotations(
                             item.libraryID,
                             buffer,
                             annotations,

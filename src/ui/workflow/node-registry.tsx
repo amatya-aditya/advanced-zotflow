@@ -171,7 +171,7 @@ export function resolveContextOutputs(
     const entry = registry.get(type);
     if (!entry) return EMPTY_SCHEMA;
     const def = entry.resolved;
-    if (def.getContextOutputs) return def.getContextOutputs(data as any);
+    if (def.getContextOutputs) return def.getContextOutputs(data as unknown as BaseNodeData);
     return def.contextOutputs ?? EMPTY_SCHEMA;
 }
 
@@ -191,7 +191,7 @@ export function resolveScopedContextOutputs(
     const def = entry.resolved;
     if (def.getScopedContextOutputs)
         return def.getScopedContextOutputs(
-            data as any,
+            data as unknown as BaseNodeData,
             available ?? EMPTY_SCHEMA,
         );
     return def.scopedContextOutputs ?? EMPTY_SCHEMA;
@@ -210,7 +210,7 @@ export function resolveContextInputs(
     const entry = registry.get(type);
     if (!entry) return EMPTY_SCHEMA;
     const def = entry.resolved;
-    if (def.getContextInputs) return def.getContextInputs(data as any);
+    if (def.getContextInputs) return def.getContextInputs(data as unknown as BaseNodeData);
     return def.contextInputs ?? EMPTY_SCHEMA;
 }
 
@@ -226,6 +226,6 @@ export function resolveOutputs(
     const entry = registry.get(type);
     if (!entry) return [];
     const def = entry.resolved;
-    if (def.getOutputs) return def.getOutputs(data as any);
+    if (def.getOutputs) return def.getOutputs(data as unknown as BaseNodeData);
     return def.outputs;
 }

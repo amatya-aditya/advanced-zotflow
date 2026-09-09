@@ -58,18 +58,18 @@ function WorkflowEditorCanvas({ store }: WorkflowEditorProps) {
 
     // --- Debounced validation on graph changes ---
     const runValidation = useStore(store, (s) => s.runValidation);
-    const validationTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const validationTimer = useRef<ReturnType<Window["setTimeout"]>>(undefined);
 
     useEffect(() => {
         if (validationTimer.current !== undefined) {
-            clearTimeout(validationTimer.current);
+            window.clearTimeout(validationTimer.current);
         }
-        validationTimer.current = setTimeout(() => {
+        validationTimer.current = window.setTimeout(() => {
             runValidation();
         }, 300);
         return () => {
             if (validationTimer.current !== undefined) {
-                clearTimeout(validationTimer.current);
+                window.clearTimeout(validationTimer.current);
             }
         };
     }, [nodes, edges, runValidation]);

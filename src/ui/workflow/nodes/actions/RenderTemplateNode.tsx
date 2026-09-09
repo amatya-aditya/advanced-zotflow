@@ -20,6 +20,7 @@ import {
     PropertyInput,
 } from "../../properties/PropertyControls";
 import type { BaseNodeData, NodePropertiesProps, NodeType } from "../../types";
+import type { ItemTemplateContext } from "types/template-context";
 
 // ---------------------------------------------------------------------------
 // Data
@@ -162,7 +163,7 @@ export const renderTemplateNode: NodeType<RenderTemplateNodeData> = {
 
         // Render via worker
         const content = await workerBridge.renderNoteFromContext(
-            item as any,
+            item as unknown as ItemTemplateContext,
             templateContent,
             existingFrontmatter,
         );

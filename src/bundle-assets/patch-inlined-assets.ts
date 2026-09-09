@@ -1,3 +1,113 @@
+// Prepended when creating the Document Worker Blob, before upstream code runs.
+// Older iPad WebViews lack these APIs. The Reader iframe's polyfills cannot reach
+// this separate worker global, including SDT modules loaded into it later.
+export const DOCUMENT_WORKER_PREAMBLE = `
+if (typeof Promise.withResolvers !== "function") {
+    Object.defineProperty(Promise, "withResolvers", {
+        configurable: true,
+        writable: true,
+        value: function withResolvers() {
+            var resolve, reject;
+            var promise = new this(function (res, rej) {
+                resolve = res;
+                reject = rej;
+            });
+            return { promise: promise, resolve: resolve, reject: reject };
+        }
+    });
+}
+
+// The pinned Document Worker uses values().flatMap(), values().some() and
+// keys().find(). Built-in iterators share this prototype even on WebViews
+// without a global Iterator constructor. Keep flatMap lazy and let for...of
+// close iterators when a predicate returns early or a callback throws.
+(() => {
+    const prototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+    const methods = {
+        flatMap: function* flatMap(mapper) {
+            let index = 0;
+            for (const value of this) {
+                yield* mapper(value, index++);
+            }
+        },
+        some: function some(predicate) {
+            let index = 0;
+            for (const value of this) {
+                if (predicate(value, index++)) return true;
+            }
+            return false;
+        },
+        find: function find(predicate) {
+            let index = 0;
+            for (const value of this) {
+                if (predicate(value, index++)) return value;
+            }
+            return undefined;
+        }
+    };
+    for (const [name, method] of Object.entries(methods)) {
+        if (typeof prototype[name] !== "function") {
+            Object.defineProperty(prototype, name, {
+                configurable: true,
+                writable: true,
+                value: method
+            });
+        }
+    }
+})();
+`;
+
+/**
+ * Upstream silently replaces failed PDF layout inference with plain text. That
+ * loses image/equation blocks and can change reading order, so Read Mode must
+ * reject it instead of caching it as a successful result.
+ *
+ * Both upstream fallback recorders append to layoutFallbacks. Throw there,
+ * while the page and original error are still available: the final SDT pack
+ * only retains extractionDegraded. The existing worker error response then
+ * reaches ReaderSDT's log/notice and lets the user retry after fixing the Pack.
+ * Match property names rather than the upstream minifier's local names.
+ */
+export function patchDocumentWorkerScript(data: Uint8Array): string {
+    // ONNX requests 16 MiB initially but reserves a shared-memory maximum of
+    // 4 GiB. iOS 16 WebKit can reject that reservation before loading a model
+    // (https://bugs.webkit.org/show_bug.cgi?id=255103). Retry this allocation
+    // once with a 1 GiB ceiling; keep the normal path and all other WASM memories
+    // intact. WASM pages are 64 KiB, and shared:true is required by this binary
+    // even though ONNX is configured to run with one thread.
+    const source = new TextDecoder().decode(data).replace(
+        "new WebAssembly.Memory({initial:256,maximum:65536,shared:!0})",
+        `(() => {
+            try {
+                return new WebAssembly.Memory({initial:256,maximum:65536,shared:true});
+            } catch (error) {
+                if (!(error instanceof RangeError)) throw error;
+                try {
+                    return new WebAssembly.Memory({initial:256,maximum:16384,shared:true});
+                } catch (retryError) {
+                    throw new Error("ONNX WASM memory allocation failed (16 MiB initial, 1 GiB maximum): "
+                        + retryError);
+                }
+            }
+        })()`,
+    );
+    const patched = source.replace(
+        /([\w$]+\.layoutFallbacks\.push)\(([\w$]+)\)/g,
+        (_match: string, push: string, record: string) => `${push}((() => {
+            const fallback = ${record};
+            if (fallback.reason === "inference_error" || fallback.reason === "too_many_lines") {
+                const detail = fallback.errorMessage
+                    ? (fallback.errorName || "Error") + ": " + fallback.errorMessage
+                    : "line count " + fallback.lineCount + " exceeds " + fallback.limit;
+                throw new Error("SDT layout extraction failed on page " + fallback.pageNumber
+                    + " (" + fallback.reason + "): " + detail);
+            }
+            return fallback;
+        })())`,
+    );
+    return DOCUMENT_WORKER_PREAMBLE + patched;
+}
+
 function uint8ArrayToBase64(bytes: Uint8Array): string {
     let binary = "";
     const len = bytes.byteLength;
@@ -27,28 +137,33 @@ function getPatchedViewerCSS(
     const relativeUrlPattern =
         /url\(\s*(['"]?)(?![a-z][\w+.-]*:|\/\/)([^'")]+)\1\s*\)/g;
 
-    return text.replace(relativeUrlPattern, (match, quote, url) => {
-        // Extract pure filename (remove path and query parameters)
-        const basename = url.match(/([^\/?#]+)(?:\?.*)?$/)?.[1];
+    // `String.replace` types every capture after the match as `any`; both of
+    // these are groups in `relativeUrlPattern`, so they are always strings.
+    return text.replace(
+        relativeUrlPattern,
+        (match: string, _quote: string, url: string) => {
+            // Extract pure filename (remove path and query parameters)
+            const basename = url.match(/([^/?#]+)(?:\?.*)?$/)?.[1];
 
-        if (!basename) return match;
+            if (!basename) return match;
 
-        // Find matching resource
-        const hitKey = Object.keys(BLOB_BINARY_MAP).find((k) =>
-            k.endsWith(basename),
-        );
+            // Find matching resource
+            const hitKey = Object.keys(BLOB_BINARY_MAP).find((k) =>
+                k.endsWith(basename),
+            );
 
-        if (hitKey) {
-            const resource = BLOB_BINARY_MAP[hitKey]!;
-            const base64 = uint8ArrayToBase64(resource.data);
-            const mimeType = resource.type || "application/octet-stream";
+            if (hitKey) {
+                const resource = BLOB_BINARY_MAP[hitKey]!;
+                const base64 = uint8ArrayToBase64(resource.data);
+                const mimeType = resource.type || "application/octet-stream";
 
-            return `url("data:${mimeType};base64,${base64}")`;
-        } else {
-            console.warn(`[Zotero Reader] CSS Resource not found: ${url}`);
-            return match;
-        }
-    });
+                return `url("data:${mimeType};base64,${base64}")`;
+            } else {
+                console.warn(`[Zotero Reader] CSS Resource not found: ${url}`);
+                return match;
+            }
+        },
+    );
 }
 
 /** -----------------------------------------------------------
@@ -95,7 +210,7 @@ export function patchPDFJSViewerHTML(
     moduleScripts.forEach((scriptEl) => {
         const src = scriptEl.getAttribute("src") || "";
         // Find a key whose basename matches (similar to your RegExp logic)
-        const basenameMatch = src.match(/([^\/?#]+)(?:\?.*)?$/);
+        const basenameMatch = src.match(/([^/?#]+)(?:\?.*)?$/);
         const basename = basenameMatch?.[1];
         if (basename) {
             const hit = Object.keys(BLOB_URL_MAP).find((k) =>

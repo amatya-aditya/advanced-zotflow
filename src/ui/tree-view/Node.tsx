@@ -1,34 +1,44 @@
 import type { NodeRendererProps } from "react-arborist";
+import { useContext } from "react";
 import { Menu, setIcon } from "obsidian";
 import type { ViewNode } from "./TreeView";
+import { TreeSearchContext } from "./TreeView";
 import { ObsidianIcon } from "../ObsidianIcon";
 import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
 import { services } from "services/services";
+import { invalidateTagAutocompleteCache } from "ui/search/autocomplete-data";
 import { workerBridge } from "bridge";
 
-import { openAttachment, openItemNote } from "utils/viewer";
+import {
+    openAttachment,
+    openItemNote,
+    openItemNoteInEditor,
+    openItemNoteInSourceNote,
+} from "utils/viewer";
 import { generateBaseView } from "utils/base-generator";
 import { zoteroLibraryPrefix, zoteroSelectItemUri } from "utils/zotero-uri";
 import {
     ZOTFLOW_CITATION_MIME,
     type ZotFlowCitationPayload,
 } from "ui/editor/citation-helper";
+import { TagEditModal } from "ui/modals/tag-edit";
+import { splitHighlight } from "utils/search-query";
 
 /** Pixel indentation per tree depth level. */
 export const INDENT_SIZE = 20;
 
-const Highlight = ({ text, term }: { text: string; term: string }) => {
-    if (!term) return <>{text}</>;
-    const parts = text.split(new RegExp(`(${term})`, "gi"));
+const Highlight = ({ text, tokens }: { text: string; tokens: string[] }) => {
+    if (!tokens.length) return <>{text}</>;
+    const segments = splitHighlight(text, tokens);
     return (
         <>
-            {parts.map((p, i) =>
-                p.toLowerCase() === term.toLowerCase() ? (
+            {segments.map((seg, i) =>
+                seg.match ? (
                     <span key={i} className="search-result-file-matched-text">
-                        {p}
+                        {seg.text}
                     </span>
                 ) : (
-                    p
+                    seg.text
                 ),
             )}
         </>
@@ -36,12 +46,9 @@ const Highlight = ({ text, term }: { text: string; term: string }) => {
 };
 
 /** React component rendering a single tree node with icon, label, drag support, and context menu. */
-export const NodeItem = ({
-    node,
-    style,
-    tree,
-}: NodeRendererProps<ViewNode>) => {
+export const NodeItem = ({ node, style }: NodeRendererProps<ViewNode>) => {
     const { nodeType, name, children } = node.data;
+    const { freeTokens: searchTokens } = useContext(TreeSearchContext);
     const isTopLevelItem =
         nodeType === "item" &&
         (node.parent?.data.nodeType === "library" ||
@@ -70,35 +77,88 @@ export const NodeItem = ({
             break;
     }
 
-    const handleOnClick = (e: React.MouseEvent) => {
+    const handleArrowClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
         node.toggle();
     };
 
-    const handleDoubleClick = async (e: React.MouseEvent) => {
+    const openPrimaryTarget = () => {
+        if (nodeType === "item" && node.data.itemType === "attachment") {
+            void openAttachment(
+                node.data.libraryID,
+                node.data.key,
+                services.app,
+            ).catch((err) => {
+                services.logService.error(
+                    "Failed to open attachment",
+                    "TreeView",
+                    err,
+                );
+                services.notificationService.notify(
+                    "error",
+                    "Failed to open attachment.",
+                );
+            });
+        } else if (nodeType === "item" && node.data.itemType === "note") {
+            void openItemNote(
+                node.data.libraryID,
+                node.data.key,
+                services.app,
+            ).catch((err) => {
+                services.logService.error(
+                    "Failed to open note preview",
+                    "TreeView",
+                    err,
+                );
+                services.notificationService.notify(
+                    "error",
+                    "Failed to open note.",
+                );
+            });
+        } else if (isTopLevelItem) {
+            void workerBridge.libraryNote
+                .openNote(node.data.libraryID, node.data.key, {
+                    forceUpdateContent: true,
+                    forceUpdateImages: false,
+                })
+                .catch((err) => {
+                    services.logService.error(
+                        "Failed to create/open note",
+                        "TreeView",
+                        err,
+                    );
+                    services.notificationService.notify(
+                        "error",
+                        "Failed to open source note.",
+                    );
+                });
+        } else {
+            node.toggle();
+        }
+    };
+
+    // The setting is read at event time so toggling it applies live.
+    const handleOnClick = (e: React.MouseEvent) => {
+        if (!services.settings.treeSingleClickOpen) {
+            node.toggle();
+            return;
+        }
+        openPrimaryTarget();
+    };
+
+    const handleDoubleClick = (e: React.MouseEvent) => {
+        if (services.settings.treeSingleClickOpen) return;
         e.stopPropagation();
         node.toggle();
 
         if (nodeType === "item" && node.data.itemType === "attachment") {
-            // Track recent item
-            void services.addRecentItem({
-                libraryID: node.data.libraryID,
-                key: node.data.key,
-                name: node.data.name,
-                itemType: node.data.itemType,
-                contentType: node.data.contentType,
-            });
-            // Attachment: Open PDF
-            await openAttachment(
+            void openAttachment(
                 node.data.libraryID,
                 node.data.key,
                 services.app,
             );
         } else if (nodeType === "item" && node.data.itemType === "note") {
-            await openItemNote(
-                node.data.libraryID,
-                node.data.key,
-                services.app,
-            );
+            void openItemNote(node.data.libraryID, node.data.key, services.app);
         }
     };
 
@@ -109,6 +169,29 @@ export const NodeItem = ({
         node.select();
 
         const menu = new Menu();
+
+        // Attachments nested beneath references are bookmarkable in their own right.
+        if (nodeType === "item" && node.data.itemType !== "note") {
+            menu.addItem((item) => {
+                const isBookmarked = services.isBookmarked(
+                    node.data.libraryID,
+                    node.data.key,
+                );
+                item.setTitle(
+                    isBookmarked ? "Remove bookmark" : "Bookmark item",
+                )
+                    .setIcon(isBookmarked ? "bookmark-minus" : "bookmark-plus")
+                    .onClick(async () => {
+                        await services.toggleBookmark({
+                            libraryID: node.data.libraryID,
+                            key: node.data.key,
+                            name: node.data.name,
+                            itemType: node.data.itemType,
+                            contentType: node.data.contentType,
+                        });
+                    });
+            });
+        }
 
         if (nodeType === "collection" || nodeType === "library") {
             menu.addItem((item) => {
@@ -266,25 +349,6 @@ export const NodeItem = ({
             });
         } else if (isTopLevelItem && node.data.itemType !== "note") {
             menu.addItem((item) => {
-                const isBookmarked = services.isBookmarked(
-                    node.data.libraryID,
-                    node.data.key,
-                );
-                item.setTitle(
-                    isBookmarked ? "Remove bookmark" : "Bookmark item",
-                )
-                    .setIcon(isBookmarked ? "bookmark-minus" : "bookmark-plus")
-                    .onClick(async () => {
-                        await services.toggleBookmark({
-                            libraryID: node.data.libraryID,
-                            key: node.data.key,
-                            name: node.data.name,
-                            itemType: node.data.itemType,
-                            contentType: node.data.contentType,
-                        });
-                    });
-            });
-            menu.addItem((item) => {
                 item.setTitle("Open source note")
                     .setIcon("file-badge")
                     .onClick(async () => {
@@ -324,7 +388,7 @@ export const NodeItem = ({
                     .onClick(async () => {
                         try {
                             // Open/update the note file (foreground)
-                            void workerBridge.libraryNote.openNote(
+                            await workerBridge.libraryNote.openNote(
                                 node.data.libraryID,
                                 node.data.key,
                                 {
@@ -418,6 +482,11 @@ export const NodeItem = ({
                                         node.data.libraryID,
                                         node.data.key,
                                     );
+                                await workerBridge.libraryNote.triggerUpdate(
+                                    node.data.libraryID,
+                                    node.data.key,
+                                    { forceUpdateContent: true },
+                                );
                                 await openItemNote(
                                     node.data.libraryID,
                                     noteKey,
@@ -439,15 +508,83 @@ export const NodeItem = ({
             }
         } else if (nodeType === "item" && node.data.itemType === "note") {
             menu.addItem((item) => {
+                item.setTitle("Locate in Source Note")
+                    .setIcon("file-badge")
+                    .onClick(async () => {
+                        try {
+                            const located = await openItemNoteInSourceNote(
+                                node.data.libraryID,
+                                node.data.key,
+                                services.app,
+                            );
+                            if (!located) {
+                                services.notificationService.notify(
+                                    "warning",
+                                    "No source note found for this note.",
+                                );
+                            }
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to locate note in source note",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to locate note in source note.",
+                            );
+                        }
+                    });
+            });
+            menu.addItem((item) => {
+                item.setTitle("Open in Note Editor (Experimental)")
+                    .setIcon("pencil")
+                    .onClick(async () => {
+                        try {
+                            await openItemNoteInEditor(
+                                node.data.libraryID,
+                                node.data.key,
+                                services.app,
+                            );
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to open note in Note Editor",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to open note in Note Editor.",
+                            );
+                        }
+                    });
+            });
+            menu.addItem((item) => {
                 item.setTitle("Delete note")
                     .setIcon("trash-2")
                     .onClick(async () => {
                         try {
+                            // Capture the parent before deletion so we can
+                            // re-render its source note afterwards.
+                            const note = await workerBridge.dbHelper.getItem(
+                                node.data.libraryID,
+                                node.data.key,
+                            );
+                            const parentKey = note?.parentItem;
                             await workerBridge.itemNote.deleteNote(
                                 node.data.libraryID,
                                 node.data.key,
                             );
                             services.taskMonitor.treeChanged.emit();
+                            // Re-render the parent source note so the deleted
+                            // note's editable region is removed.
+                            if (parentKey) {
+                                await workerBridge.libraryNote.triggerUpdate(
+                                    node.data.libraryID,
+                                    parentKey,
+                                    { forceUpdateContent: true },
+                                );
+                            }
                             services.notificationService.notify(
                                 "success",
                                 "Note deleted.",
@@ -497,13 +634,78 @@ export const NodeItem = ({
                         }
                     });
             });
+            menu.addItem((item) => {
+                item.setTitle("Edit tags…")
+                    .setIcon("tag")
+                    .onClick(async () => {
+                        try {
+                            const dbItem = await workerBridge.dbHelper.getItem(
+                                node.data.libraryID,
+                                node.data.key,
+                            );
+                            const current = dbItem?.raw?.data?.tags ?? [];
+                            const all = await workerBridge.tag.getTagNames();
+
+                            new TagEditModal(services.app, {
+                                itemTitle: node.data.name,
+                                initialTags: current,
+                                suggestions: all,
+                                onSave: async (tags) => {
+                                    await workerBridge.tag.setItemTags(
+                                        node.data.libraryID,
+                                        node.data.key,
+                                        tags,
+                                    );
+                                    invalidateTagAutocompleteCache();
+
+                                    // Refresh the tree so chip display updates.
+                                    services.taskMonitor.treeChanged.emit();
+
+                                    // Re-render the owning source note if one
+                                    // already exists (never create a new one).
+                                    const noteKey =
+                                        dbItem?.parentItem || node.data.key;
+                                    try {
+                                        if (
+                                            services.indexService.getFileByKey(
+                                                noteKey,
+                                            )
+                                        ) {
+                                            await workerBridge.libraryNote.triggerUpdate(
+                                                node.data.libraryID,
+                                                noteKey,
+                                                { forceUpdateContent: true },
+                                            );
+                                        }
+                                    } catch {
+                                        // Index not ready / no note — ignore.
+                                    }
+
+                                    services.notificationService.notify(
+                                        "success",
+                                        "Tags updated.",
+                                    );
+                                },
+                            }).open();
+                        } catch (err) {
+                            services.logService.error(
+                                "Failed to open tag editor",
+                                "TreeView",
+                                err,
+                            );
+                            services.notificationService.notify(
+                                "error",
+                                "Failed to open tag editor.",
+                            );
+                        }
+                    });
+            });
         }
 
         if (
             nodeType === "collection" ||
             nodeType === "library" ||
-            (isTopLevelItem && node.data.itemType !== "note") ||
-            (nodeType === "item" && node.data.itemType === "note")
+            nodeType === "item"
         ) {
             menu.showAtMouseEvent(e.nativeEvent);
         }
@@ -553,10 +755,10 @@ export const NodeItem = ({
         }
 
         // Custom Drag Ghost using Obsidian classes
-        const ghost = document.createElement("div");
+        const ghost = createDiv();
         ghost.addClass("drag-ghost");
 
-        const self = document.createElement("div");
+        const self = createDiv();
         self.addClass("drag-ghost-self");
 
         let iconName = "";
@@ -570,12 +772,12 @@ export const NodeItem = ({
 
         setIcon(self, iconName || "file");
 
-        const titleSpan = document.createElement("span");
+        const titleSpan = createSpan();
         titleSpan.textContent = dragText || "Untitled";
 
         self.appendChild(titleSpan);
 
-        const action = document.createElement("div");
+        const action = createDiv();
         action.addClass("drag-ghost-action");
         action.textContent = isCitationDrag
             ? "Insert citation here"
@@ -615,8 +817,11 @@ export const NodeItem = ({
                 />
             ))}
 
-            {/* Arrow */}
-            <div className="zotflow-arrow-box">
+            {/* Arrow: own click zone; leaf placeholders stay row body */}
+            <div
+                className="zotflow-arrow-box"
+                onClick={isFolder ? handleArrowClick : undefined}
+            >
                 <ObsidianIcon
                     icon={node.isOpen ? "chevron-down" : "chevron-right"}
                     containerStyle={{
@@ -640,7 +845,7 @@ export const NodeItem = ({
                     flex: 1,
                 }}
             >
-                <Highlight text={name} term={tree.props.searchTerm || ""} />
+                <Highlight text={name} tokens={searchTokens} />
             </span>
 
             {/* File Tag */}

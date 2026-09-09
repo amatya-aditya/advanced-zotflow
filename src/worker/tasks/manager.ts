@@ -1,13 +1,14 @@
 import type { IParentProxy } from "bridge/types";
 import type { BaseTask } from "./base";
-import type { ITaskInfo } from "types/tasks";
+import type { DownloadedAttachment, ITaskInfo } from "types/tasks";
 import type { SyncService } from "worker/services/sync";
 import type {
     LibraryNoteService,
     UpdateOptions,
 } from "worker/services/library-note";
 import type { AttachmentService } from "worker/services/attachment";
-import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { ZoteroAPIService } from "worker/services/zotero";
+import type { DocumentWorkerService } from "worker/services/document-worker";
 import type { ZotFlowSettings } from "settings/types";
 import type { BatchNoteInput } from "./impl/batch-note-task";
 import type { BatchExtractImagesInput } from "./impl/batch-extract-images-task";
@@ -29,13 +30,17 @@ export class TaskManager {
      * Key: `libraryId` (number) for per-library syncs, `"all"` for full syncs.
      */
     private activeSyncs = new Map<number | "all", string>();
+    /** In-flight csljson backfill task id — always all-libraries, so at most one. */
+    private activeCslBackfill?: string;
 
     constructor(private parentHost: IParentProxy) {}
 
     public registerTask(task: BaseTask) {
         // cleanup old tasks (simple policy: keep max 50)
         if (this.tasks.size > 50) {
-            const oldest = this.tasks.keys().next().value;
+            // Destructured rather than `.next().value`, whose `IteratorResult`
+            // return slot is typed `any`.
+            const [oldest] = this.tasks.keys();
             if (oldest) this.tasks.delete(oldest);
         }
 
@@ -57,7 +62,8 @@ export class TaskManager {
         this.activeControllers.set(task.id, controller);
 
         // Run without awaiting (fire and forget from manager perspective)
-        task.execute(controller.signal).finally(() => {
+        // Fire and forget by design; the task layer records its own outcome.
+        void task.execute(controller.signal).finally(() => {
             this.activeControllers.delete(task.id);
         });
 
@@ -77,7 +83,7 @@ export class TaskManager {
 
     public async createTestTask(duration: number) {
         const { TestTask } = await import("./impl/test-task");
-        const task = new TestTask(duration);
+        const task = new TestTask(this.parentHost, duration);
         return this.startTask(task);
     }
 
@@ -100,6 +106,7 @@ export class TaskManager {
 
         const { SyncTask } = await import("./impl/sync-task");
         const task = new SyncTask(
+            this.parentHost,
             syncService,
             libraryId,
             this,
@@ -113,9 +120,39 @@ export class TaskManager {
         const controller = new AbortController();
         this.activeControllers.set(task.id, controller);
 
-        task.execute(controller.signal).finally(() => {
+        // Fire and forget by design; the task layer records its own outcome.
+        void task.execute(controller.signal).finally(() => {
             this.activeControllers.delete(task.id);
             this.activeSyncs.delete(scope);
+        });
+
+        return task.id;
+    }
+
+    /** Refetch and store the CSL-JSON payload for every citable item. */
+    public async createBackfillCslJsonTask(zotero: ZoteroAPIService) {
+        if (this.activeCslBackfill) {
+            this.parentHost.log(
+                "info",
+                `CSL data update already in progress; reusing task ${this.activeCslBackfill}.`,
+                "TaskManager",
+            );
+            return this.activeCslBackfill;
+        }
+
+        const { BackfillCslJsonTask } =
+            await import("./impl/backfill-csljson-task");
+        const task = new BackfillCslJsonTask(this.parentHost, zotero);
+        this.activeCslBackfill = task.id;
+
+        this.registerTask(task);
+
+        const controller = new AbortController();
+        this.activeControllers.set(task.id, controller);
+
+        void task.execute(controller.signal).finally(() => {
+            this.activeControllers.delete(task.id);
+            this.activeCslBackfill = undefined;
         });
 
         return task.id;
@@ -129,21 +166,28 @@ export class TaskManager {
     ) {
         const { BatchNoteTask } = await import("./impl/batch-note-task");
         const type = isUpdate ? "batch-update-notes" : "batch-create-notes";
-        const task = new BatchNoteTask(noteService, input, options, type);
+        const task = new BatchNoteTask(
+            this.parentHost,
+            noteService,
+            input,
+            options,
+            type,
+        );
         return this.startTask(task);
     }
 
     public async createBatchExtractImagesTask(
         attachmentService: AttachmentService,
-        pdfProcessor: PDFProcessWorker,
+        documentWorker: DocumentWorkerService,
         settings: ZotFlowSettings,
         input: BatchExtractImagesInput,
     ) {
         const { BatchExtractImagesTask } =
             await import("./impl/batch-extract-images-task");
         const task = new BatchExtractImagesTask(
+            this.parentHost,
             attachmentService,
-            pdfProcessor,
+            documentWorker,
             settings,
             input,
         );
@@ -157,10 +201,22 @@ export class TaskManager {
     public async createDownloadAttachmentTask(
         attachmentService: AttachmentService,
         attachmentItem: IDBZoteroItem<AttachmentData>,
-    ): Promise<Blob> {
+    ): Promise<DownloadedAttachment> {
+        const startedAt = Date.now();
+        this.parentHost.log(
+            "debug",
+            "Creating download attachment task.",
+            "TaskManager",
+            {
+                libraryID: attachmentItem.libraryID,
+                itemKey: attachmentItem.key,
+                filename: attachmentItem.raw.data.filename,
+            },
+        );
         const { DownloadAttachmentTask } =
             await import("./impl/download-attachment-task");
         const task = new DownloadAttachmentTask(
+            this.parentHost,
             attachmentService,
             attachmentItem,
         );
@@ -169,17 +225,70 @@ export class TaskManager {
 
         const controller = new AbortController();
         this.activeControllers.set(task.id, controller);
+        this.parentHost.log(
+            "debug",
+            "Download attachment task registered and controller created.",
+            "TaskManager",
+            {
+                taskId: task.id,
+                itemKey: attachmentItem.key,
+                activeControllers: this.activeControllers.size,
+            },
+        );
 
         try {
+            this.parentHost.log(
+                "debug",
+                "Executing download attachment task.",
+                "TaskManager",
+                {
+                    taskId: task.id,
+                    itemKey: attachmentItem.key,
+                },
+            );
             await task.execute(controller.signal);
 
-            const blob = task.getBlob();
-            if (!blob) {
+            const result = task.takeResult();
+            if (!result) {
                 throw new Error(`Download failed for ${attachmentItem.key}`);
             }
-            return blob;
+            this.parentHost.log(
+                "debug",
+                "Download attachment task completed successfully.",
+                "TaskManager",
+                {
+                    taskId: task.id,
+                    itemKey: attachmentItem.key,
+                    blobBytes: result.blob.size,
+                    elapsedMs: Date.now() - startedAt,
+                },
+            );
+            return result;
+        } catch (e) {
+            this.parentHost.log(
+                "debug",
+                "Download attachment task failed.",
+                "TaskManager",
+                {
+                    taskId: task.id,
+                    itemKey: attachmentItem.key,
+                    elapsedMs: Date.now() - startedAt,
+                    errorMessage: e instanceof Error ? e.message : String(e),
+                },
+            );
+            throw e;
         } finally {
             this.activeControllers.delete(task.id);
+            this.parentHost.log(
+                "debug",
+                "Download attachment task controller removed.",
+                "TaskManager",
+                {
+                    taskId: task.id,
+                    itemKey: attachmentItem.key,
+                    activeControllers: this.activeControllers.size,
+                },
+            );
         }
     }
 
@@ -189,7 +298,8 @@ export class TaskManager {
      */
     public async createBatchExtractExternalAnnotationsTask(
         attachmentService: AttachmentService,
-        pdfProcessor: PDFProcessWorker,
+        documentWorker: DocumentWorkerService,
+        noteService: LibraryNoteService,
         input: BatchExtractExternalAnnotationsInput,
     ): Promise<AnnotationJSON[]> {
         // Dedup: if all requested items already have in-flight extractions,
@@ -206,8 +316,10 @@ export class TaskManager {
         const { BatchExtractExternalAnnotationsTask } =
             await import("./impl/batch-extract-external-annotations-task");
         const task = new BatchExtractExternalAnnotationsTask(
+            this.parentHost,
             attachmentService,
-            pdfProcessor,
+            documentWorker,
+            noteService,
             input,
         );
 

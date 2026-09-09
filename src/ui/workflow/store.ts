@@ -161,7 +161,7 @@ export function createWorkflowStore(
                     edges: addEdge(
                         { ...connection, id: `edge_${Date.now()}` },
                         filtered,
-                    ) as WorkflowEdge[],
+                    ),
                     dirty: true,
                 };
             });

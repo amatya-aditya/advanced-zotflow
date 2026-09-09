@@ -22,11 +22,21 @@ const DEFAULT_TRIGGER = "@@";
 /**
  * Inline EditorSuggest for inserting Zotero citations.
  * Auto-triggers when the user types the configured trigger (default `@@`) in the editor.
- * Also triggered via the "Insert Citation" command (Alt+C).
+ * Also triggered via the "Insert Citation" command.
  */
 export class CitationSuggest extends EditorSuggest<SuggestionItem> {
     private manualTriggerStart: EditorPosition | null = null;
     private readonly suggest = new ZoteroItemSuggest();
+
+    private resolveInsertionAnchor(
+        editor: Editor,
+        preferredPos: EditorPosition,
+        baselineDoc: string,
+    ): EditorPosition {
+        return editor.getValue() === baselineDoc
+            ? preferredPos
+            : editor.getCursor();
+    }
 
     private get triggerPrefix(): string {
         return services.settings.citationTrigger || DEFAULT_TRIGGER;
@@ -74,8 +84,7 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
         view.editor.replaceRange(t, cursor);
         view.editor.setCursor({ line: cursor.line, ch: cursor.ch + t.length });
         this.manualTriggerStart = cursor;
-        // Force Obsidian to evaluate onTrigger() immediately
-        (this as any).trigger(view.editor, activeFile, true);
+        this.trigger(view.editor, activeFile, true);
     }
 
     onTrigger(
@@ -144,11 +153,10 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
     // --- Helpers ---
 
     private pickWithFormat(evt: KeyboardEvent, format: CitationFormat): void {
-        // @ts-expect-error
-        // Undocumented: PopoverSuggest.suggestions holds the Suggest instance with selectedItem
         const suggestions = this.suggestions;
         const selectedIndex: number | undefined = suggestions?.selectedItem;
-        const values: SuggestionItem[] | undefined = suggestions?.values;
+        const values = suggestions?.values as unknown as
+            SuggestionItem[] | undefined;
 
         if (
             selectedIndex == null ||
@@ -198,12 +206,18 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
 
         // Clear the trigger text immediately, then async-resolve the citation
         editor.replaceRange("", replaceStart, end);
+        const baselineDoc = editor.getValue();
 
         services.citationService
             .resolve({ libraryID: item.libraryID, key: item.key }, format)
             .then((result) => {
                 if (result) {
-                    insertCitationResult(editor, replaceStart, result);
+                    const insertPos = this.resolveInsertionAnchor(
+                        editor,
+                        replaceStart,
+                        baselineDoc,
+                    );
+                    insertCitationResult(editor, insertPos, result);
                 }
             })
             .catch((error) => {

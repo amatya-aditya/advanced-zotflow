@@ -10,7 +10,7 @@ import { Type } from "@sinclair/typebox";
 import type { BaseNodeData, NodePropertiesProps, NodeType } from "../../types";
 import { extractPaths } from "../../context/schema";
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- Marker type: a manual trigger carries no data beyond BaseNodeData.
 interface ManualTriggerNodeData extends BaseNodeData {}
 
 import {

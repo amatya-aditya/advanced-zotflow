@@ -7,13 +7,23 @@ import {
 } from "./zotero";
 import { ZoteroItemData, ZoteroItemDataTypeMap } from "./zotero-item";
 
+/** Key-value cache entry for the CSL renderer (styles, locales, index). */
+export interface IDBCslCacheEntry {
+    key: string;
+    value: string;
+}
+
 /** Stored Zotero API key with associated group membership. */
 export interface IDBZoteroKey extends ZoteroKey {
     joinedGroups: number[]; // Array of Group IDs the key has access to
 }
 
-/** Stored Zotero group library metadata. */
-export interface IDBZoteroGroup extends ZoteroGroup {}
+/**
+ * Stored Zotero group library metadata. Named separately from `ZoteroGroup`
+ * because it is the table's row type, but it adds nothing to it today — the
+ * other stored types carry sync bookkeeping the server payload has no room for.
+ */
+export type IDBZoteroGroup = ZoteroGroup;
 
 /** Stored Zotero library with sync version tracking. */
 export interface IDBZoteroLibrary extends ZoteroLibrary {
@@ -35,7 +45,7 @@ export interface IDBZoteroCollection {
     // Sync State
     syncStatus: "synced" | "created" | "updated" | "deleted" | "conflict";
     syncedAt: string;
-    syncError: string;
+    syncError?: string;
 
     // Raw Payload
     raw: ZoteroCollection;
@@ -72,7 +82,7 @@ interface _IDBZoteroItem<T extends ZoteroItemData> {
         | "deleted"
         | "ignore"
         | "conflict";
-    syncError: string;
+    syncError?: string;
     syncedAt: string;
 
     // External Annotation Extraction Tracking
@@ -87,6 +97,10 @@ interface _IDBZoteroItem<T extends ZoteroItemData> {
 
     // Citation Key
     citationKey?: string;
+
+    // CSL-JSON payload from the Zotero API (include=data,csljson), consumed
+    // by the citation/bibliography template filters. Non-indexed.
+    csljson?: Record<string, unknown>;
 
     // lastAccessedAt
     lastAccessedAt?: string;
@@ -104,11 +118,11 @@ export type AnyIDBZoteroItem = {
     [K in keyof ZoteroItemDataTypeMap]: IDBZoteroItem<ZoteroItemDataTypeMap[K]>;
 }[keyof ZoteroItemDataTypeMap];
 
-/** Cached attachment file blob with metadata for LRU eviction. */
+/** Cached attachment file bytes with metadata for LRU eviction. */
 export interface IDBZoteroFile {
     libraryID: number; // Library ID (User or Group ID)
     key: string; // Zotero Item Key (itemType='attachment')
-    blob: Blob; // File Blob
+    buffer: ArrayBuffer; // File bytes (stored inline as ArrayBuffer, not Blob — see AttachmentService for the WebKit/iPadOS rationale)
     mimeType: string;
     fileName: string;
     md5: string; // File MD5 (API returned), used to determine if re-download is needed

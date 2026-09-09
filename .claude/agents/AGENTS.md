@@ -70,7 +70,7 @@ processing.
 │       │     ├── library-template.ts (LiquidJS library templates) │
 │       │     ├── local-template.ts (LiquidJS local templates) │
 │       │     ├── tree-view.ts    (tree topology builder)      │
-│       │     ├── pdf-processor.ts (nested PDF.js Worker)      │
+│       │     ├── document-worker.ts (Zotero Document Worker)  │
 │       │     ├── annotation.ts   (reader annotation CRUD)     │
 │       │     ├── key.ts          (API key/library metadata)   │
 │       │     └── db-helper.ts        (general-purpose DB queries) │
@@ -97,7 +97,7 @@ processing.
 | Worker → Main        | `Comlink.proxy(parentHost)` callbacks | `bridge/parent-host.ts`                 |
 | Main → Reader iframe | `penpal` (connectToChild)             | `ui/reader/bridge.ts`                   |
 | Reader iframe → Main | `penpal` (connectToParent)            | `reader/reader/src/obsidian-adapter.js` |
-| Worker → PDF Worker  | raw `postMessage`/`onmessage`         | `worker/services/pdf-processor.ts`      |
+| Worker → Document Worker | raw `postMessage`/`onmessage`     | `worker/services/document-worker.ts`   |
 
 ### 2.2 Data flow (Sync example)
 
@@ -135,9 +135,7 @@ The sidecar format:
 ```json
 {
     "version": 1,
-    "annotations": [
-        /* AnnotationJSON[] */
-    ]
+    "annotations": [/* AnnotationJSON[] */]
 }
 ```
 
@@ -271,6 +269,7 @@ src/
 │   ├── log-service.ts              # In-memory log buffer (max 1000)
 │   ├── notification-service.ts     # Styled Obsidian Notice wrapper
 │   ├── task-monitor.ts             # Pub/sub for task progress updates
+│   ├── csl-folder-service.ts       # Vault folder watcher feeding .csl/locale XML to the worker
 │   └── view-state-service.ts       # Reader view state persistence
 │
 ├── settings/
@@ -280,6 +279,7 @@ src/
 │       ├── general-section.ts      # Template paths, folders, toggles
 │       ├── sync-section.ts         # API key, library sync modes
 │       ├── cache-section.ts        # Cache toggle, limit, purge
+│       ├── csl-section.ts          # CSL renderer: default style/format, styles folder, cache
 │       └── webdav-section.ts       # WebDAV URL/user/password
 │
 ├── types/
@@ -314,11 +314,16 @@ src/
 │   │   ├── modal.tsx               # ActivityCenterModal (Obsidian Modal wrapper)
 │   │   ├── ZotFlowActivityCenter.tsx # Tab container component
 │   │   ├── SyncView.tsx            # Sync tab content (stub)
-│   │   └── TemplateTestView.tsx    # Template testing tab
+│   │   ├── TemplateTestView.tsx    # Template testing tab
+│   │   ├── CslStylesView.tsx       # CSL tab: styles (aliases nested under parents) & locales
+│   │   └── CslRows.tsx             # CSL tab row components (status dot, badges, alias rows)
 │   └── modals/
 │       ├── suggest.ts              # BaseItemSearchModal + ZoteroSearchModal
 │       ├── item-picker.ts          # ItemPickerModal (extends BaseItemSearchModal)
-│       └── file-picker.ts          # FilePickerModal (local vault file picker)
+│       ├── file-picker.ts          # FilePickerModal (local vault file picker)
+│       ├── csl-add-modal.ts        # AddCslStyleModal / AddCslLocaleModal (fetch-by-id preview + add)
+│       ├── csl-details-modal.ts    # StyleDetailsModal (state-aware actions for installed styles)
+│       └── csl-style-details.ts    # Shared StyleDetails block (meta table + deps + preview)
 │
 ├── worker/
 │   ├── worker.ts                   # Worker entry point — exposes WorkerAPI via Comlink
@@ -333,10 +338,13 @@ src/
 │   │   ├── library-template.ts     # LibraryTemplateService (LiquidJS for library items)
 │   │   ├── local-template.ts       # LocalTemplateService (LiquidJS for local files)
 │   │   ├── tree-view.ts            # TreeViewService (builds flattened topology)
-│   │   ├── pdf-processor.ts        # PDFProcessWorker (nested Worker for PDF.js)
+│   │   ├── document-worker.ts      # DocumentWorkerService (nested Zotero worker)
 │   │   ├── annotation.ts           # AnnotationService (reader annotation CRUD)
 │   │   ├── key.ts                  # KeyService (API key verify, library metadata)
+│   │   ├── csl-render.ts           # CslRenderWorkerService (CSL rendering; wraps worker/csl core)
 │   │   └── db-helper.ts            # DbHelperService (general-purpose DB queries)
+│   ├── csl/                        # Vendored csl-render core (citeproc wrapper; platform
+│   │                               #   agnostic, relative imports, WORKER-ONLY via services)
 │   └── tasks/
 │       ├── base.ts                 # BaseTask abstract (id, status, progress)
 │       ├── manager.ts              # TaskManager (register, start, cancel)
@@ -366,6 +374,7 @@ src/
 | `dexie`               | IndexedDB wrapper                  | Worker                     |
 | `zotero-api-client`   | Zotero Web API                     | Worker (via proxied fetch) |
 | `liquidjs`            | Note template rendering            | Worker                     |
+| `citeproc`            | CSL citation/bibliography engine   | Worker                     |
 | `fflate`              | gzip decompression (reader assets) | Main                       |
 | `spark-md5`           | File integrity (attachment cache)  | Worker                     |
 | `p-limit`             | Concurrency control                | Worker                     |
@@ -387,8 +396,57 @@ npm run build:plugin   # Production build: tsc check + esbuild (plugin only)
 npm run build:reader   # Production build: webpack prod mode (reader only)
 npm run build        # Production build: reader + plugin
 npm run build:ci     # Full CI: build pdf.js + reader + plugin
-npm run lint         # eslint
+npm run test         # lint + typecheck:tests + the whole vitest suite
+npm run test:vitest  # vitest, one shot
+npm run test:watch   # vitest, watch mode
+npm run typecheck:tests   # tsc over tests/ (uses tests/tsconfig.json)
+npm run test:coverage     # vitest + v8 coverage (text + html)
+npm run lint         # eslint over the whole repo (still has a backlog)
 ```
+
+`eslint .` runs as part of `npm test`. Keep the whole repository free of lint
+errors; remaining warnings should only represent explicit compatibility or UX
+decisions.
+
+### Tests
+
+Vitest, configured in `vitest.config.ts`. Everything lives under `tests/`:
+
+| Path                 | Contents                                                          |
+| -------------------- | ----------------------------------------------------------------- |
+| `tests/unit/`        | Pure functions and the convert pipeline                           |
+| `tests/integration/` | Worker services driven through fakes                              |
+| `tests/fakes/`       | `resetDb`, `createFakeParentHost`, `createFakeZoteroServer`       |
+| `tests/fixtures/`    | Real CSL styles/locales, cached in `tests/.csl-fixtures/`         |
+| `tests/stubs/`       | Inert `obsidian` module                                           |
+| `tests/setup.ts`     | fake-indexeddb, `navigator.onLine`, one IndexedDB spec workaround |
+
+Two things worth knowing before writing a service test:
+
+- **The `db` singleton is real.** `tests/setup.ts` installs `fake-indexeddb`, so
+  `db/db.ts` opens the actual Dexie schema — real compound indexes, real
+  version upgrades. Call `resetDb()` in `beforeEach`. Do not mock `db/db`.
+- **Zotero is faked at the HTTP layer**, not at `ZoteroAPIService`.
+  `createFakeZoteroServer().install()` replaces `globalThis.fetch`, which is
+  where `worker.ts` installs its proxied fetch in production. That keeps
+  `Last-Modified-Version` bookkeeping, 412 conflicts, `format=versions` deltas
+  and request chunking under test instead of mocked away.
+
+`tests/unit/obsidian-syntax.test.ts` is a discovery harness as well as a
+regression gate. Run it with `ZF_SYNTAX_MATRIX=1` to print the syntax survival
+matrix and the list of known gaps.
+
+`SyncService` is covered by four files, split by what they hold still:
+`sync-orchestration` (which libraries a run touches, the 412 retry loop,
+progress and notices), `sync-pull`, `sync-push`, and `sync-guards` (paths
+`startSync` cannot reach, e.g. `pushDirtyItems` called directly by the task
+layer). `createSyncHarness()` in `tests/fakes/sync-harness.ts` wires all of it
+in one call.
+
+Coverage is a map of what is untested, not a gate — there is no threshold, and
+a green number proves only that a line ran. When a sync branch matters, confirm
+the test actually binds it by breaking the branch on purpose and watching the
+expected test fail.
 
 ### esbuild Custom Plugins
 
@@ -422,7 +480,6 @@ The `reader/reader` directory is **excluded** from TypeScript compilation. Do no
 - Use `for...of` for async iteration, **never** `Array.forEach` with async callbacks.
 - Use `ReturnType<typeof setTimeout>` for timer IDs, never `NodeJS.Timeout` (this runs in a browser/Worker, not Node).
 - Prefer specific types over `any`. If `any` is unavoidable, add a `// TODO: type this` comment.
-- Limit files to ~300 lines. Extract when growing beyond.
 
 ### 6.2 Import style
 
@@ -590,16 +647,29 @@ via the Comlink `WorkerBridge`.
 | `QueryService`      | `view.ts` (attachment lookup)      | `getAttachmentItem` (extensible for future `getItem`, etc.)            |
 | `AttachmentService` | `cache-section.ts`                 | `getCacheTotalSizeBytes`, `purgeCache`                                 |
 
-### Schema (version 1)
+### Schema (current version: 5)
 
-| Table         | Key         | Indexes                                                                                                    |
-| ------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `keys`        | `key`       | —                                                                                                          |
-| `groups`      | `id`        | —                                                                                                          |
-| `items`       | `++localID` | `[libraryID+key]`, `[libraryID+parentItem+itemType+trashed]`, `[libraryID+itemType+trashed]`, `syncStatus` |
-| `collections` | `++localID` | `[libraryID+key]`, `[libraryID+parentCollection]`, `libraryID`                                             |
-| `libraries`   | `id`        | —                                                                                                          |
-| `files`       | `++localID` | `[libraryID+key]`, `lastAccessed`                                                                          |
+Primary keys are the `&`-prefixed declarations in `db/db.ts`, and the `Table<T, K>`
+type parameters mirror them. **There is no `localID` column** — `items`,
+`collections` and `files` are all keyed by the compound `[libraryID+key]`, which
+is why `db.items.get([libraryID, key])` and
+`db.items.update([libraryID, key], …)` are the correct way to address a row.
+
+| Table         | Primary key        | Secondary indexes                                                                                                                                                                       |
+| ------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keys`        | `&key`             | —                                                                                                                                                                                       |
+| `groups`      | `&id`              | —                                                                                                                                                                                       |
+| `libraries`   | `&id`              | —                                                                                                                                                                                       |
+| `items`       | `&[libraryID+key]` | `[libraryID+syncStatus]`, `[libraryID+itemType+trashed]`, `[libraryID+parentItem+itemType+trashed]`, `*collections`, `*searchCreators`, `*searchTags`, `dateModified`, `lastAccessedAt` |
+| `collections` | `&[libraryID+key]` | `[libraryID+trashed]`, `[libraryID+syncStatus]`, `[libraryID+parentCollection]`                                                                                                         |
+| `files`       | `&[libraryID+key]` | `md5`, `lastAccessedAt`                                                                                                                                                                 |
+| `cslCache`    | `&key`             | — (string KV cache for CSL styles/locales/index)                                                                                                                                        |
+
+Version history: v1 base schema · v2 adds `[libraryID+parentCollection]` to
+`collections` · v3 adds `lastAccessedAt` to `items` · v4 clears `files` (cached
+bytes moved from `Blob` to `ArrayBuffer`) · v5 adds `cslCache`.
+
+`*`-prefixed entries are Dexie multi-valued indexes.
 
 ### Rules
 

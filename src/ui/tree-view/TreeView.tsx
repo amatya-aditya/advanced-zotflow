@@ -5,12 +5,14 @@ import React, {
     useEffect,
     useMemo,
     useCallback,
+    createContext,
 } from "react";
 import { Menu } from "obsidian";
 import { NodeApi, Tree } from "react-arborist";
 import { workerBridge } from "bridge";
 import { ObsidianIcon } from "../ObsidianIcon";
 import { NodeItem, INDENT_SIZE } from "./Node";
+import { TreeSearchSuggest } from "./search-suggest";
 import { services } from "services/services";
 import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
 import { openAttachment } from "utils/viewer";
@@ -22,8 +24,11 @@ import type {
     CollectionSortOrder,
     ItemSortOrder,
 } from "settings/types";
-import { normalizePath, TFile } from "obsidian";
+import { normalizePath, TFile, TFolder } from "obsidian";
 import type { TAbstractFile } from "obsidian";
+import { fireAndForgetIn } from "utils/fire-and-forget";
+
+const ff = fireAndForgetIn("TreeView");
 
 /* ================================================================ */
 /*  Types                                                          */
@@ -47,6 +52,7 @@ export type ViewNode = {
     dateAdded?: string;
     dateModified?: string;
     syncStatus?: string;
+    tags?: string[];
 };
 
 type NotesSidebarNode = {
@@ -55,6 +61,16 @@ type NotesSidebarNode = {
     kind: "source" | "companion";
     children: NotesSidebarNode[];
 };
+/** Shared search state provided to tree nodes for highlighting matched text. */
+export interface TreeSearchState {
+    matchKeys: Set<string>;
+    freeTokens: string[];
+}
+
+export const TreeSearchContext = createContext<TreeSearchState>({
+    matchKeys: new Set<string>(),
+    freeTokens: [],
+});
 
 function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
     const { entities, topology } = payload;
@@ -92,6 +108,7 @@ function rebuildTreeFromWorker(payload: TreeTransferPayload): ViewNode[] {
             dateAdded: entity.dateAdded,
             dateModified: entity.dateModified,
             syncStatus: entity.syncStatus,
+            tags: entity.tags,
 
             // Initialize Children
             children: [],
@@ -176,8 +193,8 @@ function buildNotesSidebarTree(
     const orphanCompanions: NotesSidebarNode[] = [];
     for (const file of services.app.vault.getMarkdownFiles()) {
         const frontmatter = services.app.metadataCache.getFileCache(file)
-            ?.frontmatter as Record<string, unknown> | undefined;
-        const companionOf = frontmatter?.["zotflow-companion-of"];
+            ?.frontmatter;
+        const companionOf: unknown = frontmatter?.["zotflow-companion-of"];
 
         if (typeof companionOf !== "string") continue;
 
@@ -275,7 +292,7 @@ const SidebarItem = ({
             : getItemTypeIcon(itemType);
 
     const handleClick = async () => {
-        services.addRecentItem({
+        await services.addRecentItem({
             libraryID,
             key: itemKey,
             name,
@@ -303,7 +320,7 @@ const SidebarItem = ({
             item.setTitle("Open source note")
                 .setIcon("file-badge")
                 .onClick(async () => {
-                    services.addRecentItem({
+                    await services.addRecentItem({
                         libraryID,
                         key: itemKey,
                         name,
@@ -339,7 +356,7 @@ const SidebarItem = ({
                 .setIcon("image")
                 .onClick(async () => {
                     try {
-                        workerBridge.libraryNote.openNote(libraryID, itemKey, {
+                        await workerBridge.libraryNote.openNote(libraryID, itemKey, {
                             forceUpdateContent: true,
                             forceUpdateImages: false,
                         });
@@ -372,7 +389,7 @@ const SidebarItem = ({
                 item.setTitle("Open in reader")
                     .setIcon("book-open")
                     .onClick(async () => {
-                        services.addRecentItem({
+                        await services.addRecentItem({
                             libraryID,
                             key: itemKey,
                             name,
@@ -460,7 +477,7 @@ const SidebarItem = ({
     return (
         <div
             className="zotflow-sidebar-item"
-            onClick={handleClick}
+            onClick={() => { ff(handleClick(), "Failed to open sidebar item"); }}
             onContextMenu={handleContextMenu}
         >
             {iconName && (
@@ -627,8 +644,14 @@ const persistedOpenState: Record<string, boolean> = {};
 export const ZotFlowTree = () => {
     const [rawData, setRawData] = useState<TreeTransferPayload | null>(null);
     const [term, setTerm] = useState("");
+    const [searchState, setSearchState] = useState<{
+        term: string;
+        matchKeys: Set<string>;
+        freeTokens: string[];
+    }>({ term: "", matchKeys: new Set<string>(), freeTokens: [] });
     const [loading, setLoading] = useState(true);
     const containerRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const [dims, setDims] = useState({ w: 300, h: 500 });
     const [bookmarks, setBookmarks] = useState<BookmarkedItem[]>(
         services.getBookmarkedItems(),
@@ -636,9 +659,10 @@ export const ZotFlowTree = () => {
     const [recents, setRecents] = useState<RecentItem[]>(
         services.getRecentItems(),
     );
+    const [, refreshSettings] = useState(0);
+    useEffect(() => services.onSettingsChanged(() => refreshSettings((n) => n + 1)), []);
     const [viewMode, setViewMode] = useState<ViewMode>("library");
     const [searchOpen, setSearchOpen] = useState(false);
-    const searchInputRef = useRef<HTMLInputElement>(null);
 
     const [noteFiles, setNoteFiles] = useState<TFile[]>([]);
     const [baseFiles, setBaseFiles] = useState<TFile[]>([]);
@@ -670,7 +694,7 @@ export const ZotFlowTree = () => {
         if (viewMode !== "notes") return;
 
         const loadNotes = () => {
-            setNoteFiles([...services.indexService.getAllIndexedFiles()]);
+            setNoteFiles([...services.indexService.getIndexedFilesList()]);
         };
 
         loadNotes();
@@ -712,11 +736,11 @@ export const ZotFlowTree = () => {
             }
             const files: TFile[] = [];
             const collectFiles = (f: TAbstractFile) => {
-                if ("extension" in f && (f as TFile).extension === "base") {
-                    files.push(f as TFile);
+                if (f instanceof TFile && f.extension === "base") {
+                    files.push(f);
                 }
-                if ("children" in f) {
-                    (f as any).children.forEach(collectFiles);
+                if (f instanceof TFolder) {
+                    f.children.forEach(collectFiles);
                 }
             };
             collectFiles(abstractFolder);
@@ -773,7 +797,16 @@ export const ZotFlowTree = () => {
         });
         obs.observe(containerRef.current);
         return () => obs.disconnect();
-    }, []);
+    }, [viewMode]);
+
+    // Attach operator/value autocomplete to the search input (once).
+    useEffect(() => {
+        if (!searchInputRef.current) return;
+        const suggest = new TreeSearchSuggest(services.app, searchInputRef.current, (value) =>
+            setTerm(value),
+        );
+        return () => suggest.close();
+    }, [searchOpen]);
 
     useEffect(() => {
         const loadTree = async () => {
@@ -792,8 +825,49 @@ export const ZotFlowTree = () => {
             }
         };
 
-        loadTree();
+        void loadTree();
     }, []);
+
+    // Debounced worker-side fuzzy search. Results (matched entity keys +
+    // highlight tokens) are cached and applied synchronously by `matchNode`.
+    useEffect(() => {
+        const trimmed = term.trim();
+        if (!trimmed) {
+            setSearchState({
+                term: "",
+                matchKeys: new Set<string>(),
+                freeTokens: [],
+            });
+            return;
+        }
+
+        let cancelled = false;
+        const handle = window.setTimeout(() => {
+            void (async () => {
+                try {
+                    const res = await workerBridge.treeView.searchTree(trimmed);
+                    if (!cancelled) {
+                        setSearchState({
+                            term: trimmed,
+                            matchKeys: new Set(res.matchedKeys),
+                            freeTokens: res.freeTokens,
+                        });
+                    }
+                } catch (err) {
+                    services.logService.error(
+                        "Tree search failed",
+                        "TreeView",
+                        err,
+                    );
+                }
+            })();
+        }, 150);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(handle);
+        };
+    }, [term]);
 
     // Refresh tree data when a child note is created or updated
     useEffect(() => {
@@ -811,13 +885,17 @@ export const ZotFlowTree = () => {
             }
         };
         const unsub1 =
-            services.taskMonitor.noteChangedByEditor.subscribe(refreshHandler);
+            services.taskMonitor.noteChangedByEditor.subscribe(
+                () => void refreshHandler(),
+            );
         const unsub2 =
             services.taskMonitor.noteChangedByNoteView.subscribe(
-                refreshHandler,
+                () => void refreshHandler(),
             );
         const unsub3 =
-            services.taskMonitor.treeChanged.subscribe(refreshHandler);
+            services.taskMonitor.treeChanged.subscribe(
+                () => void refreshHandler(),
+            );
         return () => {
             unsub1();
             unsub2();
@@ -826,7 +904,7 @@ export const ZotFlowTree = () => {
     }, []);
 
     // Prevent react-dnd from interfering with global events
-    const voidElement = useMemo(() => document.createElement("div"), []);
+    const voidElement = useMemo(() => createDiv(), []);
 
     const handleRefresh = async () => {
         try {
@@ -860,7 +938,7 @@ export const ZotFlowTree = () => {
                         .onClick(() => {
                             setCollectionSort(opt.value);
                             services.settings.treeCollectionSort = opt.value;
-                            services.saveSettings();
+                            ff(services.saveSettings(), "Failed to save settings");
                         }),
                 );
             }
@@ -874,7 +952,7 @@ export const ZotFlowTree = () => {
                         .onClick(() => {
                             setItemSort(opt.value);
                             services.settings.treeItemSort = opt.value;
-                            services.saveSettings();
+                            ff(services.saveSettings(), "Failed to save settings");
                         }),
                 );
             }
@@ -940,55 +1018,42 @@ export const ZotFlowTree = () => {
         }
     }, []);
 
-    const handleSearch = (node: NodeApi<ViewNode>, term: string) => {
-        const lowerTerm = term.toLowerCase();
+    // The matching logic for the tree view:
+    // - All children shown
+    // - Leaf matches balloon into attachments
+    // - Siblings stay collapsed
+    const effectiveMatchKeys = useMemo(() => {
+        const base = searchState.matchKeys;
+        if (base.size === 0) return base;
 
-        /* ================================================================ */
-        /*  Case A: Item (Parent Node)                                     */
-        /* ================================================================ */
-        if (node.data.nodeType === "item") {
-            // Does it match itself?
-            if (node.data.name.toLowerCase().includes(lowerTerm)) return true;
-
-            // Only "real attachments" count as a match, Source Note does not count
-            if (node.data.children) {
-                const hasValidChild = node.data.children.some((child) =>
-                    child.name.toLowerCase().includes(lowerTerm),
-                );
-                if (hasValidChild) return true;
+        const result = new Set(base);
+        const visit = (nodes: ViewNode[]) => {
+            for (const n of nodes) {
+                if (n.children.length === 0) continue;
+                if (n.nodeType === "item") {
+                    const selfMatched = base.has(n.key);
+                    const childMatched = n.children.some((c) =>
+                        base.has(c.key),
+                    );
+                    if (selfMatched || childMatched) {
+                        result.add(n.key);
+                        for (const c of n.children) result.add(c.key);
+                    }
+                }
+                visit(n.children);
             }
+        };
+        visit(treeData);
+        return result;
+    }, [treeData, searchState.matchKeys]);
 
-            return false;
-        }
-
-        /* ================================================================ */
-        /*  Case B: Child Node (Source Note or PDF)                        */
-        /* ================================================================ */
-        if (node.parent && node.parent.data.nodeType === "item") {
-            const parent = node.parent;
-
-            // Does the parent match?
-            if (parent.data.name.toLowerCase().includes(lowerTerm)) {
-                return true;
-            }
-
-            // Check if any sibling matches (or if I match myself)
-            const hasValidSibling = parent.data.children.some((sibling) =>
-                sibling.name.toLowerCase().includes(lowerTerm),
-            );
-
-            if (hasValidSibling) {
-                return true;
-            }
-
-            return false;
-        }
-
-        /* ================================================================ */
-        /*  Case C: Standalone Attachment                                  */
-        /* ================================================================ */
-        return node.data.name.toLowerCase().includes(lowerTerm);
-    };
+    const handleSearch = useCallback(
+        (node: NodeApi<ViewNode>): boolean => {
+            if (effectiveMatchKeys.size === 0) return false;
+            return effectiveMatchKeys.has(node.data.key);
+        },
+        [effectiveMatchKeys],
+    );
 
     const handleNotesContextMenu = useCallback(
         (e: React.MouseEvent, file: TFile, kind: "source" | "companion") => {
@@ -1011,12 +1076,12 @@ export const ZotFlowTree = () => {
                 item.setTitle("Toggle lock")
                     .setIcon("lock")
                     .onClick(() => {
-                        services.app.fileManager.processFrontMatter(
+                        ff(services.app.fileManager.processFrontMatter(
                             file,
-                            (fm) => {
+                            (fm: Record<string, unknown>) => {
                                 fm["zotflow-locked"] = !fm["zotflow-locked"];
                             },
-                        );
+                        ), "Failed to toggle source note lock");
                     });
             });
 
@@ -1054,7 +1119,7 @@ export const ZotFlowTree = () => {
                             height={dims.h}
                             rowHeight={28}
                             indent={INDENT_SIZE}
-                            searchTerm={term}
+                            searchTerm={searchState.term}
                             searchMatch={handleSearch}
                             openByDefault={false}
                             initialOpenState={persistedOpenState}
@@ -1090,7 +1155,7 @@ export const ZotFlowTree = () => {
                             contentType={b.contentType}
                             libraryID={b.libraryID}
                             itemKey={b.key}
-                            onRemove={() => handleRemoveBookmark(b)}
+                            onRemove={() => { ff(handleRemoveBookmark(b), "Failed to remove bookmark"); }}
                             removeIcon="bookmark-minus"
                             removeLabel="Remove bookmark"
                         />
@@ -1119,6 +1184,7 @@ export const ZotFlowTree = () => {
                             libraryID={r.libraryID}
                             itemKey={r.key}
                             removeIcon="x"
+                            onRemove={() => { ff(services.removeRecentItem(r.id), "Failed to remove recent item"); }}
                             removeLabel="Remove from recent"
                         />
                     ))}
@@ -1136,9 +1202,7 @@ export const ZotFlowTree = () => {
                         className={`zotflow-sidebar-item${noteNode.kind === "companion" ? " zotflow-sidebar-item--companion" : ""}`}
                         style={{ paddingLeft: `${8 + depth * INDENT_SIZE}px` }}
                         onClick={() => {
-                            services.app.workspace
-                                .getLeaf(false)
-                                .openFile(noteNode.file);
+                            ff(services.app.workspace.getLeaf(false).openFile(noteNode.file), "Failed to open file");
                         }}
                         onContextMenu={(e) =>
                             handleNotesContextMenu(
@@ -1204,9 +1268,7 @@ export const ZotFlowTree = () => {
                     item.setTitle("Open in new tab")
                         .setIcon("external-link")
                         .onClick(() => {
-                            services.app.workspace
-                                .getLeaf("tab")
-                                .openFile(file);
+                            ff(services.app.workspace.getLeaf("tab").openFile(file), "Failed to open file");
                         });
                 });
 
@@ -1214,7 +1276,7 @@ export const ZotFlowTree = () => {
                     item.setTitle("Delete base")
                         .setIcon("trash")
                         .onClick(async () => {
-                            await services.app.vault.trash(file, true);
+                            await services.app.fileManager.trashFile(file);
                         });
                 });
 
@@ -1235,9 +1297,7 @@ export const ZotFlowTree = () => {
                             key={f.path}
                             className="zotflow-sidebar-item"
                             onClick={() => {
-                                services.app.workspace
-                                    .getLeaf(false)
-                                    .openFile(f);
+                                ff(services.app.workspace.getLeaf(false).openFile(f), "Failed to open file");
                             }}
                             onContextMenu={(e) =>
                                 handleBaseContextMenu(e, f)
@@ -1260,40 +1320,41 @@ export const ZotFlowTree = () => {
     };
 
     return (
-        <div className="zotflow-tree-view-layout">
+        <TreeSearchContext.Provider value={{ matchKeys: searchState.matchKeys, freeTokens: searchState.freeTokens }}>
+        <div className={`zotflow-tree-view-layout${services.settings.showTreeItemIcons ? "" : " zotflow-hide-tree-icons"}`}>
             {/* Toolbar */}
             <div className="zotflow-toolbar">
                 <div className="zotflow-toolbar-group">
-                    <ToolbarButton
+                    {services.settings.showTreeLibrary && (<ToolbarButton
                         icon="library"
                         label="My Library"
                         active={viewMode === "library"}
                         onClick={() => setViewMode("library")}
-                    />
-                    <ToolbarButton
+                    />)}
+                    {services.settings.showTreeRecents && (<ToolbarButton
                         icon="clock"
                         label="Recent Items"
                         active={viewMode === "recent"}
                         onClick={() => setViewMode("recent")}
-                    />
-                    <ToolbarButton
+                    />)}
+                    {services.settings.showTreeBookmarks && (<ToolbarButton
                         icon="bookmark"
                         label="Bookmarks"
                         active={viewMode === "bookmarks"}
                         onClick={() => setViewMode("bookmarks")}
-                    />
-                    <ToolbarButton
+                    />)}
+                    {services.settings.showTreeNotes && (<ToolbarButton
                         icon="file-text"
                         label="Source Notes"
                         active={viewMode === "notes"}
                         onClick={() => setViewMode("notes")}
-                    />
-                    <ToolbarButton
+                    />)}
+                    {services.settings.showTreeBases && (<ToolbarButton
                         icon="table"
                         label="Base Views"
                         active={viewMode === "bases"}
                         onClick={() => setViewMode("bases")}
-                    />
+                    />)}
                 </div>
                 <div className="zotflow-toolbar-separator" />
                 <div className="zotflow-toolbar-group">
@@ -1311,7 +1372,7 @@ export const ZotFlowTree = () => {
                     <ToolbarButton
                         icon="rotate-cw"
                         label="Refresh"
-                        onClick={handleRefresh}
+                        onClick={() => { ff(handleRefresh(), "Failed to refresh tree"); }}
                     />
                 </div>
             </div>
@@ -1338,5 +1399,6 @@ export const ZotFlowTree = () => {
             {/* Content */}
             {renderContent()}
         </div>
+        </TreeSearchContext.Provider>
     );
 };

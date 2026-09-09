@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import fs, { watch } from "fs";
+import fs from "fs";
 import path from "path";
 import zlib from "zlib";
 import { builtinModules } from "node:module";
@@ -32,6 +32,24 @@ if you want to view the source, please visit the github repository of this plugi
 */`;
 
 const prod = process.argv[2] === "production";
+const compatibilityLock = JSON.parse(
+    fs.readFileSync("document-worker.lock.json", "utf8"),
+);
+const readerSdtVersion = fs.readFileSync(
+    "reader/reader/structured-document-text/src/version.js",
+    "utf8",
+);
+if (
+    Number(/SDT_PACK_VERSION\s*=\s*(\d+)/.exec(readerSdtVersion)?.[1]) !==
+        compatibilityLock.enhancementPack.sdt.packVersion ||
+    Number(
+        /SDT_SCHEMA_VERSION\s*=\s*['"](\d+)\./.exec(readerSdtVersion)?.[1],
+    ) !== compatibilityLock.enhancementPack.sdt.schemaMajorVersion
+) {
+    throw new Error(
+        "Reader SDT versions do not match the Enhancement Pack contract",
+    );
+}
 
 /**
  * Custom plugin: Inline worker code
@@ -46,9 +64,15 @@ const inlineWorkerPlugin = {
 
         build.onLoad({ filter: /.*/, namespace: "worker-code" }, async () => {
             const workerEntry = path.resolve("src/worker/worker.ts");
-            const files = await listFilesRecursive("src/worker");
+            const files = [...(await listFilesRecursive("src/worker"))];
             const absoluteWatchFiles = files.map((file) =>
                 path.join("src/worker", file),
+            );
+            absoluteWatchFiles.push(
+                ...(await listFilesRecursive("src/enhancement-pack")).map(
+                    (file) => path.join("src/enhancement-pack", file),
+                ),
+                "document-worker.lock.json",
             );
             // Build the worker specifically
             const result = await esbuild.build({
@@ -95,7 +119,17 @@ const inlineResourcePlugin = {
                 const resourceDir = path.resolve(
                     "reader/reader/build/obsidian",
                 );
-                const files = await listFilesRecursive(resourceDir);
+                const packLock = JSON.parse(
+                    fs.readFileSync("document-worker.lock.json", "utf8"),
+                );
+                const excluded = new Set(
+                    packLock.enhancementPack.resources.map(
+                        (r) => `document-worker/${r.path}`,
+                    ),
+                );
+                const files = (await listFilesRecursive(resourceDir)).filter(
+                    (file) => !excluded.has(file),
+                );
                 const absoluteWatchFiles = files.map((file) =>
                     path.join(resourceDir, file),
                 );
@@ -156,7 +190,9 @@ const copyLicensePlugin = {
                 );
                 const licenseContent = fs.readFileSync(licenseFile, "utf-8");
                 fs.writeFileSync("reader.js.LICENSE.txt", licenseContent);
-            } catch (e) {}
+            } catch {
+                // The reader license is absent until the reader has been built.
+            }
         });
     },
 };

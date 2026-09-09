@@ -43,7 +43,7 @@ export function CompoundNode({ nodeProps, children }: CompoundNodeChildProps) {
 
     const outputs = resolveOutputs(
         type ?? "control",
-        d as Record<string, unknown>,
+        d,
     );
     const multiOut = outputs.length > 1;
 

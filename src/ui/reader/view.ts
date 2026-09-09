@@ -1,23 +1,33 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import SparkMD5 from "spark-md5";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
 import { copyAnnotationOnCreate } from "./auto-copy";
 import { services } from "services/services";
+import { invalidateTagAutocompleteCache } from "ui/search/autocomplete-data";
 import { ViewStateService } from "services/view-state-service";
 import { openSourceNote } from "utils/viewer";
+import { TagEditModal } from "ui/modals/tag-edit";
 
-import type { ViewStateResult } from "obsidian";
-import type { AttachmentData } from "types/zotero-item";
+import type { Menu, ViewStateResult } from "obsidian";
+import type { AttachmentData, AnnotationData } from "types/zotero-item";
 import type { IDBZoteroItem, IDBZoteroKey } from "types/db-schema";
 import type {
     AnnotationJSON,
     ColorScheme,
     CreateReaderOptions,
     CustomReaderTheme,
+    ReaderNavigation,
 } from "types/zotero-reader";
 import type { ITaskInfo } from "types/tasks";
-import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import type { ReaderDocumentLease } from "services/reader-document-cache";
+import { getLibraryReaderDocumentKey } from "services/reader-document-cache";
+import {
+    ZotFlowError,
+    ZotFlowErrorCode,
+    errorMessage as describeError,
+} from "utils/error";
+import { fireAndForgetIn } from "utils/fire-and-forget";
+import { redirectDuplicateReaderLeaf } from "utils/reader-leaf-navigation";
 
 /** View type identifier for the Zotero cloud reader view. */
 export const ZOTERO_READER_VIEW_TYPE = "zotflow-zotero-reader-view";
@@ -28,6 +38,12 @@ interface ReaderViewState extends Record<string, unknown> {
 }
 
 /** Obsidian `ItemView` that embeds the Zotero reader iframe for remote/cloud attachments. */
+const ff = fireAndForgetIn("ZoteroReaderView");
+
+/** In-flight setState calls, keyed by `libraryID:itemKey`, to close a race
+ * between two concurrent opens of the same attachment. */
+const openingReaders = new Map<string, WorkspaceLeaf>();
+
 export class ZoteroReaderView extends ItemView {
     private attachmentItem: IDBZoteroItem<AttachmentData>;
     private keyInfo: IDBZoteroKey;
@@ -37,9 +53,12 @@ export class ZoteroReaderView extends ItemView {
     private unsubscribeTaskMonitor?: () => void;
     private unsubscribeAnnotationChanged?: () => void;
     private lastSyncTaskStatuses = new Map<string, ITaskInfo["status"]>();
-    /** MD5 of the file blob used to init the reader, for extraction skip check. */
-    private fileBlobMD5?: string;
+    /** Actual MD5 of the PDF bytes used to initialise the reader. */
+    private fileContentMD5?: string;
     private knownAnnotationIds = new Set<string>();
+    private documentLease?: ReaderDocumentLease;
+    private closing = false;
+    private readerState: ReaderViewState = { libraryID: 0, itemKey: "" };
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -48,6 +67,25 @@ export class ZoteroReaderView extends ItemView {
             "Open source note",
             this.handleOpenSourceNote.bind(this),
         );
+    }
+
+    onPaneMenu(menu: Menu, source: string): void {
+        super.onPaneMenu(menu, source);
+        if (!this.attachmentItem) return;
+        const attachment = this.attachmentItem;
+        const bookmarked = services.isBookmarked(attachment.libraryID, attachment.key);
+        menu.addItem((item) => item
+            .setTitle(bookmarked ? "Remove attachment bookmark" : "Bookmark attachment")
+            .setIcon(bookmarked ? "bookmark-minus" : "bookmark-plus")
+            .onClick(() => {
+                ff(services.toggleBookmark({
+                    libraryID: attachment.libraryID,
+                    key: attachment.key,
+                    name: attachment.raw.data.filename || attachment.title,
+                    itemType: "attachment",
+                    contentType: attachment.raw.data.contentType,
+                }), "Failed to update bookmark");
+            }));
     }
 
     /**
@@ -86,61 +124,129 @@ export class ZoteroReaderView extends ItemView {
         return "book-open";
     }
 
+    /**
+     * Use Obsidian-like link handling: absolute URLs open externally,
+     * while vault-style links are resolved through the workspace.
+     */
+    private handleOpenLink(url: string) {
+        const href = url.trim();
+        if (!href) return;
+
+        // URL with a scheme (https:, file:, mailto:, obsidian:, zotero:, etc.)
+        // should be delegated to the host OS/browser.
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+            window.open(href, "_blank", "noopener,noreferrer");
+            return;
+        }
+
+        // Treat scheme-less links as Obsidian/vault links.
+        void this.app.workspace.openLinkText(href, "", true);
+    }
+
     async setState(
         state: ReaderViewState,
         result: ViewStateResult,
     ): Promise<void> {
-        if (
-            typeof state.libraryID !== "number" ||
-            typeof state.itemKey !== "string" ||
-            state.itemKey.length === 0
-        ) {
-            await super.setState(state, result);
+        this.readerState = state;
+
+        // Single-instance guard: reveal an existing reader for this attachment
+        // and close the duplicate leaf before any async work starts.
+        const key = this.readerKey(state);
+        const existing = this.findExistingReaderLeaf(state);
+        if (existing && existing !== this.leaf) {
+            services.logService.warn(
+                `Attachment ${key} is already open; reusing existing reader leaf`,
+                "ZoteroReaderView",
+            );
+            services.notificationService.notify(
+                "warning",
+                "This attachment is already open. Use the reader's built-in split view to open two views of the same attachment.",
+            );
+            ff(
+                redirectDuplicateReaderLeaf(
+                    this.app.workspace,
+                    this.leaf,
+                    existing,
+                ),
+                "Failed to redirect a duplicate reader leaf",
+            );
             return;
         }
 
-        const _keyInfo = await workerBridge.annotation.getKeyInfo(
-            services.settings.zoteroapikey,
-        );
+        openingReaders.set(key, this.leaf);
+        try {
+            const _keyInfo = await workerBridge.annotation.getKeyInfo(
+                services.settings.zoteroapikey,
+            );
 
-        if (!_keyInfo) {
-            services.logService.error(
-                `Key ${services.settings.zoteroapikey} doesn't exist`,
-                "ZoteroReaderView",
-            );
-            throw new Error(
-                `Key ${services.settings.zoteroapikey} doesn't exist`,
-            );
-        }
-
-        if (state.itemKey) {
-            const _item = await workerBridge.dbHelper.getAttachmentItem(
-                state.libraryID,
-                state.itemKey,
-            );
-            if (!_item) {
+            if (!_keyInfo) {
                 services.logService.error(
-                    `Item ${state.itemKey} doesn't exist or is not an attachment`,
+                    `Key ${services.settings.zoteroapikey} doesn't exist`,
                     "ZoteroReaderView",
                 );
                 throw new Error(
-                    `Item ${state.itemKey} doesn't exist or is not an attachment`,
+                    `Key ${services.settings.zoteroapikey} doesn't exist`,
                 );
             }
-            this.attachmentItem = _item as IDBZoteroItem<AttachmentData>;
 
-            this.keyInfo = _keyInfo;
-            this.containerEl
-                .getElementsByClassName("view-header-title")[0]
-                ?.setText(
-                    this.attachmentItem.raw.data.filename ??
-                        this.attachmentItem.raw.data.title ??
-                        "Zotero Reader",
+            if (state.itemKey && typeof state.libraryID === "number") {
+                const _item = await workerBridge.dbHelper.getAttachmentItem(
+                    state.libraryID,
+                    state.itemKey,
                 );
-            this.loadDocument();
+                if (!_item) {
+                    services.logService.error(
+                        `Item ${state.itemKey} doesn't exist or is not an attachment`,
+                        "ZoteroReaderView",
+                    );
+                    throw new Error(
+                        `Item ${state.itemKey} doesn't exist or is not an attachment`,
+                    );
+                }
+                this.attachmentItem = _item;
+
+                this.keyInfo = _keyInfo;
+                this.containerEl
+                    .getElementsByClassName("view-header-title")[0]
+                    ?.setText(
+                        this.attachmentItem.raw.data.filename ??
+                            this.attachmentItem.raw.data.title ??
+                            "Zotero Reader",
+                    );
+                ff(this.loadDocument(), "Failed to load document");
+            }
+
+            await super.setState(state, result);
+        } finally {
+            if (openingReaders.get(key) === this.leaf) {
+                openingReaders.delete(key);
+            }
+        }
+    }
+
+    private readerKey(state: ReaderViewState): string {
+        return `${state.libraryID}:${state.itemKey}`;
+    }
+
+    /** Find another leaf already showing, or currently opening, this attachment. */
+    private findExistingReaderLeaf(state: ReaderViewState): WorkspaceLeaf | null {
+        for (const leaf of this.app.workspace.getLeavesOfType(
+            ZOTERO_READER_VIEW_TYPE,
+        )) {
+            if (leaf === this.leaf) continue;
+            const leafState = leaf.getViewState().state as
+                | Partial<ReaderViewState>
+                | null
+                | undefined;
+            if (
+                leafState?.libraryID === state.libraryID &&
+                leafState?.itemKey === state.itemKey
+            ) {
+                return leaf;
+            }
         }
 
-        await super.setState(state, result);
+        return openingReaders.get(this.readerKey(state)) ?? null;
     }
 
     private async loadDocument() {
@@ -171,11 +277,14 @@ export class ZoteroReaderView extends ItemView {
                 );
             });
 
-        this.renderReader();
+        ff(this.renderReader(), "Failed to render the reader");
     }
 
     private async renderReader() {
         const container = this.contentEl;
+        let acquiredLease: ReaderDocumentLease | undefined;
+        let leaseInstalled = false;
+        let readerInitialized = false;
 
         // Resolve initial color scheme based on setting
         const schemeSetting = services.settings.readerColorScheme;
@@ -186,10 +295,19 @@ export class ZoteroReaderView extends ItemView {
         } else {
             this.colorScheme = (document.body.classList.contains("theme-dark")
                 ? "dark"
-                : "light") as ColorScheme;
+                : "light");
         }
 
         try {
+            const revision =
+                await workerBridge.attachment.getReaderDocumentRevision(
+                    this.attachmentItem,
+                );
+            const documentKey = getLibraryReaderDocumentKey(
+                this.attachmentItem,
+                revision.kind === "external" ? revision : undefined,
+            );
+
             // Create bridge once
             if (!this.bridge) {
                 this.bridge = new IframeReaderBridge(
@@ -200,27 +318,46 @@ export class ZoteroReaderView extends ItemView {
 
                 // Register event listeners
                 this.bridge.onEventType("error", (evt) => {
-                    console.error(`${evt.code}: ${evt.message}`);
+                    services.logService.error(
+                        `Reader error ${evt.code}: ${evt.message}`,
+                        "ZoteroReaderView",
+                    );
                 });
 
+                // Sidebar geometry is not persisted yet — `CreateReaderOptions`
+                // has `sidebarOpen`/`sidebarWidth` but nothing writes them to
+                // ViewStateService. Kept as debug traces so the hook stays
+                // visible for whoever wires that up.
                 this.bridge.onEventType("sidebarToggled", (evt) => {
-                    console.log("Sidebar toggled:", evt.open);
+                    services.logService.debug(
+                        `Sidebar toggled: ${evt.open}`,
+                        "ZoteroReaderView",
+                    );
                 });
 
                 this.bridge.onEventType("sidebarWidthChanged", (evt) => {
-                    console.log("Sidebar width changed:", evt.width);
+                    services.logService.debug(
+                        `Sidebar width changed: ${evt.width}`,
+                        "ZoteroReaderView",
+                    );
                 });
 
                 this.bridge.onEventType("openLink", (evt) => {
-                    console.log("Opening link:", evt.url);
+                    this.handleOpenLink(evt.url);
                 });
 
                 this.bridge.onEventType("annotationsSaved", (evt) => {
-                    this.handleAnnotationsSaved(evt.annotations);
+                    ff(
+                        this.handleAnnotationsSaved(evt.annotations),
+                        "Failed to apply saved annotations",
+                    );
                 });
 
                 this.bridge.onEventType("annotationsDeleted", (evt) => {
-                    this.handleAnnotationsDeleted(evt.ids);
+                    ff(
+                        this.handleAnnotationsDeleted(evt.ids),
+                        "Failed to apply deleted annotations",
+                    );
                 });
 
                 this.bridge.onEventType("viewStateChanged", (evt) => {
@@ -241,6 +378,13 @@ export class ZoteroReaderView extends ItemView {
                     this.handleSetTheme("dark", evt.theme);
                 });
 
+                //     onOpenTagsPopup: (annotationID, left, top) => {
+                // 	this.emit({ type: "openTagsPopup", annotationID, left, top });
+                // },
+                this.bridge.onEventType("openTagsPopup", (evt) => {
+                    void this.handleOpenTagsPopup(evt.annotationID);
+                });
+
                 // Observe color scheme changes via Obsidian's css-change event
                 // Only monitor when following Obsidian scheme
                 if (
@@ -255,14 +399,16 @@ export class ZoteroReaderView extends ItemView {
                             ) {
                                 const newColorScheme = (document.body.classList.contains("theme-dark")
                                     ? "dark"
-                                    : "light") as ColorScheme;
+                                    : "light");
                                 if (
                                     newColorScheme &&
                                     newColorScheme !== this.colorScheme
                                 ) {
-                                    this.bridge!.setColorScheme(
-                                        newColorScheme,
-                                        schemeSetting === "obsidian-theme",
+                                    ff(
+                                        this.bridge!.setColorScheme(
+                                            newColorScheme,
+                                        ),
+                                        "Failed to set the reader colour scheme",
                                     );
                                     this.colorScheme = newColorScheme;
                                 }
@@ -272,12 +418,16 @@ export class ZoteroReaderView extends ItemView {
                 }
             }
 
-            // Connect Bridge & Get File concurrently
-            const [_, fileBlob] = await Promise.all([
-                this.bridge.connect(),
-                workerBridge
-                    .downloadAttachment(this.attachmentItem)
-                    .catch((e) => {
+            // Connect and acquire the shared document concurrently. Only the
+            // first Reader for this attachment version invokes the worker.
+            const leasePromise = services.readerDocumentCache.acquire(
+                documentKey,
+                async () => {
+                    try {
+                        return await workerBridge.downloadAttachment(
+                            this.attachmentItem,
+                        );
+                    } catch (e) {
                         services.logService.error(
                             "Failed to download attachment",
                             "ZoteroReaderView",
@@ -287,19 +437,30 @@ export class ZoteroReaderView extends ItemView {
                             "error",
                             "Failed to download attachment",
                         );
-                        return null;
-                    }),
-            ]);
+                        throw e;
+                    }
+                },
+                { reuse: revision.kind !== "volatile" },
+            );
+            try {
+                const [, lease] = await Promise.all([
+                    this.bridge.connect(),
+                    leasePromise,
+                ]);
+                acquiredLease = lease;
+            } catch (e) {
+                // If bridge connection failed first, release the document when
+                // its in-flight load eventually settles.
+                void leasePromise
+                    .then((lease) => lease.release())
+                    .catch(() => undefined);
+                throw e;
+            }
 
-            if (!fileBlob) {
-                throw new ZotFlowError(
-                    ZotFlowErrorCode.RESOURCE_MISSING,
-                    "File not found or failed to download",
-                    "ZoteroReaderView",
-                    {
-                        attachmentItem: this.attachmentItem,
-                    },
-                );
+            if (this.closing) {
+                acquiredLease.release();
+                acquiredLease = undefined;
+                return;
             }
 
             // Get Annotations
@@ -311,107 +472,117 @@ export class ZoteroReaderView extends ItemView {
             this.knownAnnotationIds = new Set(
                 annotationJson.map((a: AnnotationJSON) => a.id),
             );
-            // Initialize Reader if ready
-            if (this.bridge.state === "bridge-ready") {
-                const savedViewState = services.viewStateService.getViewState(
-                    ViewStateService.remoteKey(
-                        this.attachmentItem.libraryID,
-                        this.attachmentItem.key,
-                    ),
-                );
 
-                const themeDefaults = {
-                    lightTheme: services.settings.defaultLightTheme,
-                    darkTheme: services.settings.defaultDarkTheme,
-                };
-
-                // User's saved theme takes top priority
-                const themeOverrides = {
-                    lightTheme:
-                        savedViewState?.lightTheme ?? themeDefaults.lightTheme,
-                    darkTheme:
-                        savedViewState?.darkTheme ?? themeDefaults.darkTheme,
-                };
-
-                const libraryConfig =
-                    services.settings.librariesConfig[
-                        String(this.attachmentItem.libraryID)
-                    ];
-                const isReadOnly =
-                    services.libraryCache.isReadOnly(
-                        this.attachmentItem.libraryID,
-                    ) || libraryConfig?.mode === "readonly";
-                const isObsidianThemeMode = schemeSetting === "obsidian-theme";
-                const autoDisable =
-                    services.settings.autoDisableNoteImageTextTools;
-                const opts: Partial<CreateReaderOptions> = {
-                    annotations: annotationJson,
-                    primaryViewState: savedViewState?.primaryViewState,
-                    colorScheme: this.colorScheme,
-                    obsidianThemeMode: isObsidianThemeMode,
-                    customThemes: services.viewStateService.getCustomThemes(),
-                    autoDisableNoteTool: autoDisable,
-                    autoDisableTextTool: autoDisable,
-                    autoDisableImageTool: autoDisable,
-                    fontFamily: services.settings.epubFontFamily || undefined,
-                    ...themeOverrides,
-                    ...(isReadOnly ? { readOnly: true } : {}),
-                };
-
-                const contentType = this.attachmentItem.raw.data.contentType;
-                let type: "pdf" | "epub" | "snapshot" | "paperclip";
-                switch (contentType) {
-                    case "application/pdf":
-                        type = "pdf";
-                        break;
-                    case "application/epub+zip":
-                        type = "epub";
-                        break;
-                    case "text/html":
-                        type = "snapshot";
-                        break;
-                    default:
-                        services.logService.error(
-                            `Unknown content type: ${contentType}`,
-                            "ZoteroReaderView",
-                        );
-                        throw new ZotFlowError(
-                            ZotFlowErrorCode.UNKNOWN,
-                            `Unknown content type: ${contentType}`,
-                            "ZoteroReaderView",
-                            {
-                                attachmentItem: this.attachmentItem,
-                            },
-                        );
-                }
-
-                const authorName =
-                    this.attachmentItem.raw.library.type === "group"
-                        ? this.keyInfo.username || ""
-                        : "";
-
-                // Initialize Reader Logic
-                const fileBuf = await fileBlob.arrayBuffer();
-                this.fileBlobMD5 = SparkMD5.ArrayBuffer.hash(fileBuf);
-
-                this.bridge.initReader({
-                    data: {
-                        buf: new Uint8Array(fileBuf),
-                        url: null,
-                    },
-                    type: type,
-                    authorName,
-                    ...opts,
-                });
-
-                // Subscribe to sync events for live annotation updates
-                this.subscribeToSyncEvents();
-                this.subscribeToAnnotationChanges();
-
-                // Extract external annotations
-                this.extractExternalAnnotation();
+            // Another overlapping render may already own the View's lease.
+            if (
+                this.bridge.state !== "bridge-ready" ||
+                this.documentLease
+            ) {
+                acquiredLease.release();
+                acquiredLease = undefined;
+                return;
             }
-        } catch (e: any) {
+
+            this.documentLease = acquiredLease;
+            acquiredLease = undefined;
+            leaseInstalled = true;
+
+            const savedViewState = services.viewStateService.getViewState(
+                ViewStateService.remoteKey(
+                    this.attachmentItem.libraryID,
+                    this.attachmentItem.key,
+                ),
+            );
+
+            const themeDefaults = {
+                lightTheme: services.settings.defaultLightTheme,
+                darkTheme: services.settings.defaultDarkTheme,
+            };
+
+            // User's saved theme takes top priority
+            const themeOverrides = {
+                lightTheme:
+                    savedViewState?.lightTheme ?? themeDefaults.lightTheme,
+                darkTheme:
+                    savedViewState?.darkTheme ?? themeDefaults.darkTheme,
+            };
+
+            const libID = this.attachmentItem.libraryID;
+            // Read-only when sync mode is read-only
+            const isReadOnly = services.libraryCache.isReadOnly(libID);
+
+            const autoDisable =
+                services.settings.autoDisableNoteImageTextTools;
+            const opts: Partial<CreateReaderOptions> = {
+                annotations: annotationJson,
+                primaryViewState: savedViewState?.primaryViewState,
+                colorScheme: this.colorScheme,
+                customThemes: services.viewStateService.getCustomThemes(),
+                autoDisableNoteTool: autoDisable,
+                autoDisableTextTool: autoDisable,
+                autoDisableImageTool: autoDisable,
+                fontFamily: services.settings.epubFontFamily || undefined,
+                ...themeOverrides,
+                ...(isReadOnly ? { readOnly: true } : {}),
+            };
+
+            const contentType = this.attachmentItem.raw.data.contentType;
+            let type: "pdf" | "epub" | "snapshot" | "paperclip";
+            switch (contentType) {
+                case "application/pdf":
+                    type = "pdf";
+                    break;
+                case "application/epub+zip":
+                    type = "epub";
+                    break;
+                case "text/html":
+                    type = "snapshot";
+                    break;
+                default:
+                    services.logService.error(
+                        `Unknown content type: ${contentType}`,
+                        "ZoteroReaderView",
+                    );
+                    throw new ZotFlowError(
+                        ZotFlowErrorCode.UNKNOWN,
+                        `Unknown content type: ${contentType}`,
+                        "ZoteroReaderView",
+                        {
+                            attachmentItem: this.attachmentItem,
+                        },
+                    );
+            }
+
+            const authorName =
+                this.attachmentItem.raw.library.type === "group"
+                    ? this.keyInfo.username || ""
+                    : "";
+
+            this.fileContentMD5 = this.documentLease.contentMD5;
+            await this.bridge.initReader({
+                data: { buf: null, url: this.documentLease.url },
+                contentMD5: this.documentLease.contentMD5,
+                type: type,
+                authorName,
+                ...opts,
+            });
+            readerInitialized = true;
+
+            // Subscribe to sync events for live annotation updates
+            this.subscribeToSyncEvents();
+            this.subscribeToAnnotationChanges();
+
+            // Extract external annotations
+            ff(
+                this.extractExternalAnnotation(),
+                "Failed to extract external annotations",
+            );
+        } catch (e) {
+            acquiredLease?.release();
+            if (leaseInstalled && !readerInitialized) {
+                this.releaseDocumentLease();
+            }
+            if (this.closing) return;
             services.logService.error(
                 "Error loading Zotero Reader view",
                 "ZoteroReaderView",
@@ -421,35 +592,52 @@ export class ZoteroReaderView extends ItemView {
             const errorMessage = container.createDiv({
                 cls: "error-message",
             });
+            errorMessage.createDiv().setText("Failed to load Zotero Reader");
             errorMessage
-                .createEl("div")
-                .setText("Failed to load Zotero Reader");
-            errorMessage.createEl("div").setText("Error details: " + e.message);
+                .createDiv()
+                .setText("Error details: " + describeError(e));
         }
     }
 
-    readerNavigate(navigationInfo: any) {
+    readerNavigate(navigationInfo: ReaderNavigation) {
         if (!this.bridge) return;
 
-        this.bridge.navigate(navigationInfo);
+        ff(
+            this.bridge.navigate(navigationInfo),
+            "Failed to navigate the reader",
+        );
     }
 
     getState(): ReaderViewState {
-        return {
-            libraryID: this.attachmentItem?.libraryID,
-            itemKey: this.attachmentItem?.key,
-        };
+        return this.readerState;
     }
 
     async onClose() {
+        this.closing = true;
         this.unsubscribeTaskMonitor?.();
         this.unsubscribeAnnotationChanged?.();
-        if (this.bridge) {
-            await this.bridge.dispose();
+        this.unsubscribeTaskMonitor = undefined;
+        this.unsubscribeAnnotationChanged = undefined;
+        try {
+            if (this.bridge) {
+                await this.bridge.dispose();
+            }
+        } finally {
+            this.bridge = undefined;
+            this.releaseDocumentLease();
         }
+
+        this.fileContentMD5 = undefined;
+        this.knownAnnotationIds.clear();
+        this.lastSyncTaskStatuses.clear();
 
         // Flush view state on close to ensure latest state is saved
         services.viewStateService.flushViewStateSave();
+    }
+
+    private releaseDocumentLease(): void {
+        this.documentLease?.release();
+        this.documentLease = undefined;
     }
 
     /**
@@ -465,6 +653,16 @@ export class ZoteroReaderView extends ItemView {
             ),
             primary,
             state as Record<string, unknown>,
+        );
+
+        // Keep the bridge's replay cache current. If Obsidian reparents this
+        // panel (split / pop-out) the iframe reloads and the bridge re-inits the
+        // reader from that cache — without this it would jump back to wherever
+        // the file was when it was opened.
+        this.bridge?.updateReaderOpts(
+            primary
+                ? { primaryViewState: state as Record<string, unknown> }
+                : { secondaryViewState: state as Record<string, unknown> },
         );
     }
 
@@ -510,19 +708,22 @@ export class ZoteroReaderView extends ItemView {
 
                     // Refresh the attachment item from IDB to pick up
                     // any metadata changes from sync (e.g. MD5, filename).
-                    this.refreshAttachmentItem().then(() => {
-                        // Refresh annotations from IDB without reconnecting
-                        this.refreshAnnotationsFromDB().catch((e) => {
-                            services.logService.error(
+                    ff(
+                        this.refreshAttachmentItem().then(() => {
+                            // Refresh annotations from IDB without reconnecting
+                            ff(
+                                this.refreshAnnotationsFromDB(),
                                 "Failed to refresh reader annotations after sync",
-                                "ZoteroReaderView",
-                                e,
                             );
-                        });
 
-                        // Re-extract external annotations in case the file changed
-                        this.extractExternalAnnotation();
-                    });
+                            // Re-extract external annotations in case the file changed
+                            ff(
+                                this.extractExternalAnnotation(),
+                                "Failed to re-extract external annotations",
+                            );
+                        }),
+                        "Failed to refresh the attachment after sync",
+                    );
 
                     // One refresh per update batch is enough
                     break;
@@ -567,7 +768,7 @@ export class ZoteroReaderView extends ItemView {
             services.settings.zoteroapikey,
         );
 
-        this.bridge.refreshAnnotations(annotations);
+        await this.bridge.refreshAnnotations(annotations);
     }
 
     /**
@@ -589,7 +790,8 @@ export class ZoteroReaderView extends ItemView {
             this.attachmentItem.raw.data.contentType === "application/pdf";
         if (!isPDF) return;
 
-        const currentMD5 = this.attachmentItem.raw.data.md5 || this.fileBlobMD5;
+        const currentMD5 =
+            this.attachmentItem.raw.data.md5 || this.fileContentMD5;
         const lastExtractionMD5 =
             this.attachmentItem.externalAnnotationExtractionFileMD5;
 
@@ -608,14 +810,14 @@ export class ZoteroReaderView extends ItemView {
                 {
                     libraryID: this.attachmentItem.libraryID,
                     itemKey: this.attachmentItem.key,
-                    precomputedMD5: this.fileBlobMD5,
+                    precomputedMD5: this.fileContentMD5,
                 },
             ]);
 
-            // Push extracted annotations to the reader iframe
-            for (const annotation of annotations) {
-                this.bridge!.addAnnotation(annotation);
-            }
+            // The worker has atomically reconciled imported/deleted rows and
+            // the source MD5. Replace the Reader snapshot from IDB so both
+            // additions and removals become visible together.
+            await this.refreshAnnotationsFromDB();
 
             // Refresh the in-memory extraction MD5 from IDB so subsequent
             // calls within the same session can skip via the fast pre-check.
@@ -695,6 +897,7 @@ export class ZoteroReaderView extends ItemView {
                     sourceNotePath,
                     parentItemKey: parentKey,
                     libraryID: this.attachmentItem.libraryID,
+                    attachmentKey: this.attachmentItem.key,
                 });
             }
         }
@@ -720,5 +923,103 @@ export class ZoteroReaderView extends ItemView {
                 "Failed to delete annotations",
             );
         }
+    }
+
+    /**
+     * Open the tag editor for a single annotation when the reader requests it.
+     * Tags are persisted via the shared `TagService.setItemTags` (annotations
+     * are regular items in IDB), then pushed back to the reader and the owning
+     * source note is re-rendered when one exists.
+     */
+    private async handleOpenTagsPopup(annotationID: unknown) {
+        if (!this.attachmentItem) return;
+
+        const annotationKey = String(annotationID);
+        const libraryID = this.attachmentItem.libraryID;
+
+        try {
+            const annoItem = await workerBridge.dbHelper.getItem(
+                libraryID,
+                annotationKey,
+            );
+            if (!annoItem || annoItem.itemType !== "annotation") {
+                services.notificationService.notify(
+                    "warning",
+                    "Annotation not found.",
+                );
+                return;
+            }
+
+            const data = annoItem.raw.data;
+            const current = data.tags ?? [];
+            const all = await workerBridge.tag.getTagNames();
+
+            new TagEditModal(this.app, {
+                itemTitle: this.describeAnnotation(data),
+                initialTags: current,
+                suggestions: all,
+                onSave: async (tags) => {
+                    await workerBridge.tag.setItemTags(
+                        libraryID,
+                        annotationKey,
+                        tags,
+                    );
+                    invalidateTagAutocompleteCache();
+
+                    // Push updated tags back into the reader iframe.
+                    await this.refreshAnnotationsFromDB();
+
+                    // Re-render the owning source note if one already exists
+                    // (never create a new one here).
+                    const paperKey =
+                        this.attachmentItem.parentItem !== ""
+                            ? this.attachmentItem.parentItem
+                            : this.attachmentItem.key;
+                    try {
+                        if (services.indexService.getFileByKey(paperKey)) {
+                            await workerBridge.libraryNote.triggerUpdate(
+                                libraryID,
+                                paperKey,
+                                { forceUpdateContent: true },
+                            );
+                        }
+                    } catch {
+                        // Index not ready / no note — ignore.
+                    }
+
+                    // services.notificationService.notify(
+                    //     "success",
+                    //     "Tags updated.",
+                    // );
+                },
+            }).open();
+        } catch (e) {
+            services.logService.error(
+                "Failed to open annotation tag editor",
+                "ZoteroReaderView",
+                e,
+            );
+            services.notificationService.notify(
+                "error",
+                "Failed to open tag editor.",
+            );
+        }
+    }
+
+    /**
+     * Build a short, human-readable label for an annotation to show as the
+     * tag-editor subtitle (e.g. `Highlight: "some text"`).
+     */
+    private describeAnnotation(data: AnnotationData): string {
+        const type = data.annotationType || "annotation";
+        const label = type.charAt(0).toUpperCase() + type.slice(1);
+        const text = (
+            data.annotationText ||
+            data.annotationComment ||
+            ""
+        ).trim();
+        if (!text) return label;
+        const truncated = text.length > 80 ? text.slice(0, 80) + "…" : text;
+        return `${label}: ${truncated}`;
     }
 }

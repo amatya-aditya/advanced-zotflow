@@ -1,5 +1,6 @@
 import { BaseTask } from "../base";
 import { db } from "db/db";
+import type { IParentProxy } from "bridge/types";
 import type { SyncService } from "worker/services/sync";
 import type { LibraryNoteService } from "worker/services/library-note";
 import type { TaskManager } from "../manager";
@@ -10,13 +11,14 @@ import type { ItemIdentifier } from "./batch-extract-images-task";
 /** Tracked background task that runs a full or library-scoped sync cycle. */
 export class SyncTask extends BaseTask {
     constructor(
+        parentHost: IParentProxy,
         private syncService: SyncService,
         private libraryId?: number,
         private taskManager?: TaskManager,
         private libraryNoteService?: LibraryNoteService,
         private settings?: ZotFlowSettings,
     ) {
-        super("sync");
+        super("sync", parentHost);
         this.displayText = libraryId
             ? `Syncing Library ${libraryId}`
             : "Syncing Libraries";
@@ -39,7 +41,7 @@ export class SyncTask extends BaseTask {
 
         this.reportProgress(0, 1, "Starting sync...");
 
-        const { successCount, failCount, changedItems } =
+        const { successCount, failCount, changedItems, syncedLibraryIDs } =
             await this.syncService.startSync(
                 signal,
                 (completed, total, message) => {
@@ -75,16 +77,47 @@ export class SyncTask extends BaseTask {
                     // Force content refresh: annotation/note changes do not
                     // bump the parent item's version, so the version-equality
                     // short-circuit in performUpdate would otherwise skip them.
-                    void this.taskManager.createBatchNoteTask(
-                        this.libraryNoteService,
-                        { items: resolved },
-                        { forceUpdateContent: true },
-                        true,
-                    );
+                    //
+                    // The catch is not optional: `void` on a promise attaches
+                    // no rejection handler, so a failure here would escape the
+                    // surrounding try/catch as an unhandled rejection rather
+                    // than being swallowed as intended.
+                    this.taskManager
+                        .createBatchNoteTask(
+                            this.libraryNoteService,
+                            { items: resolved },
+                            { forceUpdateContent: true },
+                            true,
+                        )
+                        .catch((spawnErr) =>
+                            this.log(
+                                "error",
+                                "Failed to spawn the post-sync source-note refresh",
+                                "SyncTask",
+                                spawnErr,
+                            ),
+                        );
                 }
             } catch (e) {
                 // Never let post-sync chaining fail the sync task itself.
                 // (Logging is best-effort; the SyncService already logs sync issues.)
+                void e;
+            }
+        }
+
+        // Auto-purge source notes for items moved to the Zotero trash, if enabled.
+        if (
+            !signal.aborted &&
+            this.settings?.autoPurgeTrashedSourceNotes &&
+            this.libraryNoteService &&
+            syncedLibraryIDs.length > 0
+        ) {
+            try {
+                await this.libraryNoteService.purgeTrashedSourceNotes(
+                    syncedLibraryIDs,
+                );
+            } catch (e) {
+                // Best-effort: a purge failure must not fail the sync task.
                 void e;
             }
         }

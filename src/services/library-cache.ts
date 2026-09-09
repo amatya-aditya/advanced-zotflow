@@ -91,6 +91,7 @@ export class LibraryCache {
         return this.entries.get(libraryID)?.canWrite ?? false;
     }
 
+    /** Whether the library is a Zotero group library (vs. the personal one). */
     isGroup(libraryID: number): boolean {
         return this.entries.get(libraryID)?.isGroup ?? false;
     }

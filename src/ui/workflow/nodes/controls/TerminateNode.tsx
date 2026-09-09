@@ -46,7 +46,7 @@ function TerminateProperties({
                     className="dropdown"
                     value={d.status ?? "success"}
                     onChange={(e) =>
-                        updateData({ status: e.target.value } as any)
+                        updateData({ status: e.target.value })
                     }
                 >
                     <option value="success">Success</option>
@@ -60,7 +60,7 @@ function TerminateProperties({
                     value={d.message ?? ""}
                     placeholder="Optional termination message"
                     onChange={(e) =>
-                        updateData({ message: e.target.value } as any)
+                        updateData({ message: e.target.value })
                     }
                 />
             </PropertyField>

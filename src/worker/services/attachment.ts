@@ -2,15 +2,16 @@
 import { unzip } from "fflate";
 import { db } from "db/db";
 import SparkMD5 from "spark-md5";
+import { proxiedFetch } from "worker/proxied-fetch";
 import { WebDavService } from "./webdav";
 import { ZoteroAPIService } from "./zotero";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
-import type { Unzipped } from "fflate";
 import type { ZotFlowSettings } from "settings/types";
 import type { AttachmentData } from "types/zotero-item";
 import type { IParentProxy } from "bridge/types";
 import type { IDBZoteroFile, IDBZoteroItem } from "types/db-schema";
+import type { ReaderDocumentRevision } from "types/tasks";
 
 /**
  * Attachment management service for ZotFlow (Worker Side).
@@ -73,6 +74,85 @@ export class AttachmentService {
         return this.parentHost.joinPath(baseDir, relativePath);
     }
 
+    /** Resolve the physical source whose metadata governs Reader reuse. */
+    private async resolveReaderExternalFilePath(
+        item: IDBZoteroItem<AttachmentData>,
+    ): Promise<string | null> {
+        const linkMode = item.raw.data.linkMode;
+        if (linkMode === "linked_file") {
+            const rawPath = item.raw.data.path;
+            if (!rawPath) {
+                throw new ZotFlowError(
+                    ZotFlowErrorCode.RESOURCE_MISSING,
+                    "AttachmentService",
+                    `No path for linked_file ${item.key}`,
+                );
+            }
+            return this.resolveLinkedFilePath(rawPath);
+        }
+
+        if (
+            this.settings.useZoteroStorage &&
+            (linkMode === "imported_file" || linkMode === "imported_url") &&
+            (await this.parentHost.isDesktopApp())
+        ) {
+            const storagePath = this.settings.zoteroStoragePath.trim();
+            if (!storagePath) {
+                throw new ZotFlowError(
+                    ZotFlowErrorCode.CONFIG_MISSING,
+                    "AttachmentService",
+                    "Zotero storage path is not configured",
+                );
+            }
+            return this.resolveLocalStorageFilePath(item, storagePath);
+        }
+
+        return null;
+    }
+
+    /**
+     * Identify the concrete bytes a new Reader would load. Mutable disk files
+     * use filesystem metadata; if it cannot be read, callers must not reuse an
+     * existing Blob merely because the Zotero item version stayed unchanged.
+     */
+    async getReaderDocumentRevision(
+        attachmentItem: IDBZoteroItem<AttachmentData>,
+    ): Promise<ReaderDocumentRevision> {
+        const item = await db.items.get([
+            attachmentItem.libraryID,
+            attachmentItem.key,
+        ]);
+        if (!item || item.itemType !== "attachment") {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "AttachmentService",
+                `Item metadata not found for ${attachmentItem.key}`,
+            );
+        }
+
+        let filePath: string | null;
+        try {
+            filePath = await this.resolveReaderExternalFilePath(item);
+            if (!filePath) return { kind: "library" };
+
+            const stat = await this.parentHost.statExternalFile(filePath);
+            return {
+                kind: "external",
+                path: filePath,
+                mtime: stat.mtime,
+                size: stat.size,
+            };
+        } catch (e) {
+            this.parentHost.log(
+                "warn",
+                "External attachment metadata unavailable; Reader sharing disabled.",
+                "AttachmentService",
+                e,
+            );
+            return { kind: "volatile" };
+        }
+    }
+
     /**
      * Get file blob from cache or download from Zotero API
      * (Entry Point)
@@ -81,6 +161,18 @@ export class AttachmentService {
         attachmentItem: IDBZoteroItem<AttachmentData>,
     ): Promise<Blob> {
         const { libraryID, key: itemKey } = attachmentItem;
+        this.parentHost.log(
+            "debug",
+            "Attachment retrieval requested.",
+            "AttachmentService",
+            {
+                libraryID,
+                itemKey,
+                useCache: this.settings.useCache,
+                useWebDav: this.settings.useWebDav,
+                useZoteroStorage: this.settings.useZoteroStorage,
+            },
+        );
 
         // Check Lock
         if (this.downloadLocks.has(itemKey)) {
@@ -101,11 +193,41 @@ export class AttachmentService {
                 `Item metadata not found for ${itemKey}`,
             );
         }
+        this.parentHost.log(
+            "debug",
+            "Attachment metadata loaded.",
+            "AttachmentService",
+            {
+                libraryID: item.libraryID,
+                itemKey: item.key,
+                linkMode: item.raw.data.linkMode,
+                contentType: item.raw.data.contentType,
+                hasServerMd5: !!item.raw.data.md5,
+                fileName: item.raw.data.filename || item.raw.data.title,
+            },
+        );
+
+        const linkMode = item.raw.data.linkMode;
+        if (
+            this.settings.useZoteroStorage &&
+            (linkMode === "imported_file" || linkMode === "imported_url") &&
+            (await this.parentHost.isDesktopApp())
+        ) {
+            return this.readFromLocalStorage(item);
+        }
 
         // Check Cache (Fast Path), skip for linked files (read from disk each time)
-        const linkMode = item.raw.data.linkMode;
         if (this.settings.useCache && linkMode !== "linked_file") {
             try {
+                this.parentHost.log(
+                    "debug",
+                    "Checking attachment cache.",
+                    "AttachmentService",
+                    {
+                        libraryID,
+                        itemKey,
+                    },
+                );
                 const cached = await db.files.get([libraryID, itemKey]);
                 if (cached) {
                     const serverMd5 = item.raw.data.md5;
@@ -116,18 +238,77 @@ export class AttachmentService {
                             `Cache HIT for ${itemKey}`,
                             "AttachmentService",
                         );
-                        // Non-blocking access time update
-                        db.files.update(cached, {
-                            lastAccessedAt: new Date().toISOString(),
+
+                        // The cache stores raw ArrayBuffer (not Blob): on
+                        // WebKit/iPadOS an IndexedDB Blob handle detaches
+                        // intermittently — when a concurrent write touches the
+                        // row, or once the read transaction auto-commits before
+                        // an async `blob.arrayBuffer()` resolves — throwing
+                        // `NotFoundError: The object can not be found here.` and
+                        // forcing needless re-downloads. An ArrayBuffer is
+                        // serialized inline, so the copy returned by `.get()` is
+                        // always fully in memory; the Blob below is constructed
+                        // synchronously and is safe to clone across the
+                        // Worker→main boundary.
+                        const result = new Blob([cached.buffer], {
+                            type: cached.mimeType,
                         });
-                        return cached.blob;
+
+                        // Fire-and-forget access-time bump — AFTER the bytes are
+                        // materialized, keyed by primary key so it can never race
+                        // the read above.
+                        db.files
+                            .update([libraryID, itemKey], {
+                                lastAccessedAt: new Date().toISOString(),
+                            })
+                            .catch((e) =>
+                                this.parentHost.log(
+                                    "warn",
+                                    "Access-time update failed",
+                                    "AttachmentService",
+                                    e,
+                                ),
+                            );
+
+                        this.parentHost.log(
+                            "debug",
+                            "Cache entry accepted.",
+                            "AttachmentService",
+                            {
+                                itemKey,
+                                bytes: cached.size,
+                                cachedMd5: cached.md5,
+                                serverMd5: serverMd5 || null,
+                            },
+                        );
+                        return result;
                     } else {
                         this.parentHost.log(
                             "warn",
                             `Cache STALE for ${itemKey}. Server: ${serverMd5}, Local: ${cached.md5}`,
                             "AttachmentService",
                         );
+                        this.parentHost.log(
+                            "debug",
+                            "Cache entry rejected due to md5 mismatch.",
+                            "AttachmentService",
+                            {
+                                itemKey,
+                                cachedMd5: cached.md5,
+                                serverMd5,
+                            },
+                        );
                     }
+                } else {
+                    this.parentHost.log(
+                        "debug",
+                        "No cache entry found for attachment.",
+                        "AttachmentService",
+                        {
+                            libraryID,
+                            itemKey,
+                        },
+                    );
                 }
             } catch (e) {
                 this.parentHost.log(
@@ -138,13 +319,39 @@ export class AttachmentService {
                 );
                 // Don't throw here, just fall through to download
             }
+        } else {
+            this.parentHost.log(
+                "debug",
+                "Cache check skipped.",
+                "AttachmentService",
+                {
+                    itemKey,
+                    linkMode,
+                    useCache: this.settings.useCache,
+                },
+            );
         }
 
         const task = this._downloadTask(item).finally(() => {
             this.downloadLocks.delete(item.key);
+            this.parentHost.log(
+                "debug",
+                "Attachment download lock released.",
+                "AttachmentService",
+                { itemKey: item.key },
+            );
         });
 
         this.downloadLocks.set(item.key, task);
+        this.parentHost.log(
+            "debug",
+            "Attachment download lock acquired.",
+            "AttachmentService",
+            {
+                itemKey: item.key,
+                activeLocks: this.downloadLocks.size,
+            },
+        );
 
         return task;
     }
@@ -156,10 +363,27 @@ export class AttachmentService {
     private async _downloadTask(
         item: IDBZoteroItem<AttachmentData>,
     ): Promise<Blob> {
+        const startedAt = Date.now();
         let buffer: ArrayBuffer | null = null;
         const linkMode = item.raw.data.linkMode;
         const shouldUseWebDav = this.shouldUseWebDav(item);
 
+        this.parentHost.log(
+            "debug",
+            "Starting attachment download task.",
+            "AttachmentService",
+            {
+                libraryID: item.libraryID,
+                itemKey: item.key,
+                linkMode,
+                useWebDav: this.settings.useWebDav,
+                useCache: this.settings.useCache,
+            },
+        );
+
+        // Mobile OOM guard: on Obsidian Android, requestUrl buffers the whole
+        // response in memory and can crash on large files. Linked files are
+        // read from disk (streamed by the OS) so they are exempt.
         if (linkMode !== "linked_file") {
             await this.enforceMobileDownloadLimit(item);
         }
@@ -182,6 +406,16 @@ export class AttachmentService {
                     "AttachmentService",
                 );
                 buffer = await this.parentHost.readExternalBinaryFile(filePath);
+                this.parentHost.log(
+                    "debug",
+                    "Linked file read complete.",
+                    "AttachmentService",
+                    {
+                        itemKey: item.key,
+                        filePath,
+                        bytes: buffer.byteLength,
+                    },
+                );
                 break;
             }
             case "imported_file":
@@ -200,13 +434,41 @@ export class AttachmentService {
                             `Downloading from WebDAV for ${item.key}`,
                             "AttachmentService",
                         );
+                        this.parentHost.log(
+                            "debug",
+                            "Attempting WebDAV attachment download.",
+                            "AttachmentService",
+                            {
+                                itemKey: item.key,
+                                zipPath: `${item.key}.zip`,
+                            },
+                        );
                         buffer = await this.downloadFromWebDAV(item.key);
+                        this.parentHost.log(
+                            "debug",
+                            "WebDAV attachment download succeeded.",
+                            "AttachmentService",
+                            {
+                                itemKey: item.key,
+                                bytes: buffer.byteLength,
+                            },
+                        );
                     } catch (e) {
                         this.parentHost.log(
                             "error",
                             `WebDAV failed for ${item.key}, falling back to API.`,
                             "AttachmentService",
                             e,
+                        );
+                        this.parentHost.log(
+                            "debug",
+                            "WebDAV attempt failed, will fallback to Zotero API.",
+                            "AttachmentService",
+                            {
+                                itemKey: item.key,
+                                errorMessage:
+                                    e instanceof Error ? e.message : String(e),
+                            },
                         );
                     }
                 } else if (this.settings.useWebDav) {
@@ -235,6 +497,15 @@ export class AttachmentService {
                         "AttachmentService",
                     );
                     buffer = await this.downloadFromZoteroAPI(item);
+                    this.parentHost.log(
+                        "debug",
+                        "Zotero API attachment download succeeded.",
+                        "AttachmentService",
+                        {
+                            itemKey: item.key,
+                            bytes: buffer.byteLength,
+                        },
+                    );
                 }
 
                 this.parentHost.notify(
@@ -244,7 +515,25 @@ export class AttachmentService {
 
                 break;
             default:
+                this.parentHost.log(
+                    "debug",
+                    "Using direct Zotero API strategy for link mode.",
+                    "AttachmentService",
+                    {
+                        itemKey: item.key,
+                        linkMode,
+                    },
+                );
                 buffer = await this.downloadFromZoteroAPI(item);
+                this.parentHost.log(
+                    "debug",
+                    "Direct Zotero API download succeeded.",
+                    "AttachmentService",
+                    {
+                        itemKey: item.key,
+                        bytes: buffer.byteLength,
+                    },
+                );
 
                 this.parentHost.notify(
                     "info",
@@ -263,9 +552,30 @@ export class AttachmentService {
             );
         }
 
+        this.parentHost.log(
+            "debug",
+            "Attachment buffer ready for blob conversion.",
+            "AttachmentService",
+            {
+                itemKey: item.key,
+                bytes: buffer.byteLength,
+                elapsedMs: Date.now() - startedAt,
+            },
+        );
+
         const blob = new Blob([buffer], {
             type: item.raw.data.contentType || "application/pdf",
         });
+        this.parentHost.log(
+            "debug",
+            "Blob created from attachment buffer.",
+            "AttachmentService",
+            {
+                itemKey: item.key,
+                blobSize: blob.size,
+                mimeType: blob.type,
+            },
+        );
 
         // B. Integrity Check & Auto-Repair, skip for linked files (no server MD5, no cache)
         if (linkMode !== "linked_file") {
@@ -274,6 +584,16 @@ export class AttachmentService {
 
             if (serverMd5) {
                 const calculatedMd5 = SparkMD5.ArrayBuffer.hash(buffer);
+                this.parentHost.log(
+                    "debug",
+                    "Attachment MD5 calculated.",
+                    "AttachmentService",
+                    {
+                        itemKey: item.key,
+                        serverMd5,
+                        calculatedMd5,
+                    },
+                );
 
                 if (calculatedMd5 !== serverMd5) {
                     const msg = `MD5 Mismatch for ${item.key}! Expected: ${serverMd5}, Got: ${calculatedMd5}`;
@@ -302,15 +622,34 @@ export class AttachmentService {
                 }
             } else {
                 finalMd5 = SparkMD5.ArrayBuffer.hash(buffer);
+                this.parentHost.log(
+                    "debug",
+                    "Attachment MD5 generated locally (server MD5 unavailable).",
+                    "AttachmentService",
+                    {
+                        itemKey: item.key,
+                        md5: finalMd5,
+                    },
+                );
             }
 
             // C. Save to Cache
             if (this.settings.useCache) {
                 try {
+                    this.parentHost.log(
+                        "debug",
+                        "Saving attachment to cache.",
+                        "AttachmentService",
+                        {
+                            itemKey: item.key,
+                            bytes: buffer.byteLength,
+                            md5: finalMd5,
+                        },
+                    );
                     const fileRecord: IDBZoteroFile = {
                         libraryID: item.libraryID,
                         key: item.key,
-                        blob: blob,
+                        buffer: buffer,
                         mimeType:
                             item.raw.data.contentType || "application/pdf",
                         fileName: item.raw.data.filename || "file.pdf",
@@ -320,6 +659,15 @@ export class AttachmentService {
                     };
 
                     await db.files.put(fileRecord);
+                    this.parentHost.log(
+                        "debug",
+                        "Attachment cache write complete.",
+                        "AttachmentService",
+                        {
+                            itemKey: item.key,
+                            bytes: fileRecord.size,
+                        },
+                    );
 
                     // Fire & Forget Pruning
                     this.pruneCache().catch((e) =>
@@ -341,6 +689,18 @@ export class AttachmentService {
                 }
             }
         }
+
+        this.parentHost.log(
+            "debug",
+            "Attachment download task finished.",
+            "AttachmentService",
+            {
+                itemKey: item.key,
+                linkMode,
+                blobSize: blob.size,
+                elapsedMs: Date.now() - startedAt,
+            },
+        );
 
         return blob;
     }
@@ -411,9 +771,29 @@ export class AttachmentService {
      * Download from WebDAV
      */
     private async downloadFromWebDAV(key: string): Promise<ArrayBuffer> {
+        const startedAt = Date.now();
         try {
             const zipPath = `${key}.zip`;
+            this.parentHost.log(
+                "debug",
+                "Starting WebDAV zip fetch for attachment.",
+                "AttachmentService",
+                {
+                    itemKey: key,
+                    zipPath,
+                },
+            );
             const buffer = await this.webdav.downloadFile(zipPath);
+            this.parentHost.log(
+                "debug",
+                "WebDAV zip payload received.",
+                "AttachmentService",
+                {
+                    itemKey: key,
+                    zipPath,
+                    bytes: buffer.byteLength,
+                },
+            );
 
             if (!buffer) {
                 throw new ZotFlowError(
@@ -424,6 +804,16 @@ export class AttachmentService {
             }
 
             const uint8Input = new Uint8Array(buffer);
+            this.parentHost.log(
+                "debug",
+                "Unzipping WebDAV payload.",
+                "AttachmentService",
+                {
+                    itemKey: key,
+                    zipPath,
+                    inputBytes: uint8Input.byteLength,
+                },
+            );
 
             // Wrap unzip in a promise to handle async callback errors
             return await new Promise<ArrayBuffer>((resolve, reject) => {
@@ -437,6 +827,16 @@ export class AttachmentService {
                     },
                     (err, unzipped) => {
                         if (err) {
+                            this.parentHost.log(
+                                "debug",
+                                "WebDAV unzip failed.",
+                                "AttachmentService",
+                                {
+                                    itemKey: key,
+                                    zipPath,
+                                    errorMessage: err.message,
+                                },
+                            );
                             reject(
                                 new ZotFlowError(
                                     ZotFlowErrorCode.PARSE_ERROR,
@@ -449,6 +849,16 @@ export class AttachmentService {
 
                         const targetFileName = Object.keys(unzipped)[0];
                         if (!targetFileName || !unzipped[targetFileName]) {
+                            this.parentHost.log(
+                                "debug",
+                                "WebDAV unzip returned no valid payload file.",
+                                "AttachmentService",
+                                {
+                                    itemKey: key,
+                                    zipPath,
+                                    entryCount: Object.keys(unzipped).length,
+                                },
+                            );
                             reject(
                                 new ZotFlowError(
                                     ZotFlowErrorCode.PARSE_ERROR,
@@ -459,8 +869,23 @@ export class AttachmentService {
                             return;
                         }
 
+                        this.parentHost.log(
+                            "debug",
+                            "WebDAV unzip selected payload entry.",
+                            "AttachmentService",
+                            {
+                                itemKey: key,
+                                zipPath,
+                                entryCount: Object.keys(unzipped).length,
+                                targetFileName,
+                                payloadBytes:
+                                    unzipped[targetFileName].byteLength,
+                                elapsedMs: Date.now() - startedAt,
+                            },
+                        );
+
                         resolve(
-                            unzipped[targetFileName]!.buffer as ArrayBuffer,
+                            unzipped[targetFileName].buffer,
                         );
                     },
                 );
@@ -483,7 +908,7 @@ export class AttachmentService {
         item: IDBZoteroItem<AttachmentData>,
     ): Promise<ArrayBuffer> {
         try {
-            const response = await fetch(
+            const response = await proxiedFetch(
                 `https://api.zotero.org/${item.raw.library.type}s/${item.libraryID}/items/${item.key}/file`,
                 {
                     headers: {
@@ -559,7 +984,7 @@ export class AttachmentService {
                                 return;
                             }
                             resolve(
-                                unzipped[targetFileName]!.buffer as ArrayBuffer,
+                                unzipped[targetFileName]!.buffer,
                             );
                         },
                     );
@@ -575,6 +1000,95 @@ export class AttachmentService {
                 `API Fetch Failed: ${(e as Error).message}`,
             );
         }
+    }
+
+    private async readFromLocalStorage(
+        item: IDBZoteroItem<AttachmentData>,
+    ): Promise<Blob> {
+        const storagePath = this.settings.zoteroStoragePath.trim();
+        if (!storagePath) {
+            const message =
+                "Zotero storage path is not configured. Configure Zotero Storage Path in ZotFlow settings.";
+            this.parentHost.notify("error", message);
+            throw new ZotFlowError(
+                ZotFlowErrorCode.CONFIG_MISSING,
+                "AttachmentService",
+                message,
+            );
+        }
+
+        const itemKey = this.requireStoragePathSegment(item.key, "item key");
+        let filePath: string | undefined;
+        try {
+            filePath = await this.resolveLocalStorageFilePath(
+                item,
+                storagePath,
+            );
+            this.parentHost.log(
+                "info",
+                "Reading attachment from Zotero storage.",
+                "AttachmentService",
+                { itemKey, filePath },
+            );
+            const buffer =
+                await this.parentHost.readExternalBinaryFile(filePath);
+            this.parentHost.log(
+                "debug",
+                "Zotero storage read complete.",
+                "AttachmentService",
+                {
+                    itemKey,
+                    filePath,
+                    bytes: buffer.byteLength,
+                },
+            );
+            return new Blob([buffer], {
+                type: item.raw.data.contentType || "application/pdf",
+            });
+        } catch (error) {
+            const message =
+                "Could not read the attachment from Zotero storage. Ensure Zotero has synced it locally and the configured storage path is correct.";
+            this.parentHost.notify("error", message);
+            throw ZotFlowError.wrap(
+                error,
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "AttachmentService",
+                message,
+                { itemKey, filePath, storagePath },
+            );
+        }
+    }
+
+    private async resolveLocalStorageFilePath(
+        item: IDBZoteroItem<AttachmentData>,
+        storagePath: string,
+    ): Promise<string> {
+        const filename = this.requireStoragePathSegment(
+            item.raw.data.filename,
+            "attachment filename",
+        );
+        const itemKey = this.requireStoragePathSegment(item.key, "item key");
+        return this.parentHost.joinPath(storagePath, itemKey, filename);
+    }
+
+    private requireStoragePathSegment(
+        value: string | undefined,
+        label: string,
+    ): string {
+        if (
+            !value ||
+            value === "." ||
+            value === ".." ||
+            value.includes("/") ||
+            value.includes("\\")
+        ) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.PARSE_ERROR,
+                "AttachmentService",
+                `Invalid ${label} for Zotero storage`,
+            );
+        }
+        return value;
     }
 
     /**

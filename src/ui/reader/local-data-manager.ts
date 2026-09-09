@@ -3,6 +3,7 @@ import { workerBridge } from "bridge";
 import { services } from "services/services";
 import { readTextFile, saveTextFile, checkFile } from "utils/file";
 import { getLocalSidecarPath } from "utils/utils";
+import { annoMd2html } from "worker/convert/annotation-comment";
 
 import type { AnnotationJSON } from "types/zotero-reader";
 
@@ -102,6 +103,28 @@ export class LocalDataManager {
         return this.annotationCache.get(id);
     }
 
+    /** Get all unique tag names used across this attachment's annotations. */
+    getAllTagNames(): string[] {
+        const names = new Set<string>();
+        for (const anno of this.annotationCache.values()) {
+            for (const tag of anno.tags ?? []) {
+                if (tag.name) names.add(tag.name);
+            }
+        }
+
+        // For local tag suggestions, we add the Obsidian-native tags as well
+        const obsidianTags = services.app.metadataCache.getTags();
+        for (const tag of Object.keys(obsidianTags)) {
+            const tagName = tag.replace(/^#/, "").trim();
+            if (!tagName) continue;
+            names.add(tagName);
+        }
+
+        return Array.from(names).sort((a, b) =>
+            a.localeCompare(b, undefined, { sensitivity: "accent" }),
+        );
+    }
+
     /** Save/update an annotation and persist to .zf.json. */
     async saveAnnotation(annotation: AnnotationJSON) {
         this.annotationCache.set(annotation.id, annotation);
@@ -112,6 +135,41 @@ export class LocalDataManager {
     async deleteAnnotation(annotationId: string) {
         this.annotationCache.delete(annotationId);
         await this.persistAnnotations();
+    }
+
+    /**
+     * Update a single annotation's comment and persist to the sidecar
+     * WITHOUT triggering a source-note re-render — used by the editor
+     * sync plugin when the edit originated from the note itself (the
+     * note already contains the new text).
+     *
+     * @param markdownComment — markdown from the ANNO editable region;
+     * converted to Zotero's restricted annotation HTML before storage,
+     * mirroring the library-note path.
+     * @returns true when a write actually happened.
+     */
+    async updateAnnotationCommentFromNote(
+        annotationId: string,
+        markdownComment: string,
+    ): Promise<boolean> {
+        if (this.annotationCache.size === 0) {
+            await this.loadAnnotations();
+        }
+
+        const annotation = this.annotationCache.get(annotationId);
+        if (!annotation) return false;
+        // External / read-only annotations are owned by the PDF — the
+        // template never wraps them, but stay defensive here too.
+        if (annotation.readOnly === true || annotation.isExternal === true)
+            return false;
+
+        const newComment = annoMd2html(markdownComment);
+        if ((annotation.comment ?? "") === newComment) return false;
+
+        annotation.comment = newComment;
+        annotation.dateModified = new Date().toISOString();
+        await this.writeJsonFile(this.getAllAnnotations());
+        return true;
     }
 
     /* ================================================================ */

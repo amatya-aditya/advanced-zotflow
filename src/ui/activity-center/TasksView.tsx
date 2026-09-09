@@ -12,7 +12,8 @@ const TASK_TYPE_ICONS: Record<TaskType, string> = {
     "batch-extract-images": "image",
     "batch-extract-external-annotations": "scan-search",
     "download-attachment": "download",
-    workflow: "git-branch",
+    workflow: "Workflow",
+    "backfill-csljson": "book-marked",
     "test-task": "flask-conical",
 };
 
@@ -210,9 +211,7 @@ const HistoryItem: React.FC<{
                                 Error:
                             </span>{" "}
                             <div className="zotflow-history-json zotflow-history-json-error">
-                                <code>
-                                    {formatDetailsJson(task.error as any)}
-                                </code>
+                                <code>{task.error}</code>
                             </div>
                         </div>
                     )}

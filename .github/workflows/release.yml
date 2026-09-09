@@ -10,6 +10,8 @@ env:
 
 permissions:
     contents: write
+    id-token: write
+    attestations: write
 
 jobs:
     build:
@@ -29,8 +31,22 @@ jobs:
               with:
                   node-version: ${{ matrix.node-version }}
                   cache: "npm"
+            - name: Verify release version
+              run: |
+                  tag="${GITHUB_REF#refs/tags/}"
+                  package_version="$(node -p "require('./package.json').version")"
+                  manifest_version="$(node -p "require('./manifest.json').version")"
+                  manifest_min_app="$(node -p "require('./manifest.json').minAppVersion")"
+                  versions_min_app="$(node -p "require('./versions.json')[process.argv[1]] || ''" "$manifest_version")"
+                  if [ "$tag" != "$package_version" ] || \
+                     [ "$tag" != "$manifest_version" ] || \
+                     [ "$manifest_min_app" != "$versions_min_app" ]; then
+                    echo "Tag, package.json, manifest.json, and versions.json must agree" >&2
+                    exit 1
+                  fi
+
             - run: npm ci
-            - run: npm run build:ci --if-present
+            - run: npm run build:ci
 
             - name: Package
               id: build
@@ -40,6 +56,25 @@ jobs:
                   zip -r ${{ env.PLUGIN_NAME }}.zip ${{ env.PLUGIN_NAME }}
                   echo "zip_path=${{ env.PLUGIN_NAME }}.zip" >> "$GITHUB_OUTPUT"
                   echo "zip_asset_name=${{ env.PLUGIN_NAME }}-${{ github.ref_name }}.zip" >> "$GITHUB_OUTPUT"
+
+            - name: Upload workflow artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: advanced-zotflow-${{ github.ref_name }}
+                  path: |
+                      main.js
+                      manifest.json
+                      styles.css
+                  if-no-files-found: error
+                  compression-level: 0
+
+            - name: Attest build provenance
+              uses: actions/attest@v4
+              with:
+                  subject-path: |
+                      main.js
+                      manifest.json
+                      styles.css
 
             - name: Create or update release
               env:

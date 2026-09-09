@@ -9,10 +9,17 @@
 import { resolvePathSchema } from "./schema";
 import { propagateSchemas, topologicalSort } from "./propagation";
 import { getNodeType } from "../node-registry";
-// @ts-ignore
 import { parser } from "./template";
 
+import type { SyntaxNodeRef } from "@lezer/common";
 import type { WorkflowNode, WorkflowEdge, BaseNodeData } from "../types";
+
+/** Structural view of a react-querybuilder rule or group, without its types. */
+interface RuleLike {
+    rules?: unknown;
+    field?: unknown;
+    value?: unknown;
+}
 import type { PropagatedSchema } from "./propagation";
 
 // ---------------------------------------------------------------------------
@@ -55,7 +62,7 @@ function extractVariableRefs(expression: string): string[] {
     const refs: string[] = [];
     try {
         const tree = parser.parse(expression);
-        tree.cursor().iterate((node: any) => {
+        tree.cursor().iterate((node: SyntaxNodeRef) => {
             if (node.name === "Path") {
                 const pathStr = expression.slice(node.from, node.to).trim();
                 refs.push(pathStr);
@@ -75,27 +82,28 @@ function extractVariableRefs(expression: string): string[] {
  * Helper to recursively traverse a react-querybuilder RuleGroupType and extract
  * all 'field' names.
  */
-function extractRulesVariableRefs(ruleObj: any): string[] {
+function extractRulesVariableRefs(ruleObj: unknown): string[] {
     const refs: string[] = [];
     if (!ruleObj || typeof ruleObj !== "object") return refs;
+    const node = ruleObj as RuleLike;
 
     // Is it a RuleGroup?
-    if (Array.isArray(ruleObj.rules)) {
-        for (const rule of ruleObj.rules) {
+    if (Array.isArray(node.rules)) {
+        for (const rule of node.rules as unknown[]) {
             refs.push(...extractRulesVariableRefs(rule));
         }
     }
     // Is it a Rule?
-    else if (typeof ruleObj.field === "string") {
-        const fieldRefs = extractVariableRefs(ruleObj.field);
+    else if (typeof node.field === "string") {
+        const fieldRefs = extractVariableRefs(node.field);
         if (fieldRefs.length > 0) {
             refs.push(fieldRefs[0]!);
         }
 
-        if (typeof ruleObj.value === "string" && ruleObj.value.includes("{{")) {
-            refs.push(...extractVariableRefs(ruleObj.value));
-        } else if (Array.isArray(ruleObj.value)) {
-            for (const v of ruleObj.value) {
+        if (typeof node.value === "string" && node.value.includes("{{")) {
+            refs.push(...extractVariableRefs(node.value));
+        } else if (Array.isArray(node.value)) {
+            for (const v of node.value as unknown[]) {
                 if (typeof v === "string" && v.includes("{{")) {
                     refs.push(...extractVariableRefs(v));
                 }
@@ -118,7 +126,7 @@ function collectDataVariableRefs(data: BaseNodeData): string[] {
         } else if (
             value &&
             typeof value === "object" &&
-            Array.isArray((value as any).rules)
+            Array.isArray((value as RuleLike).rules)
         ) {
             // It looks like a RuleGroupType object from react-querybuilder
             refs.push(...extractRulesVariableRefs(value));

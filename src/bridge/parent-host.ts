@@ -1,6 +1,5 @@
 import * as Comlink from "comlink";
 import {
-    Notice,
     requestUrl,
     App,
     TFile,
@@ -18,7 +17,9 @@ import {
     deleteFile,
     getLinkedLocalSourceNote,
 } from "utils/file";
+import type { ExternalFileStat, VaultConfig } from "bridge/types";
 import { services } from "services/services";
+import { errorMessage as describeError } from "utils/error";
 
 import type { IParentProxy, IRequestResponse } from "./types";
 import type { RequestUrlParam } from "obsidian";
@@ -31,6 +32,13 @@ import type { ITaskInfo } from "types/tasks";
 export class ParentHost implements IParentProxy {
     constructor(private app: App) {}
 
+    async acquireEnhancementSdtResources() {
+        return services.enhancementPack.acquireSdtResources();
+    }
+    async releaseEnhancementResources(leaseId: string) {
+        services.enhancementPack.release(leaseId);
+    }
+
     public notify(type: NotificationType, message: string) {
         services.notificationService.notify(type, message);
     }
@@ -39,20 +47,13 @@ export class ParentHost implements IParentProxy {
         level: LogLevel,
         message: string,
         context?: string,
-        details?: any,
+        details?: unknown,
     ) {
         services.logService.log(level, message, context, details);
     }
 
     public async request(request: RequestUrlParam): Promise<IRequestResponse> {
         try {
-            const req = {
-                url: request.url,
-                method: request.method,
-                headers: request.headers,
-                body: request.body,
-                contentType: request.contentType,
-            };
             const response = await requestUrl(request);
             const buffer = response.arrayBuffer;
             return Comlink.transfer(
@@ -63,13 +64,19 @@ export class ParentHost implements IParentProxy {
                 },
                 [buffer],
             );
-        } catch (error: any) {
-            services.logService.error(
-                `Fetch failed: ${error.message}`,
-                "ParentHost",
-            );
-            throw new Error(`Network Error: ${error.message}`);
+        } catch (error) {
+            const reason = describeError(error);
+            services.logService.error(`Fetch failed: ${reason}`, "ParentHost");
+            throw new Error(`Network Error: ${reason}`);
         }
+    }
+
+    public async isAndroidApp(): Promise<boolean> {
+        return Platform.isAndroidApp;
+    }
+
+    public async isDesktopApp(): Promise<boolean> {
+        return Platform.isDesktopApp;
     }
 
     public async readTextFile(path: string): Promise<string | null> {
@@ -90,7 +97,7 @@ export class ParentHost implements IParentProxy {
     public async checkFile(path: string): Promise<{
         exists: boolean;
         path: string;
-        frontmatter?: Record<string, any>;
+        frontmatter?: Record<string, unknown>;
     }> {
         return checkFile(this.app, path);
     }
@@ -130,36 +137,89 @@ export class ParentHost implements IParentProxy {
     public async readExternalBinaryFile(
         absolutePath: string,
     ): Promise<ArrayBuffer> {
+        // Node's fs rather than FileSystemAdapter, which prepends the vault
+        // path and so cannot open the absolute OS paths linked attachments
+        // use. That confines the whole feature to desktop, where Node exists.
+        if (!Platform.isDesktop) {
+            throw new Error(
+                `Cannot read a file outside the vault on mobile: ${absolutePath}`,
+            );
+        }
+        if (!Platform.isDesktopApp) {
+            throw new Error("External files require the Obsidian desktop app");
+        }
         try {
-            // Use Node.js fs directly — FileSystemAdapter prepends vault path
-            // which breaks absolute OS paths. fs is available in Electron.
-            const fs = require("fs").promises;
-            const nodeBuffer: Buffer = await fs.readFile(absolutePath);
+            // `require`, not `import()`: the plugin ships as CommonJS, and a
+            // native dynamic import in Electron's renderer resolves against
+            // the page URL rather than Node's resolver, so it cannot find a
+            // builtin. `typeof import(...)` is type-only and erases.
+            // eslint-disable-next-line @typescript-eslint/no-require-imports -- see above
+            const { promises: fs } = require("fs") as typeof import("fs");
+            const nodeBuffer = await fs.readFile(absolutePath);
             const arrayBuffer = nodeBuffer.buffer.slice(
                 nodeBuffer.byteOffset,
                 nodeBuffer.byteOffset + nodeBuffer.byteLength,
-            ) as ArrayBuffer;
+            );
             return Comlink.transfer(arrayBuffer, [arrayBuffer]);
-        } catch (e: any) {
-            throw new Error(`Failed to read external file: ${e.message}`);
+        } catch (e) {
+            throw new Error(
+                `Failed to read external file: ${describeError(e)}`,
+            );
+        }
+    }
+
+    public async statExternalFile(
+        absolutePath: string,
+    ): Promise<ExternalFileStat> {
+        if (!Platform.isDesktop) {
+            throw new Error(
+                `Cannot stat a file outside the vault on mobile: ${absolutePath}`,
+            );
+        }
+        if (!Platform.isDesktopApp) {
+            throw new Error("External files require the Obsidian desktop app");
+        }
+        try {
+            // Same CommonJS constraint as `readExternalBinaryFile`.
+            // eslint-disable-next-line @typescript-eslint/no-require-imports -- see readExternalBinaryFile
+            const { promises: fs } = require("fs") as typeof import("fs");
+            const stat = await fs.stat(absolutePath);
+            if (!stat.isFile()) {
+                throw new Error("Path does not identify a file");
+            }
+            return { mtime: stat.mtimeMs, size: stat.size };
+        } catch (e) {
+            throw new Error(
+                `Failed to stat external file: ${describeError(e)}`,
+            );
         }
     }
 
     public async joinPath(...segments: string[]): Promise<string> {
-        const path = require("path");
-        return path.join(...segments) as string;
+        // Only ever joins an OS path for a linked attachment, so it shares
+        // `readExternalBinaryFile`'s desktop-only constraint.
+        if (!Platform.isDesktop) {
+            throw new Error("Cannot resolve an OS path on mobile");
+        }
+        if (!Platform.isDesktopApp) {
+            throw new Error("OS paths require the Obsidian desktop app");
+        }
+        // Same CommonJS constraint as `readExternalBinaryFile`.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- see readExternalBinaryFile
+        const path = require("path") as typeof import("path");
+        return path.join(...segments);
     }
 
-    public async getVaultConfig(): Promise<Record<string, any>> {
-        // @ts-expect-error vault.config is undocumented Obsidian API
+    public async getVaultConfig(): Promise<VaultConfig> {
         return { ...this.app.vault.config };
     }
 
-    public async parseYaml(text: string): Promise<any> {
-        return parseYaml(text);
+    public async parseYaml(text: string): Promise<Record<string, unknown>> {
+        // Obsidian types this `any`; frontmatter is always a mapping.
+        return parseYaml(text) as Record<string, unknown>;
     }
 
-    public async stringifyYaml(obj: any): Promise<string> {
+    public async stringifyYaml(obj: unknown): Promise<string> {
         return stringifyYaml(obj);
     }
 
@@ -167,10 +227,6 @@ export class ParentHost implements IParentProxy {
         file: TFileWithoutParentAndVault,
     ): Promise<TFileWithoutParentAndVault | null> {
         return getLinkedLocalSourceNote(this.app, file);
-    }
-
-    public async isAndroidApp(): Promise<boolean> {
-        return Platform.isAndroidApp;
     }
 
     public onTaskUpdate(taskId: string, info: ITaskInfo): void {

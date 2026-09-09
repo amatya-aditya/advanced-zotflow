@@ -103,15 +103,16 @@ export function PropertyInput({ contextNodeId, ...rest }: PropertyInputProps) {
         const newValue =
             input.value.slice(0, start) + insertion + input.value.slice(end);
 
-        const nativeSetter = Object.getOwnPropertyDescriptor(
+        // React tracks the input's value on the DOM node, so the change has to
+        // go through the native setter for the synthetic event to see it.
+        Object.getOwnPropertyDescriptor(
             HTMLInputElement.prototype,
             "value",
-        )?.set;
-        nativeSetter?.call(input, newValue);
+        )?.set?.call(input, newValue);
         input.dispatchEvent(new Event("input", { bubbles: true }));
 
         const newPos = start + insertion.length;
-        requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
             input.setSelectionRange(newPos, newPos);
             input.focus();
         });
@@ -163,15 +164,16 @@ export function PropertyTextarea({
             insertion +
             textarea.value.slice(end);
 
-        const nativeSetter = Object.getOwnPropertyDescriptor(
+        // React tracks the input's value on the DOM node, so the change has to
+        // go through the native setter for the synthetic event to see it.
+        Object.getOwnPropertyDescriptor(
             HTMLTextAreaElement.prototype,
             "value",
-        )?.set;
-        nativeSetter?.call(textarea, newValue);
+        )?.set?.call(textarea, newValue);
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
 
         const newPos = start + insertion.length;
-        requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
             textarea.setSelectionRange(newPos, newPos);
             textarea.focus();
         });

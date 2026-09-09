@@ -1,11 +1,11 @@
 {
-	"id": "advanced-zotflow",
-	"name": "Advanced ZotFlow",
-	"version": "1.0.15",
-	"minAppVersion": "1.11.4",
-	"description": "Keep your research in flow!",
-	"author": "Aditya Amatya",
-	"authorUrl": "https://github.com/amatya-aditya/",
-	"fundingUrl": "",
-	"isDesktopOnly": false
+    "id": "advanced-zotflow",
+    "name": "Advanced ZotFlow",
+    "version": "1.0.15",
+    "minAppVersion": "1.13.4",
+    "description": "Keep your research in flow!",
+    "author": "Aditya Amatya",
+    "authorUrl": "https://github.com/amatya-aditya/",
+    "fundingUrl": "",
+    "isDesktopOnly": false
 }

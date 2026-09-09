@@ -15,6 +15,8 @@ export interface ItemTemplateContext {
     libraryID: number;
     itemType: string;
     itemPaths: string[];
+    /** Parent item key (e.g. for standalone attachments/notes). Empty for top-level items. */
+    parentItem: string;
 
     // Metadata
     title: string;
@@ -25,10 +27,12 @@ export interface ItemTemplateContext {
         name?: string;
     }>;
     date: string | null;
+    year: string;
     dateAdded: string;
     dateModified: string;
 
-    accessDate?: string;
+    /** Null rather than absent when the item has none, matching `date`. */
+    accessDate?: string | null;
     abstractNote?: string;
     publicationTitle?: string;
     publisher?: string;
@@ -46,6 +50,9 @@ export interface ItemTemplateContext {
     ISSN?: string;
 
     tags: Array<{ tag: string; type?: number }>;
+
+    /** CSL-JSON payload from the Zotero API (synced with include=csljson). */
+    csljson?: Record<string, unknown>;
 
     // Children
     attachments: AttachmentTemplateContext[];
@@ -79,6 +86,8 @@ export interface RelatedItemTemplateContext {
 export interface AttachmentTemplateContext {
     key: string;
     libraryID: number;
+    /** Key of the parent (top-level) item this attachment belongs to. */
+    parentItem: string;
     title?: string;
     accessDate?: string;
     url?: string;
@@ -96,6 +105,8 @@ export interface AttachmentTemplateContext {
 export interface NoteTemplateContext {
     key: string;
     libraryID: number;
+    /** Key of the parent (top-level) item this note belongs to. */
+    parentItem: string;
     note: string;
     title: string;
     tags: Array<{ tag: string; type?: number }>;
@@ -107,6 +118,8 @@ export interface NoteTemplateContext {
 export interface AnnotationTemplateContext {
     key: string;
     libraryID: number;
+    /** Key of the attachment item this annotation belongs to. */
+    parentItem?: string;
     type: string;
     authorName?: string;
     text?: string | null;

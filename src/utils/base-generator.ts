@@ -18,7 +18,8 @@ export interface BaseGeneratorOptions {
  */
 function sanitizeFileName(name: string): string {
     return name
-        .replace(/[\/?<>\\:*|"]/g, "")
+        .replace(/[/?<>\\:*|"]/g, "")
+        // eslint-disable-next-line no-control-regex -- Stripping control characters is the point: they are illegal in file names.
         .replace(/[\x00-\x1f\x80-\x9f]/g, "")
         .replace(/^\.+$/, "")
         .trim();

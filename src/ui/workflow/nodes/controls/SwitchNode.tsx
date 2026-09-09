@@ -10,7 +10,7 @@ import { Type } from "@sinclair/typebox";
 import React from "react";
 
 import { ObsidianIcon } from "ui/ObsidianIcon";
-import { interpolate } from "../../context/interpolate";
+import { interpolateToString } from "../../context/interpolate";
 import {
     PropertySection,
     PropertyField,
@@ -63,7 +63,7 @@ function SwitchProperties({ nodeId, data, updateData }: NodePropertiesProps) {
     const cases = d.cases ?? [];
 
     const setCases = (newCases: SwitchCase[]) =>
-        updateData({ cases: newCases } as any);
+        updateData({ cases: newCases });
 
     const addCase = () =>
         setCases([
@@ -90,7 +90,7 @@ function SwitchProperties({ nodeId, data, updateData }: NodePropertiesProps) {
                     value={d.expression ?? ""}
                     placeholder="{{variable.path}}"
                     onChange={(e) =>
-                        updateData({ expression: e.target.value } as any)
+                        updateData({ expression: e.target.value })
                     }
                 />
             </PropertyField>
@@ -141,7 +141,7 @@ function SwitchProperties({ nodeId, data, updateData }: NodePropertiesProps) {
                     id="switch-default"
                     checked={d.hasDefault ?? true}
                     onChange={(e) =>
-                        updateData({ hasDefault: e.target.checked } as any)
+                        updateData({ hasDefault: e.target.checked })
                     }
                 />
             </PropertyToggleField>
@@ -215,11 +215,10 @@ export const switchNode: NodeType<SwitchNodeData> = {
     Properties: SwitchProperties,
 
     async execute(context, data, _signal) {
-        const raw = interpolate(data.expression, context);
-        const exprValue = String(raw ?? "");
+        const exprValue = interpolateToString(data.expression, context);
 
         for (const c of data.cases) {
-            const caseValue = String(interpolate(c.value, context) ?? "");
+            const caseValue = interpolateToString(c.value, context);
             if (exprValue === caseValue) {
                 context.set(`${data.outputName}.matched`, c.label);
                 return c.id;

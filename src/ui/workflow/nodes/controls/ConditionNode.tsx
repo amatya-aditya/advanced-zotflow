@@ -9,12 +9,17 @@ import { Type } from "@sinclair/typebox";
 import React from "react";
 import { QueryBuilder, ValueEditor } from "react-querybuilder";
 import { formatQuery } from "react-querybuilder/formatQuery";
-import type { RuleGroupType, ValueEditorProps } from "react-querybuilder";
+import type {
+    ActionProps,
+    FieldSelectorProps,
+    RuleGroupType,
+    ValueEditorProps,
+} from "react-querybuilder";
 import { useStore } from "zustand";
 
 import { useWorkflowStoreApi } from "../../store-context";
 import { getAvailableContextPaths } from "../../context/context-query";
-import { resolvePathSchema } from "../../context/schema";
+import { isArraySchema, resolvePathSchema } from "../../context/schema";
 import { ObsidianIcon } from "ui/ObsidianIcon";
 import { PropertyInput } from "../../properties/PropertyControls";
 import { interpolate } from "../../context/interpolate";
@@ -28,6 +33,17 @@ interface ConditionNodeData extends BaseNodeData {
     condition: RuleGroupType;
 }
 
+/** Custom props threaded through QueryBuilder's untyped `context` bag. */
+interface QueryBuilderContext {
+    nodeId?: string;
+}
+
+/** Narrows QueryBuilder's `context` (typed `any` by the library) to our shape. */
+function contextNodeId(context: unknown): string | undefined {
+    const nodeId = (context as QueryBuilderContext | undefined)?.nodeId;
+    return typeof nodeId === "string" ? nodeId : undefined;
+}
+
 import {
     PropertySection,
     PropertyField,
@@ -37,12 +53,12 @@ import {
 // Properties panel
 // ---------------------------------------------------------------------------
 
-const RemoveAction = (props: any) => (
+const RemoveAction = (props: ActionProps) => (
     <button
         type="button"
         className={props.className}
         title={props.title}
-        onClick={(e) => props.handleOnClick(e)}
+        onClick={(e) => { props.handleOnClick(e); }}
         disabled={props.disabled}
     >
         <ObsidianIcon icon="trash-2" />
@@ -50,17 +66,18 @@ const RemoveAction = (props: any) => (
 );
 
 const CustomValueEditor = (props: ValueEditorProps) => {
-    const nodeId = props.context?.nodeId;
+    const nodeId = contextNodeId(props.context);
 
     if (props.operator === "null" || props.operator === "notNull") {
         return null;
     }
 
     if (props.operator === "between" || props.operator === "notBetween") {
-        const valArray = Array.isArray(props.value)
-            ? props.value
-            : typeof props.value === "string"
-              ? props.value.split(",")
+        const raw: unknown = props.value;
+        const valArray: string[] = Array.isArray(raw)
+            ? (raw as unknown[]).map((v) => (typeof v === "string" ? v : ""))
+            : typeof raw === "string"
+              ? raw.split(",")
               : ["", ""];
         const v1 = valArray[0] ?? "";
         const v2 = valArray[1] ?? "";
@@ -76,12 +93,12 @@ const CustomValueEditor = (props: ValueEditorProps) => {
                 <PropertyInput
                     contextNodeId={nodeId}
                     value={v1}
-                    onChange={(e) => props.handleOnChange([e.target.value, v2])}
+                    onChange={(e) => { props.handleOnChange([e.target.value, v2]); }}
                 />
                 <PropertyInput
                     contextNodeId={nodeId}
                     value={v2}
-                    onChange={(e) => props.handleOnChange([v1, e.target.value])}
+                    onChange={(e) => { props.handleOnChange([v1, e.target.value]); }}
                 />
             </div>
         );
@@ -94,14 +111,14 @@ const CustomValueEditor = (props: ValueEditorProps) => {
     return (
         <PropertyInput
             contextNodeId={nodeId}
-            value={props.value || ""}
-            onChange={(e) => props.handleOnChange(e.target.value)}
+            value={typeof props.value === "string" ? props.value : ""}
+            onChange={(e) => { props.handleOnChange(e.target.value); }}
         />
     );
 };
 
-const CustomFieldSelector = (props: any) => {
-    const nodeId: string | undefined = props.context?.nodeId;
+const CustomFieldSelector = (props: FieldSelectorProps) => {
+    const nodeId = contextNodeId(props.context);
     const store = useWorkflowStoreApi();
     const nodes = useStore(store, (s) => s.nodes);
     const edges = useStore(store, (s) => s.edges);
@@ -114,8 +131,8 @@ const CustomFieldSelector = (props: any) => {
     return (
         <select
             className={props.className}
-            value={props.value || ""}
-            onChange={(e) => props.handleOnChange(e.target.value)}
+            value={props.value ?? ""}
+            onChange={(e) => { props.handleOnChange(e.target.value); }}
         >
             <option value="">Select field…</option>
             {paths.map((p) => (
@@ -135,7 +152,7 @@ function ConditionProperties({
     const d = data as unknown as ConditionNodeData;
 
     const handleQueryChange = (query: RuleGroupType) => {
-        updateData({ condition: query as any });
+        updateData({ condition: query });
     };
 
     const initialQuery: RuleGroupType =
@@ -210,7 +227,7 @@ function summarizeRule(rule: RuleType): string {
 function countRules(group: RuleGroupType): number {
     let count = 0;
     for (const r of group.rules) {
-        if ("rules" in r) count += countRules(r as RuleGroupType);
+        if ("rules" in r) count += countRules(r);
         else count++;
     }
     return count;
@@ -303,78 +320,67 @@ export const conditionNode: NodeType<ConditionNodeData> = {
             return "false";
         }
 
-        const sanitizeCondition = (ruleObj: any): any => {
-            if (!ruleObj || typeof ruleObj !== "object") return ruleObj;
-            if (Array.isArray(ruleObj.rules)) {
-                return {
-                    ...ruleObj,
-                    rules: ruleObj.rules.map(sanitizeCondition),
-                };
-            }
-            const newObj = { ...ruleObj };
+        /**
+         * Interpolates rule values and coerces them to the schema type of the
+         * selected field, so jsonlogic comparisons work on the right type.
+         *
+         * Fields are always context variable paths chosen from the dropdown,
+         * so they need no transformation — `formatQuery` wraps them in
+         * `{"var": ...}` itself.
+         */
+        const coerceValue = (field: string, raw: unknown): unknown => {
+            if (typeof raw !== "string" || !field) return raw;
 
-            // Field is always a context variable path (selected from dropdown).
-            // No transformation needed — formatQuery will wrap it in {"var": ...}.
+            const fieldSchema = resolvePathSchema(context.getSchema(), field);
+            if (!fieldSchema) return raw;
 
-            // Coerce the value to match the field's schema type so that
-            // jsonlogic comparisons (=, <, in, contains, etc.) work correctly.
-            const coerceValue = (raw: any): any => {
-                if (typeof newObj.field !== "string" || !newObj.field)
-                    return raw;
-                const fieldSchema = resolvePathSchema(
-                    context.getSchema(),
-                    newObj.field,
-                );
-                if (!fieldSchema) return raw;
+            // For array fields, coerce against the element type.
+            const targetSchema: TSchema = isArraySchema(fieldSchema)
+                ? fieldSchema.items
+                : fieldSchema;
 
-                // For array fields, coerce against the element type
-                const targetSchema: TSchema =
-                    (fieldSchema as any)[Kind] === "Array" &&
-                    (fieldSchema as any).items
-                        ? (fieldSchema as any).items
-                        : fieldSchema;
-                const targetKind = (targetSchema as any)[Kind] as string;
-
-                if (typeof raw === "string") {
-                    switch (targetKind) {
-                        case "Number":
-                        case "Integer": {
-                            const n = Number(raw);
-                            return isNaN(n) ? raw : n;
-                        }
-                        case "Boolean":
-                            return raw === "true";
-                        default:
-                            return raw;
-                    }
+            switch (targetSchema[Kind]) {
+                case "Number":
+                case "Integer": {
+                    const n = Number(raw);
+                    return isNaN(n) ? raw : n;
                 }
-                return raw;
-            };
+                case "Boolean":
+                    return raw === "true";
+                default:
+                    return raw;
+            }
+        };
 
-            // Interpolate Value then coerce to field's schema type
-            if (typeof newObj.value === "string") {
-                newObj.value = coerceValue(interpolate(newObj.value, context));
-            } else if (Array.isArray(newObj.value)) {
-                newObj.value = newObj.value.map((v: any) =>
+        const sanitizeRule = (rule: RuleType): RuleType => {
+            const next: RuleType = { ...rule };
+            const field = typeof next.field === "string" ? next.field : "";
+            const raw: unknown = next.value;
+
+            if (typeof raw === "string") {
+                next.value = coerceValue(field, interpolate(raw, context));
+            } else if (Array.isArray(raw)) {
+                next.value = (raw as unknown[]).map((v) =>
                     typeof v === "string"
-                        ? coerceValue(interpolate(v, context))
+                        ? coerceValue(field, interpolate(v, context))
                         : v,
                 );
             }
-            return newObj;
+            return next;
         };
 
-        const sanitizedCondition = sanitizeCondition(data.condition);
+        const sanitizeGroup = (group: RuleGroupType): RuleGroupType => ({
+            ...group,
+            rules: group.rules.map((r) =>
+                "rules" in r ? sanitizeGroup(r) : sanitizeRule(r),
+            ),
+        });
+
+        const sanitizedCondition = sanitizeGroup(data.condition);
         const jsonLogic = formatQuery(sanitizedCondition, "jsonlogic");
         const result = context.evaluateJsonLogic(jsonLogic);
         const boolResult = Boolean(result);
         context.set("result", boolResult);
-        console.log("Condition evaluated:", {
-            condition: data.condition,
-            sanitizedCondition,
-            jsonLogic,
-            result,
-        });
         return boolResult ? "true" : "false";
     },
 

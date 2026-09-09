@@ -11,12 +11,11 @@
  */
 
 import { Value } from "@sinclair/typebox/value";
-import { Type } from "@sinclair/typebox";
 import { LogicEngine } from "json-logic-engine";
 
 const logicEngine = new LogicEngine();
 
-import { resolvePathSchema, mergeSchemas, EMPTY_SCHEMA } from "./schema";
+import { resolvePathSchema } from "./schema";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { TObject, TSchema } from "@sinclair/typebox";
@@ -87,7 +86,9 @@ export class StrictWorkflowContext implements WorkflowContext {
     evaluateJsonLogic(logic: unknown): unknown {
         if (!logic) return false;
         try {
-            const execute = logicEngine.build(logic);
+            const execute = logicEngine.build(logic) as (
+                data: unknown,
+            ) => unknown;
             return execute(this.store);
         } catch (error) {
             console.error("JsonLogic evaluation error:", error);

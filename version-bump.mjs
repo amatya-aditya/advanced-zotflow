@@ -12,5 +12,5 @@ writeFileSync("manifest.json", JSON.stringify(manifest, null, "\t"));
 const versions = JSON.parse(readFileSync('versions.json', 'utf8'));
 if (versions[targetVersion] !== minAppVersion) {
     versions[targetVersion] = minAppVersion;
-    writeFileSync('versions.json', JSON.stringify(versions, null, '\t'));
+    writeFileSync("versions.json", JSON.stringify(versions, null, "\t"));
 }

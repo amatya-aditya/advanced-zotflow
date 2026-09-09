@@ -8,7 +8,7 @@
 import { Type } from "@sinclair/typebox";
 
 import { workerBridge } from "bridge";
-import { interpolate } from "../../context/interpolate";
+import { interpolateToString } from "../../context/interpolate";
 import {
     PropertySection,
     PropertyField,
@@ -89,8 +89,8 @@ export const writeNoteNode: NodeType<WriteNoteNodeData> = {
     },
 
     async execute(context, data, _signal) {
-        const content = String(interpolate(data.contentExpr, context) ?? "");
-        const path = String(interpolate(data.pathExpr, context) ?? "");
+        const content = interpolateToString(data.contentExpr, context);
+        const path = interpolateToString(data.pathExpr, context);
 
         if (!path) {
             throw new Error("Write Note: file path resolved to empty string.");

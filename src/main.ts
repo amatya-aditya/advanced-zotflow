@@ -1,18 +1,16 @@
-import * as Comlink from "comlink";
 import {
     addIcon,
-    App,
     Component,
-    Editor,
     MarkdownRenderer,
     MarkdownView,
     Menu,
     Modal,
+    App,
+    normalizePath,
     Plugin,
     TFile,
     TAbstractFile,
     WorkspaceLeaf,
-    normalizePath,
     type ObsidianProtocolData,
 } from "obsidian";
 
@@ -28,16 +26,19 @@ import {
 import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./ui/reader/view";
 import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
 import { services } from "./services/services";
+import { errorMessage as describeError } from "utils/error";
+import { ZotFlowCommentExtension } from "ui/editor/zotflow-comment-extension";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
 import { ZotFlowEditableRegionExtension } from "ui/editor/zotflow-editable-region-extension";
 import { handleEditorDrop } from "ui/editor/citation-helper";
 
-import { openAttachment } from "utils/viewer";
+import { openAttachment, openItemNote } from "utils/viewer";
 import { getLocalSidecarPath } from "utils/utils";
-import { checkFile, readTextFile } from "utils/file";
+import { checkFile, readTextFile, renameFile, deleteFile } from "utils/file";
 import { ActivityCenterModal } from "ui/activity-center/modal";
 import { ZoteroSearchModal } from "ui/modals/suggest";
 import { AttachmentSelectModal } from "ui/modals/attachment-suggest";
+import { CslFolderService } from "services/csl-folder-service";
 
 import type {
     ZotFlowSettings,
@@ -54,7 +55,6 @@ import {
     LocalReaderView,
 } from "ui/reader/local-view";
 import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "ui/note-editor/view";
-import { ZotFlowCommentExtension } from "ui/editor/zotflow-comment-extension";
 import { ZotFlowRegionDecorationExtension } from "ui/editor/zotflow-region-decoration-extension";
 import { CitationSuggest } from "ui/editor/citation-suggest";
 import {
@@ -74,34 +74,96 @@ import { saveAnnotationImagesNode } from "ui/workflow/nodes/actions/SaveAnnotati
 import { renderTemplateNode } from "ui/workflow/nodes/actions/RenderTemplateNode";
 import { writeNoteNode } from "ui/workflow/nodes/actions/WriteNoteNode";
 import { manualTrigger } from "ui/workflow/nodes/triggers/ManualTriggerNode";
+import { fireAndForgetIn } from "utils/fire-and-forget";
+import { focusReaderLeaf } from "utils/reader-leaf-navigation";
 
 const SUPPORTED_EXTENSIONS = ["pdf", "epub", "html"];
 
 /** Plugin entry point managing lifecycle, commands, views, settings, and protocol handlers. */
+const ff = fireAndForgetIn("ZotFlow");
+
 export default class ZotFlow extends Plugin {
     settings: ZotFlowSettings;
     viewStates: Record<string, ViewStateEntry>;
     customThemes: CustomReaderTheme[] = [];
-    private citationSuggest!: CitationSuggest;
+    cslFolder: CslFolderService;
+    private zotFlowSettingTab: ZotFlowSettingTab | undefined;
+    private citationSuggest: CitationSuggest;
     private sourceNoteActionElements = new WeakMap<MarkdownView, HTMLElement>();
 
     async onload() {
+        const startupStarted = performance.now();
+        const startupStartedAt = Date.now();
+        let stageStarted = startupStarted;
+        const logTiming = (
+            stage: string,
+            started: number,
+            finished: number,
+        ) => {
+            services.logService.debug(stage, "Startup", {
+                startedAt: new Date(
+                    startupStartedAt + started - startupStarted,
+                ).toISOString(),
+                finishedAt: new Date(
+                    startupStartedAt + finished - startupStarted,
+                ).toISOString(),
+                durationMs: Number((finished - started).toFixed(2)),
+                elapsedMs: Number((finished - startupStarted).toFixed(2)),
+            });
+        };
+        const finishStage = (stage: string, finished = performance.now()) => {
+            logTiming(stage, stageStarted, finished);
+            stageStarted = finished;
+        };
+        // Deferred tasks can overlap onload and each other. Measure them separately
+        // without awaiting them or advancing the sequential startup checkpoints.
+        const timeBackground = async (
+            stage: string,
+            run: () => Promise<unknown>,
+        ) => {
+            const started = performance.now();
+            let completed = false;
+            try {
+                await run();
+                completed = true;
+            } finally {
+                logTiming(
+                    `Background: ${stage} ${completed ? "completed" : "failed"}`,
+                    started,
+                    performance.now(),
+                );
+            }
+        };
+
         // Load settings
         await this.loadSettings();
         this.applyEditableRegionMarkerVisibility();
+        const settingsLoaded = performance.now();
 
         // Initialize local services
         services.initialize(this, this.settings);
         services.viewStateService.setViewStates(this.viewStates);
         services.viewStateService.setCustomThemes(this.customThemes);
+        const servicesInitialized = performance.now();
+        // LogService only exists after initialization; retain the earlier boundaries.
+        services.logService.debug("onload started", "Startup", {
+            startedAt: new Date(startupStartedAt).toISOString(),
+        });
+        finishStage("Load settings", settingsLoaded);
+        finishStage("Initialize main-thread services", servicesInitialized);
 
         // Initialize worker bridge
+        let workerStage = "Initialize worker bridge";
         try {
             await workerBridge.initialize(this.settings, this.app);
+            finishStage(workerStage);
+            workerStage = "Refresh library capabilities";
             // Now that the worker is ready, populate per-library capabilities
             // (notes/write access). Used by UI gates and the lock extension.
             await services.libraryCache.refresh();
+            finishStage(workerStage);
         } catch (e) {
+            finishStage(`${workerStage} failed`);
             services.logService.error(
                 "Failed to initialize worker bridge",
                 "Main",
@@ -115,6 +177,7 @@ export default class ZotFlow extends Plugin {
 
         // Add Icons
         this.addIcons();
+        finishStage("Register icons");
 
         // Register views
         this.registerView(
@@ -139,12 +202,18 @@ export default class ZotFlow extends Plugin {
         this.registerExtensions([WORKFLOW_EXTENSION], WORKFLOW_VIEW_TYPE);
 
         // Add tree view to left
-        this.app.workspace.onLayoutReady(async () => {
-            await this.registerTreeView(false, false);
+        this.app.workspace.onLayoutReady(() => {
+            ff(
+                timeBackground("Register tree view", () =>
+                    this.registerTreeView(),
+                ),
+                "Failed to register the tree view",
+            );
         });
+        finishStage("Register views and layout callback");
 
         this.registerEvent(
-            this.app.workspace.on("file-open", this.handleFileOpen.bind(this)),
+            this.app.workspace.on("file-open", (file) => { ff(this.handleFileOpen(file), "Failed to handle opened file"); }),
         );
 
         // Add "Create Companion Note" to file context menu for source notes
@@ -154,7 +223,7 @@ export default class ZotFlow extends Plugin {
                 const cache = this.app.metadataCache.getFileCache(file);
                 if (
                     !cache?.frontmatter ||
-                    !cache.frontmatter.hasOwnProperty("zotflow-locked")
+                    !Object.prototype.hasOwnProperty.call(cache.frontmatter, "zotflow-locked")
                 )
                     return;
                 menu.addItem((item) => {
@@ -165,6 +234,14 @@ export default class ZotFlow extends Plugin {
                         });
                 });
             }),
+        );
+
+        // Add "Open attachment" toggle action on source-note markdown views.
+        this.registerEvent(
+            this.app.workspace.on(
+                "file-open",
+                this.handleSourceNoteFileOpen.bind(this),
+            ),
         );
 
         // Add "Open attachment" toggle action on source-note markdown views.
@@ -194,6 +271,7 @@ export default class ZotFlow extends Plugin {
         // Register citation suggest
         this.citationSuggest = new CitationSuggest();
         this.registerEditorSuggest(this.citationSuggest);
+        finishStage("Register editor extensions and citation handlers");
 
         // Register protocol handler for zotflow URIs
         // Usage: obsidian://zotflow?filePath=path/to/file.md
@@ -204,7 +282,6 @@ export default class ZotFlow extends Plugin {
 
         if (this.settings.overwriteViewer) {
             try {
-                // @ts-expect-error Undocumented Obsidian API: unregisterExtensions()
                 this.app.viewRegistry.unregisterExtensions(
                     SUPPORTED_EXTENSIONS,
                 );
@@ -213,7 +290,7 @@ export default class ZotFlow extends Plugin {
                     LOCAL_ZOTERO_READER_VIEW_TYPE,
                 );
             } catch {
-                const message = `Could not unregister extension: '${SUPPORTED_EXTENSIONS}'`;
+                const message = `Could not unregister extension: '${SUPPORTED_EXTENSIONS.join(", ")}'`;
                 services.logService.error(message, "Main");
                 // services.notificationService.notify("error", message);
             }
@@ -232,14 +309,26 @@ export default class ZotFlow extends Plugin {
             }
         }
 
-        // Ensure MathJax is loaded
-        MarkdownRenderer.render(
-            this.app,
-            "$\\int$",
-            document.createElement("div"),
-            "",
-            new Component(),
+        finishStage("Register protocol and file extensions");
+
+        // Ensure MathJax is loaded. The output is thrown away — this only
+        // exists to make Obsidian load the library — so a failure means the
+        // warm-up did not happen and nothing more.
+        const tempComponent = new Component();
+        ff(
+            timeBackground("MathJax warm-up", () =>
+                MarkdownRenderer.render(
+                    this.app,
+                    "$\\int$",
+                    createDiv(),
+                    "",
+                    tempComponent,
+                ),
+            ),
+            "Failed to warm up MathJax",
         );
+        tempComponent.unload();
+        finishStage("Schedule MathJax warm-up");
 
         // Register all built-in node types
         registerNodeType(manualTrigger);
@@ -266,7 +355,100 @@ export default class ZotFlow extends Plugin {
             id: "open-tree-view",
             name: "Open Zotero Tree View",
             callback: () => {
-                this.registerTreeView(true);
+                ff(
+                    this.registerTreeView(true),
+                    "Failed to register the tree view",
+                );
+            },
+        });
+
+        this.addCommand({
+            id: "open-activity-center",
+            name: "Open Activity Center",
+            callback: () => {
+                new ActivityCenterModal(this.app).open();
+            },
+        });
+
+        this.addCommand({
+            id: "sync-all-libraries",
+            name: "Sync all libraries",
+            callback: async () => {
+                await this.runTaskCommand(
+                    () => workerBridge.createSyncTask(),
+                    "Sync started",
+                    "Failed to start sync",
+                );
+            },
+        });
+
+        this.addCommand({
+            id: "update-all-library-source-notes",
+            name: "Update all library source notes (skip up-to-date)",
+            callback: async () => {
+                await this.runTaskCommand(
+                    async () => {
+                        const items =
+                            await workerBridge.dbHelper.getAllTopLevelItemIdentifiers();
+                        return workerBridge.createBatchNoteTask(
+                            { items },
+                            {},
+                            true,
+                        );
+                    },
+                    "Library source note update started",
+                    "Failed to start library source note update",
+                );
+            },
+        });
+
+        this.addCommand({
+            id: "force-update-all-library-source-notes",
+            name: "Force update all library source notes",
+            callback: async () => {
+                await this.runTaskCommand(
+                    async () => {
+                        const items =
+                            await workerBridge.dbHelper.getAllTopLevelItemIdentifiers();
+                        return workerBridge.createBatchNoteTask(
+                            { items },
+                            {
+                                forceUpdateContent: true,
+                                forceUpdateImages: true,
+                            },
+                            true,
+                        );
+                    },
+                    "Library source note force-update started",
+                    "Failed to start library source note force-update",
+                );
+            },
+        });
+
+        this.addCommand({
+            id: "update-all-csl-data",
+            name: "Update CSL citation data for all items",
+            callback: async () => {
+                await this.runTaskCommand(
+                    () => workerBridge.createBackfillCslJsonTask(),
+                    "CSL citation data update started",
+                    "Failed to start CSL citation data update",
+                );
+            },
+        });
+
+        this.addCommand({
+            id: "extract-all-annotation-images",
+            name: "Extract all annotation images from attachments",
+            callback: async () => {
+                await this.runTaskCommand(
+                    () =>
+                        workerBridge.createBatchExtractImagesTask({
+                            forceUpdate: false,
+                        }),
+                    "Annotation image extraction started",
+                    "Failed to start annotation image extraction",
+                );
             },
         });
 
@@ -366,7 +548,70 @@ export default class ZotFlow extends Plugin {
             editorCallback: () => {
                 this.citationSuggest.triggerManually();
             },
-            hotkeys: [{ modifiers: ["Alt"], key: "c" }],
+            // hotkeys: [{ modifiers: ["Alt"], key: "c" }],
+        });
+
+        this.addCommand({
+            id: "create-child-note",
+            name: "Create child note for current source note",
+            callback: async () => {
+                const view =
+                    this.app.workspace.getActiveViewOfType(MarkdownView);
+                if (!view || !view.file) {
+                    services.notificationService.notify(
+                        "warning",
+                        "No note is currently open.",
+                    );
+                    return;
+                }
+
+                const cache = this.app.metadataCache.getFileCache(view.file);
+                const fm = cache?.frontmatter;
+                const zoteroKey: unknown = fm?.["zotero-key"];
+                const libraryID: unknown = fm?.["library-id"];
+
+                if (
+                    typeof zoteroKey !== "string" ||
+                    typeof libraryID !== "number"
+                ) {
+                    services.notificationService.notify(
+                        "warning",
+                        "This is not a valid ZotFlow source note.",
+                    );
+                    return;
+                }
+
+                if (!services.libraryCache.canEditNotes(libraryID)) {
+                    services.notificationService.notify(
+                        "warning",
+                        "You do not have permission to create notes in this library.",
+                    );
+                    return;
+                }
+
+                try {
+                    const noteKey = await workerBridge.itemNote.createChildNote(
+                        libraryID,
+                        zoteroKey,
+                    );
+                    await workerBridge.libraryNote.triggerUpdate(
+                        libraryID,
+                        zoteroKey,
+                        { forceUpdateContent: true },
+                    );
+                    await openItemNote(libraryID, noteKey, this.app);
+                } catch (err) {
+                    services.logService.error(
+                        "Failed to create child note",
+                        "Main",
+                        err,
+                    );
+                    services.notificationService.notify(
+                        "error",
+                        "Failed to create child note.",
+                    );
+                }
+            },
         });
 
         this.addCommand({
@@ -383,7 +628,7 @@ export default class ZotFlow extends Plugin {
                 } catch (e) {
                     services.notificationService.notify(
                         "error",
-                        `Failed to start task: ${e}`,
+                        `Failed to start task: ${String(e)}`,
                     );
                     services.logService.error(
                         "Failed to start test task",
@@ -403,13 +648,13 @@ export default class ZotFlow extends Plugin {
                 const cache = this.app.metadataCache.getFileCache(file);
                 if (
                     !cache?.frontmatter ||
-                    !cache.frontmatter.hasOwnProperty("zotflow-locked")
+                    !Object.prototype.hasOwnProperty.call(cache.frontmatter, "zotflow-locked")
                 )
                     return false;
                 if (checking) return true;
-                this.app.fileManager.processFrontMatter(file, (fm) => {
+                ff(this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
                     fm["zotflow-locked"] = !fm["zotflow-locked"];
-                });
+                }), "Failed to toggle source note lock");
                 return true;
             },
         });
@@ -423,7 +668,7 @@ export default class ZotFlow extends Plugin {
                 const cache = this.app.metadataCache.getFileCache(file);
                 if (
                     !cache?.frontmatter ||
-                    !cache.frontmatter.hasOwnProperty("zotflow-locked")
+                    !Object.prototype.hasOwnProperty.call(cache.frontmatter, "zotflow-locked")
                 )
                     return false;
                 if (checking) return true;
@@ -432,13 +677,18 @@ export default class ZotFlow extends Plugin {
             },
         });
 
-        this.addSettingTab(new ZotFlowSettingTab(this.app, this));
+        finishStage("Register commands and ribbon actions");
+
+        this.zotFlowSettingTab = new ZotFlowSettingTab(this.app, this);
+        this.addSettingTab(this.zotFlowSettingTab);
+        finishStage("Register settings tab");
 
         // Track file renames to keep viewStates and .zf.json sidecar in sync
         this.registerEvent(
             this.app.vault.on("rename", (file, oldPath) => {
                 services.viewStateService.renameViewState(oldPath, file.path);
                 this.handleSidecarRename(file, oldPath);
+                void this.cslFolder.onRename(file, oldPath);
             }),
         );
 
@@ -447,17 +697,53 @@ export default class ZotFlow extends Plugin {
             this.app.vault.on("delete", (file) => {
                 services.viewStateService.deleteViewState(file.path);
                 this.handleSidecarDelete(file);
+                void this.cslFolder.onDelete(file);
             }),
         );
+
+        // Hot-load custom CSL styles/locales from the configured vault folder.
+        // create/modify are registered after layout-ready: "create" fires for
+        // every existing file during startup indexing otherwise.
+        this.cslFolder = new CslFolderService(this.app.vault);
+        this.cslFolder.setFolder(this.settings.cslStylesFolder);
+        this.app.workspace.onLayoutReady(() => {
+            ff(
+                timeBackground("Scan CSL folder", () =>
+                    this.cslFolder.rescan(),
+                ),
+                "Failed to scan CSL folder",
+            );
+            this.registerEvent(
+                this.app.vault.on("create", (file) => {
+                    void this.cslFolder.onCreateOrModify(file);
+                }),
+            );
+            this.registerEvent(
+                this.app.vault.on("modify", (file) => {
+                    void this.cslFolder.onCreateOrModify(file);
+                }),
+            );
+        });
 
         // Add right-click "Update source note" entries for source notes
         this.registerEvent(
             this.app.workspace.on("file-menu", this.handleFileMenu.bind(this)),
         );
+        finishStage("Register vault events and CSL layout callback");
+        // Wall-clock onload time includes awaited worker/I/O time, not just CPU
+        // execution. It excludes bundle parsing before onload and does not wait
+        // for deferred work, whose duration may overlap this total.
+        logTiming(
+            "onload completed (total)",
+            startupStarted,
+            performance.now(),
+        );
     }
 
     onunload() {
         services.viewStateService.flushViewStateSave();
+        services.readerDocumentCache.dispose();
+        services.enhancementPack.dispose();
         workerBridge.terminate();
         revokeBlobUrls();
     }
@@ -533,7 +819,7 @@ export default class ZotFlow extends Plugin {
             }
         }
 
-        if (leaf && active) workspace.revealLeaf(leaf);
+        if (leaf && active) void workspace.revealLeaf(leaf);
     }
 
     async loadSettings() {
@@ -570,6 +856,20 @@ export default class ZotFlow extends Plugin {
 
         // Load sensitive credentials from SecretStorage (cross-platform safe)
         loadCredentials(this.settings, this.app.secretStorage);
+    }
+
+    async onExternalSettingsChange() {
+        await this.loadSettings();
+        workerBridge.updateSettings(this.settings);
+        services.updateSettings(this.settings);
+        services.viewStateService.setViewStates(this.viewStates);
+        services.viewStateService.setCustomThemes(this.customThemes);
+        if (this.cslFolder) {
+            this.cslFolder.setFolder(this.settings.cslStylesFolder);
+            await this.cslFolder.rescan();
+        }
+        this.applyEditableRegionMarkerVisibility();
+        this.zotFlowSettingTab?.refreshFromSettings();
     }
 
     async saveSettings() {
@@ -634,8 +934,41 @@ export default class ZotFlow extends Plugin {
 
             if (type === "open-note") {
                 await workerBridge.libraryNote.openNote(libID, key);
+            } else if (type === "open-item-note") {
+                // Child note links (e.g. converted Better Notes
+                // zotero://note links) — openItemNote honors the
+                // alwaysOpenChildNoteInEditor setting.
+                await openItemNote(libID, key, this.app);
             } else if (type === "open-attachment") {
                 await openAttachment(libID, key, this.app, navigation);
+            } else if (type === "open-annotation") {
+                // Locate the annotation by key, then open its parent attachment
+                // navigated to the annotation. Only the annotation id is needed.
+                const annotation = await workerBridge.dbHelper.getItem(
+                    libID,
+                    key,
+                );
+                if (!annotation || annotation.itemType !== "annotation") {
+                    services.notificationService.notify(
+                        "warning",
+                        "Annotation not found.",
+                    );
+                    return;
+                }
+                const attachmentKey = annotation.parentItem;
+                if (!attachmentKey) {
+                    services.notificationService.notify(
+                        "warning",
+                        "Annotation has no parent attachment.",
+                    );
+                    return;
+                }
+                await openAttachment(
+                    libID,
+                    attachmentKey,
+                    this.app,
+                    JSON.stringify({ annotationID: key }),
+                );
             } else {
                 services.logService.log(
                     "warn",
@@ -647,7 +980,7 @@ export default class ZotFlow extends Plugin {
                     `Unknown action type: ${type}`,
                 );
             }
-        } catch (error: any) {
+        } catch (error) {
             services.logService.log(
                 "error",
                 "Error handling zotflow protocol call",
@@ -658,7 +991,7 @@ export default class ZotFlow extends Plugin {
             // Handle typed errors from Worker
             services.notificationService.notify(
                 "error",
-                `Protocol Error: ${error.message || "Unknown error"}`,
+                `Protocol Error: ${describeError(error) || "Unknown error"}`,
             );
         }
     }
@@ -676,18 +1009,14 @@ export default class ZotFlow extends Plugin {
         const newJsonPath = this.getSidecarPathFromFile(file);
         if (oldJsonPath === newJsonPath) return;
 
-        const jsonFile = this.app.vault.getAbstractFileByPath(
-            normalizePath(oldJsonPath),
-        );
-        if (jsonFile instanceof TFile) {
-            this.app.vault.rename(jsonFile, newJsonPath).catch((err) => {
-                services.logService.error(
-                    `Failed to rename sidecar ${oldJsonPath} → ${newJsonPath}`,
-                    "Main",
-                    err,
-                );
-            });
-        }
+        // renameFile handles both Vault-tracked and hidden (.dot folder) paths.
+        renameFile(this.app, oldJsonPath, newJsonPath).catch((err) => {
+            services.logService.error(
+                `Failed to rename sidecar ${oldJsonPath} → ${newJsonPath}`,
+                "Main",
+                err,
+            );
+        });
     }
 
     /**
@@ -700,18 +1029,14 @@ export default class ZotFlow extends Plugin {
             return;
 
         const jsonPath = this.getSidecarPathFromFile(file);
-        const jsonFile = this.app.vault.getAbstractFileByPath(
-            normalizePath(jsonPath),
-        );
-        if (jsonFile instanceof TFile) {
-            this.app.vault.trash(jsonFile, true).catch((err) => {
-                services.logService.error(
-                    `Failed to delete sidecar ${jsonPath}`,
-                    "Main",
-                    err,
-                );
-            });
-        }
+        // deleteFile handles both Vault-tracked and hidden (.dot folder) paths.
+        deleteFile(this.app, jsonPath).catch((err) => {
+            services.logService.error(
+                `Failed to delete sidecar ${jsonPath}`,
+                "Main",
+                err,
+            );
+        });
     }
 
     /**
@@ -719,8 +1044,8 @@ export default class ZotFlow extends Plugin {
      * The companion note is placed in a subfolder named after the source note's title.
      */
     promptCompanionNote(sourceFile: TFile) {
-        const modal = new CompanionNoteModal(this.app, async (name: string) => {
-            await this.createCompanionNote(sourceFile, name);
+        const modal = new CompanionNoteModal(this.app, (name: string) => {
+            ff(this.createCompanionNote(sourceFile, name), "Failed to create companion note");
         });
         modal.open();
     }
@@ -902,9 +1227,9 @@ export default class ZotFlow extends Plugin {
         const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
         if (!fm) return;
 
-        const zoteroKey = fm["zotero-key"];
-        const libraryID = fm["library-id"];
-        const localAttachment = fm["zotflow-local-attachment"];
+        const zoteroKey: unknown = fm["zotero-key"];
+        const libraryID: unknown = fm["library-id"];
+        const localAttachment: unknown = fm["zotflow-local-attachment"];
 
         const isLibrarySourceNote =
             typeof zoteroKey === "string" && typeof libraryID === "number";
@@ -919,8 +1244,8 @@ export default class ZotFlow extends Plugin {
                     .onClick(async () => {
                         try {
                             await workerBridge.libraryNote.triggerUpdate(
-                                libraryID as number,
-                                zoteroKey as string,
+                                libraryID,
+                                zoteroKey,
                                 {},
                                 false,
                             );
@@ -948,8 +1273,8 @@ export default class ZotFlow extends Plugin {
                     .onClick(async () => {
                         try {
                             await workerBridge.libraryNote.triggerUpdate(
-                                libraryID as number,
-                                zoteroKey as string,
+                                libraryID,
+                                zoteroKey,
                                 {
                                     forceUpdateContent: true,
                                     forceUpdateImages: true,
@@ -973,6 +1298,42 @@ export default class ZotFlow extends Plugin {
                         }
                     });
             });
+
+            if (services.libraryCache.canEditNotes(libraryID)) {
+                menu.addItem((item) => {
+                    item.setTitle("ZotFlow: Create child note")
+                        .setIcon("sticky-note")
+                        .onClick(async () => {
+                            try {
+                                const noteKey =
+                                    await workerBridge.itemNote.createChildNote(
+                                        libraryID,
+                                        zoteroKey,
+                                    );
+                                await workerBridge.libraryNote.triggerUpdate(
+                                    libraryID,
+                                    zoteroKey,
+                                    { forceUpdateContent: true },
+                                );
+                                await openItemNote(
+                                    libraryID,
+                                    noteKey,
+                                    this.app,
+                                );
+                            } catch (err) {
+                                services.logService.error(
+                                    "Failed to create child note",
+                                    "Main",
+                                    err,
+                                );
+                                services.notificationService.notify(
+                                    "error",
+                                    "Failed to create child note.",
+                                );
+                            }
+                        });
+                });
+            }
         } else if (isLocalSourceNote) {
             menu.addItem((item) => {
                 item.setTitle("ZotFlow: Update source note")
@@ -980,7 +1341,7 @@ export default class ZotFlow extends Plugin {
                     .onClick(async () => {
                         await this.updateLocalSourceNoteFromMenu(
                             file,
-                            localAttachment as string,
+                            localAttachment,
                         );
                     });
             });
@@ -1076,9 +1437,9 @@ export default class ZotFlow extends Plugin {
         const cache = this.app.metadataCache.getFileCache(file);
         const fm = cache?.frontmatter;
 
-        const zoteroKey = fm?.["zotero-key"];
-        const libraryID = fm?.["library-id"];
-        const localAttachment = fm?.["zotflow-local-attachment"];
+        const zoteroKey: unknown = fm?.["zotero-key"];
+        const libraryID: unknown = fm?.["library-id"];
+        const localAttachment: unknown = fm?.["zotflow-local-attachment"];
 
         const isLibrarySourceNote =
             typeof zoteroKey === "string" && typeof libraryID === "number";
@@ -1100,8 +1461,8 @@ export default class ZotFlow extends Plugin {
             async () => {
                 if (isLibrarySourceNote) {
                     await this.openLibrarySourceNoteAttachment(
-                        libraryID as number,
-                        zoteroKey as string,
+                        libraryID,
+                        zoteroKey,
                     );
                 } else {
                     await this.openLocalSourceNoteAttachment(
@@ -1192,16 +1553,15 @@ export default class ZotFlow extends Plugin {
                 (leaf) =>
                     (leaf.view as LocalReaderView).getState()?.file ===
                     dest.path,
-            );
+        );
         if (existing) {
-            this.app.workspace.setActiveLeaf(existing);
-            this.app.workspace.revealLeaf(existing);
+            await focusReaderLeaf(this.app.workspace, existing);
             return;
         }
 
         const leaf = this.app.workspace.getLeaf("tab");
         await leaf.openFile(dest);
-        this.app.workspace.revealLeaf(leaf);
+        await focusReaderLeaf(this.app.workspace, leaf);
     }
 
     /** Track the companion-note action element so we can remove it when leaving a source note. */
@@ -1238,9 +1598,12 @@ export default class ZotFlow extends Plugin {
                         },
                     };
 
-                    setTimeout(async () => {
+                    window.setTimeout(() => {
                         if (leaf.view instanceof MarkdownView) {
-                            await leaf.setViewState(newState);
+                            ff(
+                                leaf.setViewState(newState),
+                                "Failed to restore the note view state",
+                            );
                         }
                     }, 10);
                 }
@@ -1277,8 +1640,7 @@ class CompanionNoteModal extends Modal {
             type: "text",
             placeholder: "e.g. Chapter 3 - Filters",
         });
-        input.style.width = "100%";
-        input.style.marginBottom = "1em";
+        input.addClass("zotflow-companion-name");
         input.addEventListener("input", () => {
             this.name = input.value;
         });

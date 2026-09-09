@@ -1,372 +1,42 @@
-import { SettingGroup } from "obsidian";
-import ZotFlow from "main";
-import type { ReaderColorScheme } from "settings/types";
-import { services } from "services/services";
+import { ReaderSection } from "settings/sections/reader-section";
+import { SourceNotesSection } from "settings/sections/source-notes-section";
 
-/** Settings section rendering source note paths, folders, and local reader options. */
+import type ZotFlow from "main";
+import type { SettingDefinitionItem } from "obsidian";
+import type { SettingKey } from "settings/types";
+
+/** Declarative entry point for source-note and reader settings. */
 export class GeneralSection {
-    plugin: ZotFlow;
-    refreshUI: () => void;
+    constructor(private readonly plugin: ZotFlow) {}
 
-    constructor(plugin: ZotFlow, refreshUI: () => void) {
-        this.plugin = plugin;
-        this.refreshUI = refreshUI;
-    }
-
-    render(containerEl: HTMLElement) {
-        const zoteroSourceNote = new SettingGroup(containerEl);
-        zoteroSourceNote.setHeading("Library Source Note");
-
-        zoteroSourceNote.addSetting((setting) => {
-            setting
-                .setName("Template Path")
-                .setDesc(
-                    "Path to template file for library source notes (relative to vault root).",
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. templates/SourceNoteTemplate.md")
-                        .setValue(
-                            this.plugin.settings.librarySourceNoteTemplatePath,
-                        )
-                        .onChange(async (value) => {
-                            this.plugin.settings.librarySourceNoteTemplatePath =
-                                value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        zoteroSourceNote.addSetting((setting) => {
-            setting
-                .setName("Library Source Note Path Template")
-                .setDesc(
-                    "LiquidJS template for library source note file path (without .md extension).",
-                )
-                .addText((text) => {
-                    text.setPlaceholder(
-                        "e.g. References/{{libraryName}}/@{{citationKey | default: key}}",
-                    )
-                        .setValue(
-                            this.plugin.settings.librarySourceNotePathTemplate,
-                        )
-                        .onChange(async (value) => {
-                            this.plugin.settings.librarySourceNotePathTemplate =
-                                value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        zoteroSourceNote.addSetting((setting) => {
-            setting
-                .setName("Lock Editable Regions by Default")
-                .setDesc(
-                    "When enabled, editable regions in source notes start locked. Click the lock icon on a region to unlock it for editing.",
-                )
-                .addToggle((toggle) => {
-                    toggle.setValue(
-                        this.plugin.settings.defaultEditableRegionLocked,
-                    );
-                    toggle.onChange(async (value) => {
-                        this.plugin.settings.defaultEditableRegionLocked =
-                            value;
-                        await this.plugin.saveSettings();
-                    });
-                });
-        });
-
-        zoteroSourceNote.addSetting((setting) => {
-            setting
-                .setName("Hide Editable Region Markers")
-                .setDesc(
-                    "Hide the ZF_NOTE_BEG / ZF_NOTE_META / ZF_NOTE_END comment tags in source notes. The lock icon and region border remain visible.",
-                )
-                .addToggle((toggle) => {
-                    toggle.setValue(
-                        this.plugin.settings.hideEditableRegionMarkers,
-                    );
-                    toggle.onChange(async (value) => {
-                        this.plugin.settings.hideEditableRegionMarkers = value;
-                        await this.plugin.saveSettings();
-                    });
-                });
-        });
-
-        const localSourceNote = new SettingGroup(containerEl);
-        localSourceNote.setHeading("Local Source Note");
-
-        localSourceNote.addSetting((setting) => {
-            setting
-                .setName("Source Note Template Path")
-                .setDesc(
-                    "Path to template file for local source notes (relative to vault root).",
-                )
-                .addText((text) => {
-                    text.setPlaceholder(
-                        "e.g. templates/LocalSourceNoteTemplate.md",
-                    )
-                        .setValue(
-                            this.plugin.settings.localSourceNoteTemplatePath,
-                        )
-                        .onChange(async (value) => {
-                            this.plugin.settings.localSourceNoteTemplatePath =
-                                value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        localSourceNote.addSetting((setting) => {
-            setting
-                .setName("Local Source Note Path Template")
-                .setDesc(
-                    "LiquidJS template for local source note file path (without .md extension).",
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. Local/@{{basename}}")
-                        .setValue(
-                            this.plugin.settings.localSourceNotePathTemplate,
-                        )
-                        .onChange(async (value) => {
-                            this.plugin.settings.localSourceNotePathTemplate =
-                                value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        localSourceNote.addSetting((setting) => {
-            setting
-                .setName("Annotation Sidecar Folder")
-                .setDesc(
-                    "Folder for local annotation sidecar files (.zf.json), relative to vault root. " +
-                        "Leave empty to store sidecars next to each attachment. " +
-                        "When set, the original folder structure is mirrored under this folder " +
-                        "to avoid filename collisions.",
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. .zotflow/sidecars")
-                        .setValue(this.plugin.settings.localSidecarFolder)
-                        .onChange(async (value) => {
-                            this.plugin.settings.localSidecarFolder = value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        const linkedAttachmentGroup = new SettingGroup(containerEl);
-        linkedAttachmentGroup.setHeading("Linked Attachments");
-
-        linkedAttachmentGroup.addSetting((setting) => {
-            setting
-                .setName("Linked Attachment Base Directory")
-                .setDesc(
-                    "Absolute path to the base directory for Zotero linked attachments (LABD). " +
-                        'Set this to match the "Linked Attachment Base Directory" configured in ' +
-                        "Zotero (Preferences → Advanced → Files and Folders). Required for opening " +
-                        'attachments whose path starts with "attachments:".',
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. D:\\Papers or /Users/name/Papers")
-                        .setValue(this.plugin.settings.linkedAttachmentBaseDir)
-                        .onChange(async (value) => {
-                            this.plugin.settings.linkedAttachmentBaseDir =
-                                value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        const generalSettingGroup = new SettingGroup(containerEl);
-        generalSettingGroup.setHeading("General Settings");
-
-        generalSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Auto Import Annotation Images")
-                .setDesc(
-                    "Auto import annotation images for area and ink annotations from PDF when creating source notes.",
-                )
-                .addToggle((toggle) => {
-                    toggle.setValue(
-                        this.plugin.settings.autoImportAnnotationImages,
-                    );
-                    toggle.onChange(async (value) => {
-                        this.plugin.settings.autoImportAnnotationImages = value;
-                        await this.plugin.saveSettings();
-                    });
-                });
-        });
-
-        generalSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Annotation Image Folder")
-                .setDesc(
-                    "Default folder for annotation images (relative to vault root).",
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. Attachments/ZotFlow")
-                        .setValue(this.plugin.settings.annotationImageFolder)
-                        .onChange(async (value) => {
-                            this.plugin.settings.annotationImageFolder = value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        const baseViewGroup = new SettingGroup(containerEl);
-        baseViewGroup.setHeading("Base Views");
-
-        baseViewGroup.addSetting((setting) => {
-            setting
-                .setName("Base View Folder")
-                .setDesc(
-                    "Folder where generated collection Base views are stored (relative to vault root).",
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. ZotFlow/Bases")
-                        .setValue(this.plugin.settings.baseViewFolder)
-                        .onChange(async (value) => {
-                            this.plugin.settings.baseViewFolder = value;
-                            await this.plugin.saveSettings();
-                        });
-                    text.inputEl.size = 40;
-                });
-        });
-
-        const zoteroReaderSettingGroup = new SettingGroup(containerEl);
-        zoteroReaderSettingGroup.setHeading("Zotero Reader");
-
-        zoteroReaderSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Overwrite PDF/EPUB/HTML Viewer")
-                .setDesc(
-                    "Overwrite PDF/EPUB/HTML viewer with local Zotero reader (Requires Restart).",
-                )
-                .addToggle((toggle) => {
-                    toggle.setValue(this.plugin.settings.overwriteViewer);
-                    toggle.onChange(async (value) => {
-                        this.plugin.settings.overwriteViewer = value;
-                        await this.plugin.saveSettings();
-                    });
-                });
-        });
-
-        zoteroReaderSettingGroup.addSetting((setting) => {
-            setting
-                .setName(
-                    "Turn off note, text, and image annotation tools after each use",
-                )
-                .setDesc(
-                    "When enabled, the note, text, and image tools automatically revert to the pointer after creating an annotation. Requires restart Reader to apply.",
-                )
-                .addToggle((toggle) => {
-                    toggle.setValue(
-                        this.plugin.settings.autoDisableNoteImageTextTools,
-                    );
-                    toggle.onChange(async (value) => {
-                        this.plugin.settings.autoDisableNoteImageTextTools =
-                            value;
-                        await this.plugin.saveSettings();
-                    });
-                });
-        });
-
-        zoteroReaderSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Ebook Font")
-                .setDesc(
-                    "Custom font family for EPUB documents. Leave empty to use the book's own font. This description text renders in the selected font as a live preview. Requires restart Reader to apply.",
-                )
-                .addText((text) => {
-                    text.setPlaceholder("e.g. Georgia, serif");
-                    text.setValue(this.plugin.settings.epubFontFamily);
-                    text.onChange(async (value) => {
-                        this.plugin.settings.epubFontFamily = value;
-                        setting.descEl.style.fontFamily = value || "";
-                        await this.plugin.saveSettings();
-                    });
-                });
-            setting.descEl.style.fontFamily =
-                this.plugin.settings.epubFontFamily || "";
-        });
-
-        zoteroReaderSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Reader UI Color Scheme")
-                .setDesc("Color scheme for the Zotero Reader UI.")
-                .addDropdown((dropdown) => {
-                    dropdown
-                        .addOption("light", "Light")
-                        .addOption("dark", "Dark")
-                        .addOption("obsidian", "Adapt to Obsidian Scheme")
-                        .addOption(
-                            "obsidian-theme",
-                            "Adapt to Obsidian Scheme (Theme)",
-                        )
-                        .setValue(this.plugin.settings.readerColorScheme)
-                        .onChange(async (value) => {
-                            this.plugin.settings.readerColorScheme =
-                                value as ReaderColorScheme;
-                            await this.plugin.saveSettings();
-                        });
-                });
-        });
-
-        zoteroReaderSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Default Viewer Light Theme")
-                .setDesc(
-                    "Default viewer theme when the reader is in light mode.",
-                )
-                .addDropdown((dropdown) => {
-                    dropdown.addOption("original_fallback", "Original");
-                    dropdown.addOption("dark", "Dark");
-                    dropdown.addOption("snow", "Snow");
-                    dropdown.addOption("sepia", "Sepia");
-                    dropdown.addOption("obsidian", "Obsidian");
-                    for (const t of services.viewStateService.getCustomThemes()) {
-                        if (t.id === "obsidian") continue;
-                        dropdown.addOption(t.id, t.label);
-                    }
-                    dropdown
-                        .setValue(this.plugin.settings.defaultLightTheme)
-                        .onChange(async (value) => {
-                            this.plugin.settings.defaultLightTheme = value;
-                            await this.plugin.saveSettings();
-                        });
-                });
-        });
-
-        zoteroReaderSettingGroup.addSetting((setting) => {
-            setting
-                .setName("Default Viewer Dark Theme")
-                .setDesc(
-                    "Default viewer theme when the reader is in dark mode.",
-                )
-                .addDropdown((dropdown) => {
-                    dropdown.addOption("original_fallback", "Original");
-                    dropdown.addOption("dark", "Dark");
-                    dropdown.addOption("snow", "Snow");
-                    dropdown.addOption("sepia", "Sepia");
-                    dropdown.addOption("obsidian", "Obsidian");
-                    for (const t of services.viewStateService.getCustomThemes()) {
-                        if (t.id === "obsidian") continue;
-                        dropdown.addOption(t.id, t.label);
-                    }
-                    dropdown
-                        .setValue(this.plugin.settings.defaultDarkTheme)
-                        .onChange(async (value) => {
-                            this.plugin.settings.defaultDarkTheme = value;
-                            await this.plugin.saveSettings();
-                        });
-                });
-        });
+    getDefinitions(): SettingDefinitionItem<SettingKey>[] {
+        return [
+            {
+                type: "page",
+                name: "Tree View",
+                desc: "Sidebar icons and navigation.",
+                items: [
+                    { name: "Show item icons", desc: "Show icons beside library, collection, PDF, and note names.", control: { type: "toggle", key: "showTreeItemIcons" } },
+                    { name: "Show Library icon", control: { type: "toggle", key: "showTreeLibrary" } },
+                    { name: "Show Recent Items icon", control: { type: "toggle", key: "showTreeRecents" } },
+                    { name: "Show Bookmarks icon", control: { type: "toggle", key: "showTreeBookmarks" } },
+                    { name: "Show Source Notes icon", control: { type: "toggle", key: "showTreeNotes" } },
+                    { name: "Show Base Views icon", control: { type: "toggle", key: "showTreeBases" } },
+                    { name: "Base View Folder", control: { type: "text", key: "baseViewFolder", placeholder: "ZotFlow/Bases" } },
+                ],
+            },
+            {
+                type: "page",
+                name: "Source Notes",
+                desc: "Templates, paths, editable regions, and annotation assets for library and local source notes.",
+                items: new SourceNotesSection().getDefinitions(),
+            },
+            {
+                type: "page",
+                name: "Reader",
+                desc: "Reader integration, annotation tools, fonts, and color themes.",
+                items: new ReaderSection(this.plugin).getDefinitions(),
+            },
+        ];
     }
 }

@@ -21,7 +21,7 @@ export const ObsidianIcon = React.forwardRef<HTMLDivElement, ObsidianIconProps>(
                     forwardedRef(node);
                 } else if (forwardedRef) {
                     (
-                        forwardedRef as React.MutableRefObject<HTMLDivElement | null>
+                        forwardedRef
                     ).current = node;
                 }
             },

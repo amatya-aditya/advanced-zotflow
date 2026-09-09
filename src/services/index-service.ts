@@ -95,9 +95,7 @@ export class IndexService {
 
         // Get data from cache, do not await read()
         const cache = this.app.metadataCache.getFileCache(file);
-        const frontmatter = cache?.frontmatter as
-            | Record<string, unknown>
-            | undefined;
+        const frontmatter = cache?.frontmatter;
 
         if (this.isCanonicalSourceNote(frontmatter)) {
             const zoteroKey = frontmatter!["zotero-key"] as string;
@@ -132,12 +130,16 @@ export class IndexService {
     }
 
     /** Return all indexed files (files with zotero-key frontmatter). */
-    public getAllIndexedFiles(): TFile[] {
+    public getIndexedFilesList(): TFile[] {
         if (!this._initialized) return [];
         return Array.from(this.keyToFileMap.values());
     }
 
     /** Return the raw zotero-key → TFile map for callers that need keyed access. */
+    public getAllIndexedFiles(): ReadonlyMap<string, TFile> {
+        return this.keyToFileMap;
+    }
+
     public getIndexedFileMap(): ReadonlyMap<string, TFile> {
         return this.keyToFileMap;
     }

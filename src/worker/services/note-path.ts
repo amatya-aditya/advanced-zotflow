@@ -4,6 +4,8 @@ import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { extractYear } from "utils/date";
+import { renderLiquid } from "./liquid-support";
 import type { DbHelperService } from "./db-helper";
 
 const FALLBACK_ZOTERO_TEMPLATE =
@@ -14,7 +16,7 @@ const FALLBACK_LOCAL_TEMPLATE = "Source/Local/@{{basename}}";
 /** Sanitize a single path segment (filename or folder name). */
 function sanitizeSegment(segment: string): string {
     const illegalRe = /[/?<>\\:*|"]/g;
-    const controlRe = /[\x00-\x1f\x80-\x9f]/g;
+    const controlRe = /\p{Cc}/gu;
     const reservedRe = /^\.+$/;
     const windowsReservedRe = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 
@@ -32,6 +34,8 @@ const IGNORE_KEYS: ReadonlySet<string> = new Set([
     "dateAdded",
     "dateModified",
     "accessDate",
+    "path",
+    "directory",
     "itemPaths",
 ]);
 
@@ -164,13 +168,11 @@ export class NotePathService {
 
             // Derived
             libraryName,
-            year:
-                typeof data.date === "string"
-                    ? (data.date as string).slice(0, 4)
-                    : "",
+            year: extractYear(data.date),
         };
 
-        const rendered = await this.engine.parseAndRender(
+        const rendered = await renderLiquid(
+            this.engine,
             template,
             sanitizeContext(context),
         );
@@ -187,14 +189,22 @@ export class NotePathService {
             this.settings.localSourceNotePathTemplate.trim() ||
             FALLBACK_LOCAL_TEMPLATE;
 
+        const lastSlash = localAttachment.path.lastIndexOf("/");
+        const directory =
+            lastSlash !== -1
+                ? localAttachment.path.substring(0, lastSlash)
+                : "";
+
         const context = {
             basename: localAttachment.basename,
             name: localAttachment.name,
             path: localAttachment.path,
+            directory,
             extension: localAttachment.extension,
         };
 
-        const rendered = await this.engine.parseAndRender(
+        const rendered = await renderLiquid(
+            this.engine,
             template,
             sanitizeContext(context),
         );

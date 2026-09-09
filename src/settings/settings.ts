@@ -1,150 +1,93 @@
-import { App, PluginSettingTab, setIcon, SettingGroup } from "obsidian";
-import { SyncSection } from "./sections/sync-section";
-import { WebDavSection } from "./sections/webdav-section";
-import { CacheSection } from "./sections/cache-section";
-import { GeneralSection } from "./sections/general-section";
-import { CitationSection } from "./sections/citation-section";
+import { App, PluginSettingTab } from "obsidian";
+
+import { CacheSection } from "settings/sections/cache-section";
+import { CitationSection } from "settings/sections/citation-section";
+import { CslSection } from "settings/sections/csl-section";
+import { GeneralSection } from "settings/sections/general-section";
+import { SyncSection } from "settings/sections/sync-section";
+import { WebDavSection } from "settings/sections/webdav-section";
+import { DEFAULT_SETTINGS } from "settings/types";
 
 import type ZotFlow from "main";
-import type { TabSection } from "./types";
+import type { SettingDefinitionItem } from "obsidian";
+import type { SettingKey } from "settings/types";
 
-/** Obsidian `PluginSettingTab` with tabbed navigation (General, Sync, WebDAV, Cache). */
+/** Obsidian 1.13 declarative settings tab. */
 export class ZotFlowSettingTab extends PluginSettingTab {
     plugin: ZotFlow;
-    activeTab: TabSection = "general";
+
+    private readonly syncSection: SyncSection;
+    private readonly webDavSection: WebDavSection;
+    private readonly cacheSection: CacheSection;
 
     constructor(app: App, plugin: ZotFlow) {
         super(app, plugin);
         this.plugin = plugin;
         this.icon = "zotero-icon";
+
+        const requestUpdate = () => this.update();
+        this.syncSection = new SyncSection(plugin, requestUpdate);
+        this.webDavSection = new WebDavSection(plugin, requestUpdate);
+        this.cacheSection = new CacheSection(plugin, requestUpdate);
     }
 
-    async display(): Promise<void> {
-        await this.plugin.loadSettings();
-
-        const { containerEl } = this;
-        containerEl.empty();
-        containerEl.addClass("zotflow-settings-tab");
-
-        const settingsContainer = containerEl.createDiv({
-            cls: "zotflow-settings-container",
-        });
-
-        const title = settingsContainer.createDiv({
-            text: "ZotFlow Settings",
-            cls: "zotflow-settings-title",
-        });
-
-        // Horizontal Navigation Tabs
-        this.renderNav(settingsContainer);
-
-        // Render Active Section Content
-        const contentContainer = settingsContainer.createDiv({
-            cls: "zotflow-settings-content",
-        });
-
-        const refreshUI = () => this.display();
-
-        switch (this.activeTab) {
-            case "sync":
-                const syncSection = new SyncSection(this.plugin, refreshUI);
-                await syncSection.render(contentContainer);
-                break;
-            case "webdav":
-                const webDavSection = new WebDavSection(this.plugin, refreshUI);
-                webDavSection.render(contentContainer);
-                break;
-            case "cache":
-                const cacheSection = new CacheSection(this.plugin, refreshUI);
-                await cacheSection.render(contentContainer);
-                break;
-            case "general":
-                const generalSection = new GeneralSection(
-                    this.plugin,
-                    refreshUI,
-                );
-                generalSection.render(contentContainer);
-                break;
-            case "citation":
-                const citationSection = new CitationSection(
-                    this.plugin,
-                    refreshUI,
-                );
-                citationSection.render(contentContainer);
-                break;
-        }
-    }
-
-    private renderNav(containerEl: HTMLElement) {
-        const navContainer = containerEl.createDiv();
-        navContainer.style.display = "flex";
-        navContainer.style.marginTop = "0.5rem";
-        navContainer.style.borderBottom =
-            "1px solid var(--background-modifier-border)";
-        navContainer.style.overflowX = "auto";
-        navContainer.style.overflowY = "auto";
-
-        const tabs: { id: TabSection; label: string; icon: string }[] = [
-            { id: "general", label: "General", icon: "settings" },
-            { id: "sync", label: "Sync", icon: "user" },
-            { id: "webdav", label: "WebDAV", icon: "cloud" },
-            { id: "cache", label: "Cache", icon: "database" },
-            { id: "citation", label: "Citation", icon: "quote" },
+    getSettingDefinitions(): SettingDefinitionItem<SettingKey>[] {
+        return [
+            {
+                type: "page",
+                name: "General",
+                items: new GeneralSection(this.plugin).getDefinitions(),
+            },
+            {
+                type: "page",
+                name: "Sync",
+                items: this.syncSection.getDefinitions(),
+            },
+            {
+                type: "page",
+                name: "WebDAV",
+                items: this.webDavSection.getDefinitions(),
+            },
+            {
+                type: "page",
+                name: "Cache",
+                items: this.cacheSection.getDefinitions(),
+            },
+            {
+                type: "page",
+                name: "Citation",
+                items: new CitationSection(this.plugin).getDefinitions(),
+            },
+            {
+                type: "page",
+                name: "CSL Render",
+                items: new CslSection(this.plugin).getDefinitions(),
+            },
         ];
+    }
 
-        tabs.forEach((tab) => {
-            const navItem = navContainer.createDiv({ cls: "nav-item" });
+    getControlValue(key: string): unknown {
+        if (!this.isSettingKey(key)) return undefined;
+        return this.plugin.settings[key];
+    }
 
-            navItem.style.cursor = "pointer";
-            navItem.style.padding = "6px 24px";
-            navItem.style.display = "flex";
-            navItem.style.alignItems = "center";
-            navItem.style.gap = "6px";
-            navItem.style.fontWeight = "500";
-            navItem.style.fontSize = "0.9rem";
-            navItem.style.transition =
-                "background-color 0.2s ease, color 0.2s ease";
-            navItem.style.fontSize = "var(--font-ui-small)";
+    async setControlValue(key: string, value: unknown): Promise<void> {
+        if (!this.isSettingKey(key)) {
+            throw new Error(`Unknown ZotFlow setting: ${key}`);
+        }
 
-            // Icon
-            const iconSpan = navItem.createSpan({ cls: "nav-icon" });
-            setIcon(iconSpan, tab.icon);
+        Reflect.set(this.plugin.settings, key, value);
+        await this.plugin.saveSettings();
+    }
 
-            // Label
-            navItem.createSpan({ text: tab.label });
+    refreshFromSettings(): void {
+        this.syncSection.reset();
+        this.webDavSection.reset();
+        this.cacheSection.reset();
+        this.update();
+    }
 
-            // State Styles
-            if (this.activeTab === tab.id) {
-                navItem.style.color = "var(--text-normal)";
-                navItem.style.fontWeight = "600";
-                navItem.style.borderBottom =
-                    "2px solid var(--interactive-accent)";
-            } else {
-                // Inactive: Transparent background, muted text
-                navItem.style.backgroundColor = "transparent";
-                navItem.style.color = "var(--text-muted)";
-            }
-
-            // Hover Effect
-            navItem.addEventListener("mouseenter", () => {
-                if (this.activeTab !== tab.id) {
-                    navItem.style.backgroundColor =
-                        "var(--background-modifier-hover)";
-                    navItem.style.color = "var(--text-normal)";
-                }
-            });
-            navItem.addEventListener("mouseleave", () => {
-                if (this.activeTab !== tab.id) {
-                    navItem.style.backgroundColor = "transparent";
-                    navItem.style.color = "var(--text-muted)";
-                }
-            });
-
-            // Click Handler
-            navItem.addEventListener("click", () => {
-                this.activeTab = tab.id;
-                this.display();
-            });
-        });
+    private isSettingKey(key: string): key is SettingKey {
+        return Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, key);
     }
 }

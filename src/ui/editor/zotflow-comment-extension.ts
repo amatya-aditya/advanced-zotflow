@@ -1,5 +1,10 @@
 import { EditorView, Decoration, type DecorationSet } from "@codemirror/view";
-import { StateField, type Extension, RangeSetBuilder } from "@codemirror/state";
+import {
+    StateField,
+    type Extension,
+    type Text,
+    RangeSetBuilder,
+} from "@codemirror/state";
 
 interface QueuedDeco {
     from: number;
@@ -17,11 +22,11 @@ export const zoteroBlockField = StateField.define<DecorationSet>({
         if (tr.docChanged) return buildDecorations(tr.newDoc);
         return decorations.map(tr.changes);
     },
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    provide: (field) => EditorView.decorations.from(field as any),
+
+    provide: (field) => EditorView.decorations.from(field),
 });
 
-function buildDecorations(doc: any): DecorationSet {
+function buildDecorations(doc: Text): DecorationSet {
     const builder = new RangeSetBuilder<Decoration>();
     const queuedDecos: QueuedDeco[] = [];
     const text = doc.toString();
@@ -89,7 +94,7 @@ function buildDecorations(doc: any): DecorationSet {
         builder.add(item.from, item.to, item.deco);
     }
 
-    return builder.finish() as DecorationSet;
+    return builder.finish();
 }
 
 /** Returns a CM6 extension combining the annotation block field with collapse base-theme styles. */

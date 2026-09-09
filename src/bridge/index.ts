@@ -1,9 +1,9 @@
 import * as Comlink from "comlink";
-// @ts-expect-error esbuild virtual module "virtual:worker"
 import workerCode from "virtual:worker";
 import { ParentHost } from "./parent-host";
 import { getBlobUrls } from "bundle-assets/inline-assets";
 
+import type { EnhancementResourceService } from "worker/services/enhancement-resources";
 import type { WorkerAPI } from "worker/worker";
 import type { TaskManager } from "worker/tasks/manager";
 import type { ZotFlowSettings } from "settings/types";
@@ -23,18 +23,18 @@ import type { AnnotationService } from "worker/services/annotation";
 import type { KeyService } from "worker/services/key";
 import type { LibraryService } from "worker/services/library";
 import type { DbHelperService } from "worker/services/db-helper";
-import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { TagService } from "worker/services/tag";
+import type { DocumentWorkerService } from "worker/services/document-worker";
 import type { LibraryTemplateService } from "worker/services/library-template";
 import type { LocalTemplateService } from "worker/services/local-template";
 import type { NotePathService } from "worker/services/note-path";
+import type { CslRenderWorkerService } from "worker/services/csl-render";
 import type { BatchNoteInput } from "worker/tasks/impl/batch-note-task";
-import type {
-    BatchExtractImagesInput,
-    ItemIdentifier,
-} from "worker/tasks/impl/batch-extract-images-task";
+import type { BatchExtractImagesInput } from "worker/tasks/impl/batch-extract-images-task";
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
+import type { DownloadedAttachment } from "types/tasks";
 
 import type { App } from "obsidian";
 import type { AttachmentIdentifier } from "worker/tasks/impl/batch-extract-external-annotations-task";
@@ -50,24 +50,27 @@ export class WorkerBridge {
 
     private _api!: Comlink.Remote<WorkerAPI>;
 
-    private _attachment!: AttachmentService;
-    private _sync!: SyncService;
-    private _zotero!: ZoteroAPIService;
-    private _webdav!: WebDavService;
-    private _treeView!: TreeViewService;
-    private _libraryNote!: LibraryNoteService;
-    private _itemNote!: ItemNoteService;
-    private _localNote!: LocalNoteService;
-    private _conflict!: ConflictService;
-    private _annotation!: AnnotationService;
-    private _key!: KeyService;
-    private _library!: LibraryService;
-    private _dbHelper!: DbHelperService;
-    private _pdfProcessor!: PDFProcessWorker;
-    private _libraryTemplate!: LibraryTemplateService;
-    private _localTemplate!: LocalTemplateService;
-    private _notePath!: NotePathService;
-    private _tasks!: TaskManager;
+    private _attachment: Comlink.Remote<AttachmentService>;
+    private _sync: Comlink.Remote<SyncService>;
+    private _zotero: Comlink.Remote<ZoteroAPIService>;
+    private _webdav: Comlink.Remote<WebDavService>;
+    private _treeView: Comlink.Remote<TreeViewService>;
+    private _libraryNote: Comlink.Remote<LibraryNoteService>;
+    private _itemNote: Comlink.Remote<ItemNoteService>;
+    private _localNote: Comlink.Remote<LocalNoteService>;
+    private _conflict: Comlink.Remote<ConflictService>;
+    private _annotation: Comlink.Remote<AnnotationService>;
+    private _key: Comlink.Remote<KeyService>;
+    private _library: Comlink.Remote<LibraryService>;
+    private _dbHelper: Comlink.Remote<DbHelperService>;
+    private _tag: Comlink.Remote<TagService>;
+    private _documentWorker: Comlink.Remote<DocumentWorkerService>;
+    private _enhancementResources: Comlink.Remote<EnhancementResourceService>;
+    private _libraryTemplate: Comlink.Remote<LibraryTemplateService>;
+    private _localTemplate: Comlink.Remote<LocalTemplateService>;
+    private _notePath: Comlink.Remote<NotePathService>;
+    private _cslRender: Comlink.Remote<CslRenderWorkerService>;
+    private _tasks: Comlink.Remote<TaskManager>;
 
     private _parentHost: ParentHost | undefined;
     private _workerBlobUrl!: string;
@@ -83,35 +86,139 @@ export class WorkerBridge {
     }
 
     async initialize(settings: ZotFlowSettings, app: App) {
+        const proxyTimings: Record<string, number> = {};
+        const materializeComlinkProxy = async <T>(
+            name: string,
+            proxy: T,
+        ): Promise<Awaited<T>> => {
+            const started = performance.now();
+            try {
+                return await Promise.resolve(proxy);
+            } finally {
+                proxyTimings[name] = Number(
+                    (performance.now() - started).toFixed(2),
+                );
+            }
+        };
+        let stageStarted = performance.now();
+        // These timings are nested within Startup's worker bridge stage.
+        const finishStage = (stage: string) => {
+            const finished = performance.now();
+            services.logService.debug(stage, "WorkerBridge", {
+                durationMs: Number((finished - stageStarted).toFixed(2)),
+            });
+            stageStarted = finished;
+        };
         // Worker settings update / initialization
-        const blobUrls = getBlobUrls();
         this._parentHost = new ParentHost(app);
+        const blobUrls = getBlobUrls((details) =>
+            services.logService.debug(
+                "Reader resource preparation breakdown",
+                "WorkerBridge",
+                details,
+            ),
+        );
+        finishStage("Prepare bundled Reader resource URLs");
         await this._api.init(
             settings,
             Comlink.proxy(this._parentHost),
             blobUrls,
         );
+        finishStage("Wait for worker initialization");
 
-        this._attachment = await this._api.attachment;
-        this._sync = await this._api.sync;
-        this._zotero = await this._api.zotero;
-        this._webdav = await this._api.webdav;
-        this._treeView = await this._api.treeView;
-        this._libraryNote = await this._api.libraryNote;
-        this._itemNote = await this._api.itemNote;
-        this._localNote = await this._api.localNote;
-        this._conflict = await this._api.conflict;
-        this._annotation = await this._api.annotation;
-        this._key = await this._api.key;
-        this._library = await this._api.library;
-        this._dbHelper = await this._api.dbHelper;
-        this._pdfProcessor = await this._api.pdfProcessor;
-        this._libraryTemplate = await this._api.libraryTemplate;
-        this._localTemplate = await this._api.localTemplate;
-        this._notePath = await this._api.notePath;
-        this._tasks = await this._api.tasks;
+        // Promise.resolve performs the same thenable assimilation as `await`.
+        // Comlink's runtime `then` trap materialises each dedicated MessagePort,
+        // although its TypeScript types do not expose that thenable shape.
+        this._attachment = await materializeComlinkProxy(
+            "attachment",
+            this._api.attachment,
+        );
+        this._sync = await materializeComlinkProxy("sync", this._api.sync);
+        this._zotero = await materializeComlinkProxy(
+            "zotero",
+            this._api.zotero,
+        );
+        this._webdav = await materializeComlinkProxy(
+            "webdav",
+            this._api.webdav,
+        );
+        this._treeView = await materializeComlinkProxy(
+            "treeView",
+            this._api.treeView,
+        );
+        this._libraryNote = await materializeComlinkProxy(
+            "libraryNote",
+            this._api.libraryNote,
+        );
+        this._itemNote = await materializeComlinkProxy(
+            "itemNote",
+            this._api.itemNote,
+        );
+        this._localNote = await materializeComlinkProxy(
+            "localNote",
+            this._api.localNote,
+        );
+        this._conflict = await materializeComlinkProxy(
+            "conflict",
+            this._api.conflict,
+        );
+        this._annotation = await materializeComlinkProxy(
+            "annotation",
+            this._api.annotation,
+        );
+        this._key = await materializeComlinkProxy("key", this._api.key);
+        this._library = await materializeComlinkProxy(
+            "library",
+            this._api.library,
+        );
+        this._dbHelper = await materializeComlinkProxy(
+            "dbHelper",
+            this._api.dbHelper,
+        );
+        this._tag = await materializeComlinkProxy("tag", this._api.tag);
+        this._enhancementResources = await materializeComlinkProxy(
+            "enhancementResources",
+            this._api.enhancementResources,
+        );
+        this._documentWorker = await materializeComlinkProxy(
+            "documentWorker",
+            this._api.documentWorker,
+        );
+        this._libraryTemplate = await materializeComlinkProxy(
+            "libraryTemplate",
+            this._api.libraryTemplate,
+        );
+        this._localTemplate = await materializeComlinkProxy(
+            "localTemplate",
+            this._api.localTemplate,
+        );
+        this._notePath = await materializeComlinkProxy(
+            "notePath",
+            this._api.notePath,
+        );
+        this._cslRender = await materializeComlinkProxy(
+            "cslRender",
+            this._api.cslRender,
+        );
+        this._tasks = await materializeComlinkProxy("tasks", this._api.tasks);
+        finishStage("Connect worker service proxies");
+        // One record avoids inserting a log operation between every RPC round trip.
+        services.logService.debug(
+            "Service proxy connection breakdown",
+            "WorkerBridge",
+            {
+                serviceDurationMs: proxyTimings,
+            },
+        );
 
         this._initialized = true;
+        // Native Worker failure supplies no RPC responses. Settle resource waiters locally.
+        this._worker.addEventListener("error", () =>
+            services.enhancementPack.dispose(),
+        );
+        this._worker.addEventListener("messageerror", () =>
+            services.enhancementPack.dispose(),
+        );
         services.logService.log(
             "info",
             "Worker Client initialized.",
@@ -194,9 +301,19 @@ export class WorkerBridge {
         return this._dbHelper;
     }
 
-    get pdfProcessWorker() {
+    get tag() {
         this.assertInitialized();
-        return this._pdfProcessor;
+        return this._tag;
+    }
+
+    get enhancementResources() {
+        this.assertInitialized();
+        return this._enhancementResources;
+    }
+
+    get documentWorker() {
+        this.assertInitialized();
+        return this._documentWorker;
     }
 
     get libraryTemplate() {
@@ -212,6 +329,11 @@ export class WorkerBridge {
     get notePath() {
         this.assertInitialized();
         return this._notePath;
+    }
+
+    get cslRender() {
+        this.assertInitialized();
+        return this._cslRender;
     }
 
     get tasks() {
@@ -244,9 +366,14 @@ export class WorkerBridge {
         return this._api.createBatchExtractImagesTask(input);
     }
 
+    async createBackfillCslJsonTask(): Promise<string> {
+        this.assertInitialized();
+        return this._api.createBackfillCslJsonTask();
+    }
+
     async downloadAttachment(
         attachmentItem: IDBZoteroItem<AttachmentData>,
-    ): Promise<Blob> {
+    ): Promise<DownloadedAttachment> {
         this.assertInitialized();
         return this._api.downloadAttachment(attachmentItem);
     }
@@ -260,7 +387,7 @@ export class WorkerBridge {
 
     cancelTask(taskId: string): void {
         this.assertInitialized();
-        this._api.cancelTask(taskId);
+        void this._api.cancelTask(taskId);
     }
 
     /* ================================================================ */
@@ -334,7 +461,7 @@ export class WorkerBridge {
     }
 
     updateSettings(newSettings: ZotFlowSettings) {
-        this._api.updateSettings(newSettings);
+        void this._api.updateSettings(newSettings);
     }
 
     terminate() {

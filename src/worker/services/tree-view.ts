@@ -11,6 +11,7 @@ export type EntityMap = Record<
         dateAdded?: string;
         dateModified?: string;
         syncStatus?: string;
+        tags?: string[];
     }
 >;
 
@@ -33,6 +34,7 @@ import type { AnyIDBZoteroItem, IDBZoteroCollection } from "types/db-schema";
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
 import type { LibraryService } from "./library";
+import type { SearchService, SearchableRecord } from "./search";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -41,15 +43,24 @@ export type TreeItemFilter = (
     ctx: { hasNotesAccess: boolean },
 ) => boolean;
 
+/** Result of a tree search: the entity keys that directly match + tokens to highlight. */
+export type TreeSearchResult = {
+    matchedKeys: string[];
+    freeTokens: string[];
+};
+
 /** Builds the flattened tree topology (libraries → collections → items) for the sidebar tree view. */
 export class TreeViewService {
     private treeTransferPayload: TreeTransferPayload | null;
     private itemFilter?: TreeItemFilter;
+    /** Worker-only search index (entity key → searchable record), built alongside the tree. */
+    private searchIndex: Map<string, SearchableRecord> | null = null;
 
     constructor(
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
         private library: LibraryService,
+        private search: SearchService,
     ) {
         this.treeTransferPayload = null;
     }
@@ -64,6 +75,7 @@ export class TreeViewService {
 
     public async refreshTree() {
         this.treeTransferPayload = null;
+        this.searchIndex = null;
         await this.getOptimizedTree();
     }
 
@@ -75,6 +87,31 @@ export class TreeViewService {
     public setItemFilter(filter?: TreeItemFilter) {
         this.itemFilter = filter;
         this.treeTransferPayload = null;
+        this.searchIndex = null;
+    }
+
+    /**
+     * Search the currently-built tree. Returns the entity keys whose own
+     * content directly matches the query (fuzzy free-text on the name plus
+     * structured `collection:` / `tag:` / `creator:` / `type:` filters).
+     * Ancestor visibility and child propagation are handled on the client.
+     */
+    public async searchTree(rawQuery: string): Promise<TreeSearchResult> {
+        const parsed = this.search.parse(rawQuery);
+        if (!this.searchIndex) {
+            await this.getOptimizedTree();
+        }
+        const index = this.searchIndex;
+        if (!index || (!parsed.free && parsed.filters.length === 0)) {
+            return { matchedKeys: [], freeTokens: parsed.freeTokens };
+        }
+
+        const records = Array.from(index.values());
+        const matched = this.search.matchAndRank(parsed, records);
+        return {
+            matchedKeys: matched.map((r) => r.id),
+            freeTokens: parsed.freeTokens,
+        };
     }
 
     public async getOptimizedTree(): Promise<TreeTransferPayload> {
@@ -208,6 +245,18 @@ export class TreeViewService {
             const entities: EntityMap = {};
             const topology: TopologyNode[] = [];
 
+            // Worker-only search index built alongside the wire payload.
+            const searchIndex = new Map<string, SearchableRecord>();
+            const colNameByKey = new Map<string, string>();
+            allCollections.forEach((c) =>
+                colNameByKey.set(`${c.libraryID}:${c.key}`, c.name),
+            );
+            const registerSearch = (record: SearchableRecord) => {
+                if (!searchIndex.has(record.id)) {
+                    searchIndex.set(record.id, record);
+                }
+            };
+
             // Helper: Register Entity Data (De-duplication)
             const registerEntity = (
                 key: string,
@@ -220,6 +269,7 @@ export class TreeViewService {
                 dateAdded?: string,
                 dateModified?: string,
                 syncStatus?: string,
+                tags?: string[],
             ) => {
                 // Only register when the key is not registered
                 if (!entities[key]) {
@@ -233,6 +283,7 @@ export class TreeViewService {
                         dateAdded,
                         dateModified,
                         syncStatus,
+                        tags,
                     };
                 }
             };
@@ -260,6 +311,7 @@ export class TreeViewService {
                         item.dateAdded,
                         item.dateModified,
                         item.syncStatus,
+                        item.searchTags,
                     );
                 } else {
                     registerEntity(
@@ -273,8 +325,21 @@ export class TreeViewService {
                         item.dateAdded,
                         item.dateModified,
                         item.syncStatus,
+                        item.searchTags,
                     );
                 }
+
+                registerSearch({
+                    id: item.key,
+                    name: item.title || "",
+                    itemType: item.itemType,
+                    creators: item.searchCreators,
+                    tags: item.searchTags,
+                    libraryName: libName,
+                    collections: (item.collections || []).map(
+                        (k) => colNameByKey.get(`${item.libraryID}:${k}`) || "",
+                    ),
+                });
 
                 // Push skeleton
                 topology.push({
@@ -305,7 +370,16 @@ export class TreeViewService {
                         undefined,
                         undefined,
                         att.syncStatus,
+                        att.searchTags,
                     );
+
+                    registerSearch({
+                        id: att.key,
+                        name: attName || "Untitled",
+                        itemType: att.itemType,
+                        tags: att.searchTags,
+                        libraryName: libName,
+                    });
 
                     topology.push({
                         id: attId,
@@ -341,6 +415,13 @@ export class TreeViewService {
                     libName,
                 );
 
+                registerSearch({
+                    id: col.key,
+                    name: col.name,
+                    itemType: "collection",
+                    libraryName: libName,
+                });
+
                 topology.push({
                     id: colId,
                     key: col.key,
@@ -368,6 +449,13 @@ export class TreeViewService {
                     lib.name,
                 );
 
+                registerSearch({
+                    id: lib.id.toString(),
+                    name: lib.name,
+                    itemType: "library",
+                    libraryName: lib.name,
+                });
+
                 topology.push({
                     id: libId,
                     key: lib.id.toString(),
@@ -379,6 +467,7 @@ export class TreeViewService {
                 unfiled.forEach((i) => processItem(i, libId));
             });
 
+            this.searchIndex = searchIndex;
             this.treeTransferPayload = { entities, topology };
             return this.treeTransferPayload;
         } catch (e) {

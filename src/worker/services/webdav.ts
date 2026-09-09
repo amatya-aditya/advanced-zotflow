@@ -1,6 +1,7 @@
 import type { IParentProxy } from "bridge/types";
 import type { ZotFlowSettings } from "settings/types";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { proxiedFetch } from "worker/proxied-fetch";
 
 /** WebDAV file download service for fetching Zotero attachments from a user-configured server. */
 export class WebDavService {
@@ -33,6 +34,19 @@ export class WebDavService {
      * @returns The file content as an ArrayBuffer.
      */
     async downloadFile(remotePath: string): Promise<ArrayBuffer> {
+        const startedAt = Date.now();
+        this.parentHost.log(
+            "debug",
+            "WebDAV download requested.",
+            "WebDavService",
+            {
+                remotePath,
+                hasUrl: !!this.settings.webDavUrl,
+                hasUser: !!this.settings.webDavUser,
+                hasPassword: !!this.settings.webdavpassword,
+            },
+        );
+
         if (
             !this.settings.webDavUrl ||
             !this.settings.webDavUser ||
@@ -50,6 +64,10 @@ export class WebDavService {
             this.settings.webDavUrl,
         );
         const fullUrl = baseUrl + remotePath.replace(/^\//, ""); // Ensure single slash join
+        this.parentHost.log("debug", "WebDAV URL resolved.", "WebDavService", {
+            baseUrl,
+            fullUrl,
+        });
 
         const credentials = btoa(
             `${this.settings.webDavUser}:${this.settings.webdavpassword}`,
@@ -63,13 +81,54 @@ export class WebDavService {
                 },
             };
 
-            const response = await fetch(fullUrl, req);
+            this.parentHost.log(
+                "debug",
+                "WebDAV fetch dispatching.",
+                "WebDavService",
+                {
+                    method: req.method,
+                    fullUrl,
+                },
+            );
+
+            const response = await proxiedFetch(fullUrl, req);
+            const responseMs = Date.now() - startedAt;
+            this.parentHost.log(
+                "debug",
+                "WebDAV fetch completed.",
+                "WebDavService",
+                {
+                    status: response.status,
+                    statusText: response.statusText,
+                    ok: response.ok,
+                    elapsedMs: responseMs,
+                },
+            );
 
             if (response.ok) {
-                return await response.arrayBuffer();
+                const payload = await response.arrayBuffer();
+                this.parentHost.log(
+                    "debug",
+                    "WebDAV payload received.",
+                    "WebDavService",
+                    {
+                        bytes: payload.byteLength,
+                        elapsedMs: Date.now() - startedAt,
+                    },
+                );
+                return payload;
             } else {
                 // Map HTTP status to ZotFlowError
                 if (response.status === 401 || response.status === 403) {
+                    this.parentHost.log(
+                        "debug",
+                        "WebDAV auth rejection received.",
+                        "WebDavService",
+                        {
+                            status: response.status,
+                            fullUrl,
+                        },
+                    );
                     throw new ZotFlowError(
                         ZotFlowErrorCode.AUTH_INVALID,
                         "WebDavService",
@@ -77,6 +136,15 @@ export class WebDavService {
                     );
                 }
                 if (response.status === 404) {
+                    this.parentHost.log(
+                        "debug",
+                        "WebDAV resource not found.",
+                        "WebDavService",
+                        {
+                            status: response.status,
+                            fullUrl,
+                        },
+                    );
                     throw new ZotFlowError(
                         ZotFlowErrorCode.RESOURCE_MISSING,
                         "WebDavService",
@@ -84,13 +152,35 @@ export class WebDavService {
                     );
                 }
 
+                this.parentHost.log(
+                    "debug",
+                    "WebDAV returned unexpected non-success status.",
+                    "WebDavService",
+                    {
+                        status: response.status,
+                        statusText: response.statusText,
+                        fullUrl,
+                    },
+                );
+
                 throw new ZotFlowError(
                     ZotFlowErrorCode.NETWORK_ERROR,
                     "WebDavService",
                     `WebDAV download failed with status: ${response.status}`,
                 );
             }
-        } catch (e: any) {
+        } catch (e) {
+            this.parentHost.log(
+                "debug",
+                "WebDAV download raised exception.",
+                "WebDavService",
+                {
+                    remotePath,
+                    fullUrl,
+                    elapsedMs: Date.now() - startedAt,
+                    errorMessage: e instanceof Error ? e.message : String(e),
+                },
+            );
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.NETWORK_ERROR,
@@ -100,6 +190,17 @@ export class WebDavService {
         }
     }
 
+    /**
+     * Fetch the byte size of a remote WebDAV file via a HEAD request.
+     *
+     * Used on mobile (Android) to decide whether a payload is small enough to
+     * download safely — Obsidian Android's `requestUrl` loads the whole body
+     * into memory and can OOM/crash on large files.
+     *
+     * @param remotePath Relative path to the file on the WebDAV server.
+     * @returns The Content-Length in bytes, or `null` if the server did not
+     *          report it.
+     */
     async getContentLength(remotePath: string): Promise<number | null> {
         if (
             !this.settings.webDavUrl ||
@@ -122,7 +223,7 @@ export class WebDavService {
         );
 
         try {
-            const response = await fetch(fullUrl, {
+            const response = await proxiedFetch(fullUrl, {
                 method: "HEAD",
                 headers: {
                     Authorization: `Basic ${credentials}`,
@@ -130,6 +231,15 @@ export class WebDavService {
             });
 
             if (!response.ok) {
+                this.parentHost.log(
+                    "debug",
+                    "WebDAV HEAD returned non-success status.",
+                    "WebDavService",
+                    {
+                        status: response.status,
+                        fullUrl,
+                    },
+                );
                 throw new ZotFlowError(
                     ZotFlowErrorCode.NETWORK_ERROR,
                     "WebDavService",
@@ -139,8 +249,30 @@ export class WebDavService {
 
             const raw = response.headers.get("content-length");
             const bytes = raw ? Number.parseInt(raw, 10) : NaN;
-            return Number.isFinite(bytes) ? bytes : null;
-        } catch (e: any) {
+            if (!Number.isFinite(bytes)) {
+                this.parentHost.log(
+                    "debug",
+                    "WebDAV HEAD did not report a usable content-length.",
+                    "WebDavService",
+                    {
+                        fullUrl,
+                        rawContentLength: raw,
+                    },
+                );
+                return null;
+            }
+
+            this.parentHost.log(
+                "debug",
+                "WebDAV HEAD content-length resolved.",
+                "WebDavService",
+                {
+                    fullUrl,
+                    bytes,
+                },
+            );
+            return bytes;
+        } catch (e) {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.NETWORK_ERROR,
@@ -154,7 +286,7 @@ export class WebDavService {
         baseUrl: string,
         credentials: string,
     ): Promise<void> {
-        const response = await fetch(baseUrl, {
+        const response = await proxiedFetch(baseUrl, {
             method: "PROPFIND",
             headers: {
                 Authorization: `Basic ${credentials}`,
@@ -185,7 +317,7 @@ export class WebDavService {
         }
 
         if (response.status === 405 || response.status === 501) {
-            const headResponse = await fetch(baseUrl, {
+            const headResponse = await proxiedFetch(baseUrl, {
                 method: "HEAD",
                 headers: {
                     Authorization: `Basic ${credentials}`,
@@ -243,7 +375,7 @@ export class WebDavService {
             }
 
             throw authError ?? notFoundError ?? lastError;
-        } catch (e: any) {
+        } catch (e) {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.NETWORK_ERROR,
