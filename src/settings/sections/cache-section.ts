@@ -178,6 +178,7 @@ export class CacheSection {
         return () => {
             if (this.updateUsage === update) this.updateUsage = undefined;
             if (loadVersion === this.loadVersion) this.loadVersion += 1;
+            usageContainer.remove();
         };
     }
 }

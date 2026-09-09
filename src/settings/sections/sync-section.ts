@@ -141,6 +141,7 @@ export class SyncSection {
                             );
                             return () => {
                                 disposed = true;
+                                container.remove();
                             };
                         },
                     },

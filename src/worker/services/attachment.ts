@@ -5,7 +5,7 @@ import SparkMD5 from "spark-md5";
 import { proxiedFetch } from "worker/proxied-fetch";
 import { WebDavService } from "./webdav";
 import { ZoteroAPIService } from "./zotero";
-import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { ZotFlowError, ZotFlowErrorCode, errorMessage } from "utils/error";
 
 import type { ZotFlowSettings } from "settings/types";
 import type { AttachmentData } from "types/zotero-item";
@@ -365,6 +365,10 @@ export class AttachmentService {
     ): Promise<Blob> {
         const startedAt = Date.now();
         let buffer: ArrayBuffer | null = null;
+        // Retained so a failing fallback can report the real cause: for a
+        // WebDAV-storage library the file is not on Zotero's servers at
+        // all, so the API's 404 is a symptom, not the cause.
+        let webDavError: unknown = null;
         const linkMode = item.raw.data.linkMode;
         const shouldUseWebDav = this.shouldUseWebDav(item);
 
@@ -454,6 +458,7 @@ export class AttachmentService {
                             },
                         );
                     } catch (e) {
+                        webDavError = e;
                         this.parentHost.log(
                             "error",
                             `WebDAV failed for ${item.key}, falling back to API.`,
@@ -496,7 +501,18 @@ export class AttachmentService {
                         `Downloading from Zotero API for ${item.key}`,
                         "AttachmentService",
                     );
-                    buffer = await this.downloadFromZoteroAPI(item);
+                    try {
+                        buffer = await this.downloadFromZoteroAPI(item);
+                    } catch (apiError) {
+                        if (webDavError) {
+                            throw new ZotFlowError(
+                                ZotFlowErrorCode.NETWORK_ERROR,
+                                "AttachmentService",
+                                `WebDAV download failed (${errorMessage(webDavError)}), and the Zotero Storage fallback also failed (${errorMessage(apiError)}). Attachments stored on WebDAV are not held on Zotero's servers, so check the WebDAV settings.`,
+                            );
+                        }
+                        throw apiError;
+                    }
                     this.parentHost.log(
                         "debug",
                         "Zotero API attachment download succeeded.",
