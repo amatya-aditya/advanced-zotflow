@@ -435,7 +435,7 @@ export class ZoteroReaderView extends ItemView {
                         );
                         services.notificationService.notify(
                             "error",
-                            "Failed to download attachment",
+                            `Failed to download attachment: ${describeError(e)}`,
                         );
                         throw e;
                     }

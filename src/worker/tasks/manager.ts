@@ -250,7 +250,15 @@ export class TaskManager {
 
             const result = task.takeResult();
             if (!result) {
-                throw new Error(`Download failed for ${attachmentItem.key}`);
+                // `execute()` catches the failure and records it on the task
+                // rather than rethrowing, so read the reason back off the task
+                // instead of reporting the bare item key.
+                const info = task.getInfo();
+                throw new Error(
+                    info.error
+                        ? `Download failed for ${attachmentItem.key}: ${info.error}`
+                        : `Download failed for ${attachmentItem.key} (task ${info.status})`,
+                );
             }
             this.parentHost.log(
                 "debug",
