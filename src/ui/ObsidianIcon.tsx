@@ -48,8 +48,10 @@ export const ObsidianIcon = React.forwardRef<HTMLDivElement, ObsidianIconProps>(
         return (
             <div
                 ref={setRefs}
-                className={className}
-                style={{ display: "flex", alignItems: "center", ...containerStyle }}
+                className={
+                    className ? `zotflow-icon ${className}` : "zotflow-icon"
+                }
+                style={containerStyle}
                 onClick={onClick}
             />
         );

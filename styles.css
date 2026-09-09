@@ -5162,6 +5162,10 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
     }
 }
 
+/* Base layout for every ObsidianIcon container. Kept in the stylesheet,
+   not inline, so rules like the tree-icon hide below can override it. */
+.zotflow-icon { display: flex; align-items: center; }
+
 .zotflow-hide-tree-icons .zotflow-file-icon,
 .zotflow-hide-tree-icons .zotflow-folder-icon { display: none; }
 
